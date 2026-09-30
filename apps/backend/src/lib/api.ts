@@ -15,7 +15,8 @@ export interface ApiResponse<T = any> {
     };
 }
 
-import { corsHeaders } from './cors';
+import { corsHeaders, getCorsHeaders, handleOptions } from './cors';
+export { handleOptions };
 
 export function successResponse<T>(data: T, status: number = 200, additionalHeaders?: HeadersInit) {
     return NextResponse.json({ success: true, data }, { 
@@ -153,14 +154,22 @@ export function withErrorHandler(handler: (req: NextRequest, ...args: any[]) => 
     return async (req: NextRequest, ...args: any[]) => {
         try {
             await syncRevokedTokens().catch(() => {});
-            return await handler(req, ...args);
+            const res = await handler(req, ...args);
+            const dynamicCors = getCorsHeaders(req);
+            Object.entries(dynamicCors).forEach(([key, value]) => {
+                res.headers.set(key, value);
+            });
+            return res;
         } catch (error: any) {
             console.error('[API Error]:', error);
-            if (error instanceof ApiError) {
-                return errorResponse(error.code, error.message, error.status, error.details);
-            }
-            // Do not leak stack traces or raw errors
-            return errorResponse('INTERNAL_SERVER_ERROR', 'An unexpected server error occurred', 500);
+            const res = error instanceof ApiError
+                ? errorResponse(error.code, error.message, error.status, error.details)
+                : errorResponse('INTERNAL_SERVER_ERROR', 'An unexpected server error occurred', 500);
+            const dynamicCors = getCorsHeaders(req);
+            Object.entries(dynamicCors).forEach(([key, value]) => {
+                res.headers.set(key, value);
+            });
+            return res;
         }
     };
 }
