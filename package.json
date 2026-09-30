@@ -1,0 +1,22 @@
+{
+  "name": "laundelle",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@12.6.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:customer": "turbo dev --filter=customer",
+    "dev:operations": "turbo dev --filter=operations",
+    "dev:admin": "turbo dev --filter=admin",
+    "dev:backend": "turbo dev --filter=backend",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^15.5.26",
+    "turbo": "^2.11.4",
+    "typescript": "^5.7.0"
+  }
+}

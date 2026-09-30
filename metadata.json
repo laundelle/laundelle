@@ -1,0 +1,6 @@
+{
+  "name": "Laundry2u26 - Fresh Clothes Delivered",
+  "description": "Modern laundry & dry cleaning web app with smart AI assistant, order tracking, pickup scheduling, and service catalog.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

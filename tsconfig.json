@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@laundelle/types": ["packages/types/src/index.ts"],
+      "@laundelle/types/*": ["packages/types/src/*"],
+      "@laundelle/ui": ["packages/ui/src/index.ts"],
+      "@laundelle/ui/*": ["packages/ui/src/*"],
+      "@laundelle/api-client": ["packages/api-client/src/index.ts"],
+      "@laundelle/api-client/*": ["packages/api-client/src/*"],
+      "@laundelle/auth": ["packages/auth/src/index.ts"],
+      "@laundelle/auth/*": ["packages/auth/src/*"],
+      "@laundelle/utils": ["packages/utils/src/index.ts"],
+      "@laundelle/utils/*": ["packages/utils/src/*"],
+      "@laundelle/validations": ["packages/validations/src/index.ts"],
+      "@laundelle/validations/*": ["packages/validations/src/*"],
+      "@laundelle/config": ["packages/config/src/index.ts"],
+      "@laundelle/config/*": ["packages/config/src/*"]
+    }
+  },
+  "exclude": ["node_modules", "apps/**/.next"]
+}

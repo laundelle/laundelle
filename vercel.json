@@ -1,0 +1,73 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "backend": {
+      "root": "apps/backend"
+    },
+    "customer": {
+      "root": "apps/customer"
+    },
+    "admin": {
+      "root": "apps/admin"
+    },
+    "operations": {
+      "root": "apps/operations"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "api.laundelle.co.uk"
+        }
+      ],
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "admin.laundelle.co.uk"
+        }
+      ],
+      "destination": {
+        "service": "admin"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "ops.laundelle.co.uk"
+        }
+      ],
+      "destination": {
+        "service": "operations"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "(?:www\\.)?laundelle\\.co\\.uk"
+        }
+      ],
+      "destination": {
+        "service": "customer"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "customer"
+      }
+    }
+  ]
+}

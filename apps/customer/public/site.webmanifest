@@ -1,0 +1,21 @@
+{
+  "name": "LAUNDELLE — Laundry & Delivery",
+  "short_name": "LAUNDELLE",
+  "description": "LAUNDELLE is a modern laundry and delivery platform that makes booking, pickup, cleaning, tracking, and delivery simple and convenient.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0d3462",
+  "icons": [
+    {
+      "src": "/favicon_io/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon_io/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

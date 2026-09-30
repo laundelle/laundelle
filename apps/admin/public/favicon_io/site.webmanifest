@@ -1,0 +1,21 @@
+{
+  "name": "LAUNDELLE — Admin Portal",
+  "short_name": "LAUNDELLE Admin",
+  "description": "LAUNDELLE Admin Portal — Platform management, fleet & operations oversight.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0d3462",
+  "icons": [
+    {
+      "src": "/favicon_io/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon_io/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
