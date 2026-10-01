@@ -11,7 +11,7 @@ export class PaymentService {
     private static getStripe(): Stripe {
         const key = process.env.STRIPE_SECRET_KEY;
         if (!key) throw new Error('STRIPE_SECRET_KEY is not configured.');
-        return new Stripe(key, { apiVersion: '2023-10-16' as any });
+        return new Stripe(key, { apiVersion: '2025-06-30' as any });
     }
 
     /**
@@ -38,14 +38,14 @@ export class PaymentService {
      */
     static async createCheckoutSession(userId: string, orderId: string, origin: string) {
         if (!orderId) throw new BadRequestError('Missing required parameter: orderId');
-        
+
         const db = await getDb();
         const order = await db.collection('orders').findOne(buildEntityLookupQuery(orderId, 'order'));
-        
+
         if (!order) throw new NotFoundError('Order not found');
         if (order.customer_id !== userId && order.customerId !== userId) throw new ForbiddenError('Access denied: You do not own this order');
         if (order.payment_status === 'Paid') throw new BadRequestError('Order is already paid');
-        
+
         // Authoritative amount calculation
         // For Laundelle, the order.total is computed at creation.
         // Even if we wanted to recount from order.items, the db document is the source of truth, not the frontend request.
@@ -97,7 +97,7 @@ export class PaymentService {
      */
     static async handleStripeWebhook(rawBody: string, signature: string | null) {
         if (!signature) throw new BadRequestError('Missing stripe-signature header');
-        
+
         const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
         let event: Stripe.Event;
 
@@ -404,14 +404,14 @@ export class PaymentService {
 
         await db.collection('orders').updateOne(
             { id: orderId },
-            { 
-                $set: { 
-                    payment_status: 'Failed', 
+            {
+                $set: {
+                    payment_status: 'Failed',
                     paymentStatus: 'Failed',
                     status: 'payment_failed',
                     statusLabel: 'Payment Failed',
-                    updated_at: now 
-                } 
+                    updated_at: now
+                }
             }
         );
 
@@ -422,7 +422,7 @@ export class PaymentService {
                 message: `Your payment for order #${orderId} failed. Please update your payment method and try again.`,
                 type: 'billing',
                 orderId,
-                });
+            });
         }
 
         await AuditService.recordOrderEvent({

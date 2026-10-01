@@ -7,7 +7,7 @@ let stripeInstance: Stripe | null = null;
 function getStripe(): Stripe {
     if (!stripeInstance) {
         stripeInstance = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-            apiVersion: '2023-10-16' as any,
+            apiVersion: '2025-06-30' as any,
         });
     }
     return stripeInstance;
