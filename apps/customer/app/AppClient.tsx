@@ -45,6 +45,15 @@ import {
 } from '@laundelle/api-client';
 
 export default function App({ initialTab }: { initialTab?: string }) {
+  // Auth0 Hook at component root
+  const {
+    isAuthenticated: isAuth0Authenticated,
+    user: auth0User,
+    isLoading: isAuth0Loading,
+    error: auth0Error,
+    loginWithRedirect,
+  } = useAuth0();
+
   const [showSplash, setShowSplash] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
     if (typeof window !== 'undefined') {
@@ -68,14 +77,34 @@ export default function App({ initialTab }: { initialTab?: string }) {
       const hasShown = localStorage.getItem('laundelle_splash_shown');
       const params = new URLSearchParams(window.location.search);
       const isPaymentRedirect = params.has('payment');
+      const isAuthRedirect = params.has('code') || params.has('state') || params.has('error');
 
-      if (!hasShown && !isPaymentRedirect) {
+      if (!hasShown && !isPaymentRedirect && !isAuthRedirect) {
         setShowSplash(true);
       }
     } catch {
       // storage unavailable
     }
   }, []);
+
+  // Listen for custom tab navigation events (e.g. from post-Auth0 redirect)
+  React.useEffect(() => {
+    const handleNavigateTab = (e: any) => {
+      if (e.detail && ['home', 'services', 'orders', 'support', 'notifications', 'account', 'assistant'].includes(e.detail)) {
+        setActiveTab(e.detail as ActiveTab);
+      }
+    };
+    window.addEventListener('l2u_navigate_tab', handleNavigateTab);
+    return () => window.removeEventListener('l2u_navigate_tab', handleNavigateTab);
+  }, []);
+
+  // Display toast if Auth0 returns an error query parameter or auth fails
+  React.useEffect(() => {
+    if (auth0Error) {
+      console.error('[Auth0 Error]', auth0Error);
+      showToast(`Auth0 Error: ${auth0Error.message || 'Authentication failed'}`);
+    }
+  }, [auth0Error]);
 
   // Handle Stripe payment redirect callbacks
   React.useEffect(() => {
@@ -178,8 +207,17 @@ export default function App({ initialTab }: { initialTab?: string }) {
   // Sync URL pathname with activeTab
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
-    // If returning from payment redirect, do not override to /home
-    if (window.location.search.includes('payment=')) return;
+    // Critical: Do NOT rewrite URL if Auth0 callback parameters or Stripe callback parameters are present!
+    // Overriding the URL while Auth0 is parsing code/state or error parameters wipes them and breaks authentication.
+    if (
+      isAuth0Loading ||
+      window.location.search.includes('code=') ||
+      window.location.search.includes('state=') ||
+      window.location.search.includes('error=') ||
+      window.location.search.includes('payment=')
+    ) {
+      return;
+    }
 
     let path = '/home';
     if (activeTab === 'services') path = '/services';
@@ -192,7 +230,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
     if (window.location.pathname !== path) {
       window.history.pushState(null, '', path);
     }
-  }, [activeTab]);
+  }, [activeTab, isAuth0Loading]);
 
   // Direct Book Now navigation with service pre-selected
   const handleStartBookingWithService = (serviceId?: string) => {
@@ -318,26 +356,32 @@ export default function App({ initialTab }: { initialTab?: string }) {
   };
 
   // Auth Session State
-  const {
-    isAuthenticated: isAuth0Authenticated,
-    user: auth0User,
-    isLoading: isAuth0Loading,
-    loginWithRedirect,
-  } = useAuth0();
-
   const [authSession, setAuthSession] = useState<AuthSession>({
     role: null,
     user: null,
     isAuthenticated: false,
   });
 
-  const handleOpenCustomerAuth = (screenHint?: 'signup') => {
+  const handleOpenCustomerAuth = (_screenHint?: 'signup') => {
+    try {
+      if (typeof window !== 'undefined' && cartDrawerOpen) {
+        localStorage.setItem('laundelle_open_cart', 'true');
+      }
+    } catch {}
+    setCustomerAuthOpen(true);
+  };
+
+  const handleDirectAuth0Login = (screenHint?: 'signup') => {
     try {
       if (typeof window !== 'undefined' && cartDrawerOpen) {
         localStorage.setItem('laundelle_open_cart', 'true');
       }
     } catch {}
     loginWithRedirect({
+      appState: {
+        returnTo: typeof window !== 'undefined' && window.location.pathname !== '/' ? window.location.pathname : '/home',
+        tab: activeTab,
+      },
       authorizationParams: {
         screen_hint: screenHint,
       },
@@ -668,13 +712,22 @@ export default function App({ initialTab }: { initialTab?: string }) {
               <p className="text-xs text-gray-500 max-w-sm mx-auto">
                 Please sign in with your customer account to view your live orders, invoices, and active driver tracking.
               </p>
-              <button
-                type="button"
-                onClick={() => handleOpenCustomerAuth()}
-                className="px-6 py-3 bg-[#082b78] hover:bg-[#072465] text-white text-xs font-bold rounded-2xl shadow-sm transition-all cursor-pointer"
-              >
-                Sign In with Auth0
-              </button>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleDirectAuth0Login()}
+                  className="w-full sm:w-auto px-6 py-3 bg-[#082b78] hover:bg-[#072465] text-white text-xs font-bold rounded-2xl shadow-sm transition-all cursor-pointer"
+                >
+                  Sign In with Auth0
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenCustomerAuth()}
+                  className="w-full sm:w-auto px-6 py-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-xs font-bold rounded-2xl transition-all cursor-pointer"
+                >
+                  Email & Password Login
+                </button>
+              </div>
             </div>
           )
         )}
@@ -749,12 +802,20 @@ export default function App({ initialTab }: { initialTab?: string }) {
                     View profile details, saved addresses, custom wash preferences, and repeat previous orders in one place.
                   </p>
                 </div>
-                <button
-                  onClick={() => handleOpenCustomerAuth()}
-                  className="w-full bg-[#03045E] hover:bg-[#023E8A] text-white py-4 rounded-2xl text-xs font-black shadow-xs cursor-pointer transition-colors"
-                >
-                  Sign In with Auth0
-                </button>
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={() => handleDirectAuth0Login()}
+                    className="w-full bg-[#03045E] hover:bg-[#023E8A] text-white py-4 rounded-2xl text-xs font-black shadow-xs cursor-pointer transition-colors"
+                  >
+                    Sign In with Auth0
+                  </button>
+                  <button
+                    onClick={() => handleOpenCustomerAuth()}
+                    className="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 py-3 rounded-2xl text-xs font-bold cursor-pointer transition-colors"
+                  >
+                    Sign In with Email / Register
+                  </button>
+                </div>
               </div>
             </div>
           )

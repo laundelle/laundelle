@@ -41,6 +41,9 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
     } catch {}
 
     loginWithRedirect({
+      appState: {
+        returnTo: typeof window !== 'undefined' && window.location.pathname !== '/' ? window.location.pathname : '/home',
+      },
       authorizationParams: {
         screen_hint: mode === 'register' ? 'signup' : undefined,
       },

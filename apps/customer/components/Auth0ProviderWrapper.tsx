@@ -14,6 +14,16 @@ export function Auth0ProviderWrapper({ children }: Auth0ProviderWrapperProps) {
   // Safe redirectUri check for SSR compatibility (avoids server-side `window` reference)
   const redirectUri = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
 
+  const onRedirectCallback = (appState?: { returnTo?: string; tab?: string }) => {
+    if (typeof window !== 'undefined') {
+      const target = appState?.returnTo || window.location.pathname;
+      window.history.replaceState({}, document.title, target);
+      if (appState?.tab) {
+        window.dispatchEvent(new CustomEvent('l2u_navigate_tab', { detail: appState.tab }));
+      }
+    }
+  };
+
   return (
     <Auth0Provider
       domain={domain}
@@ -21,6 +31,7 @@ export function Auth0ProviderWrapper({ children }: Auth0ProviderWrapperProps) {
       authorizationParams={{
         redirect_uri: redirectUri,
       }}
+      onRedirectCallback={onRedirectCallback}
     >
       {children}
     </Auth0Provider>
