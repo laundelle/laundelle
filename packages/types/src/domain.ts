@@ -6,8 +6,7 @@ export type ActiveTab =
   | 'notifications'
   | 'account'
   | 'assistant'
-  | 'admin'
-  | 'subscriptions';
+  | 'admin';
 
 export interface ServiceItem {
   id: string;

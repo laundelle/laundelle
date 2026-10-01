@@ -25,7 +25,6 @@ export default function DynamicPage({ params }: PageProps) {
   else if (rawPage === 'orders') tabName = 'orders';
   else if (rawPage === 'ai') tabName = 'assistant';
   else if (rawPage === 'account') tabName = 'account';
-  else if (rawPage === 'subscriptions') tabName = 'subscriptions';
   else if (rawPage === 'support') tabName = 'support';
   else if (rawPage === 'notifications') tabName = 'notifications';
 

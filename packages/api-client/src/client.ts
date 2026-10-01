@@ -1,6 +1,8 @@
 import { Order, UserProfile, UserAddress, UserPreferences, ServiceItem } from '@laundelle/types';
 import { getAuthToken } from '@laundelle/auth';
 
+import { getApiBase } from './compat';
+
 declare const process: any;
 
 export interface ApiClientOptions {
@@ -13,8 +15,8 @@ export class LaundelleApiClient {
   private getToken: () => string | null;
 
   constructor(options: ApiClientOptions = {}) {
-    this.baseUrl = options.baseUrl || (typeof process !== 'undefined' ? process.env?.NEXT_PUBLIC_API_URL || '' : '');
-    this.baseUrl = this.baseUrl.replace(/\/$/, '');
+    const defaultBase = options.baseUrl !== undefined ? options.baseUrl : getApiBase();
+    this.baseUrl = (defaultBase || '').replace(/\/$/, '');
     this.getToken = options.getToken || getAuthToken;
   }
 

@@ -13,7 +13,10 @@ export class AuthService {
         const { email, password, fullName, phone } = body;
         
         if (!email || !password || !fullName) {
-            throw new BadRequestError('Email, password and full name are required.');
+            throw new BadRequestError('Email, password and username/full name are required.');
+        }
+        if (!phone || String(phone).trim().length < 7) {
+            throw new BadRequestError('A valid mobile number is required.');
         }
         if (password.length < 8) {
             throw new BadRequestError('Password must be at least 8 characters.');
@@ -39,7 +42,7 @@ export class AuthService {
             email: formatted,
             password: hashPassword(password),
             full_name: fullName.trim(),
-            phone: phone?.trim() || '',
+            phone: String(phone).trim(),
             role: 'customer',
             avatar_url: `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=03045E&color=CAF0F8&size=128`,
             wallet_balance: 0,
@@ -85,6 +88,7 @@ export class AuthService {
                 internalId: internalDbId,
                 email: formatted,
                 name: newUser.full_name,
+                phone: newUser.phone,
                 role: 'customer'
             }
         };
@@ -293,6 +297,115 @@ export class AuthService {
         if (!token) return { success: true };
         await revokeToken(token, userId);
         return { success: true };
+    }
+
+    /**
+     * Synchronizes an Auth0 authenticated user into MongoDB and returns a valid Laundelle backend JWT token.
+     */
+    static async syncAuth0User(body: any, clientIp: string = 'unknown') {
+        const { email, name, sub, picture } = body || {};
+        if (!email) {
+            throw new BadRequestError('Email is required for Auth0 synchronization.');
+        }
+
+        const db = await getDb();
+        const formatted = String(email).toLowerCase().trim();
+
+        // Check if user already exists by auth0_sub or email
+        const queryConditions: any[] = [{ email: formatted }];
+        if (sub) {
+            queryConditions.unshift({ auth0_sub: sub });
+        }
+
+        let user = await db.collection('users').findOne({ $or: queryConditions });
+        const now = new Date().toISOString();
+
+        if (!user) {
+            const internalDbId = new ObjectId().toHexString();
+            const customerId = generateCustomerId();
+            const fullName = (name || formatted.split('@')[0] || 'Customer').trim();
+
+            const newUser = {
+                _id: internalDbId as any,
+                publicId: customerId,
+                customerId: customerId,
+                id: customerId,
+                email: formatted,
+                auth0_sub: sub || null,
+                full_name: fullName,
+                phone: '',
+                role: 'customer',
+                avatar_url: picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=03045E&color=CAF0F8&size=128`,
+                wallet_balance: 0,
+                reward_points: 0,
+                customer_status: 'new',
+                addresses: [],
+                preferences: {
+                    detergent: 'Standard',
+                    softener: 'Standard',
+                    fragrance: 'Fresh Linen',
+                    foldingPreference: 'Standard Flat Fold',
+                    starchedShirts: 'No Starch',
+                    smsNotifications: true,
+                    emailReceipts: true,
+                    whatsappUpdates: true,
+                    marketingEmails: false
+                },
+                marketing_consent: false,
+                created_at: now,
+                updated_at: now
+            };
+
+            await db.collection('users').insertOne(newUser);
+            user = newUser;
+
+            await AuditService.recordEvent({
+                entityType: 'user',
+                entityId: customerId,
+                action: 'user_registered_auth0',
+                actorId: customerId,
+                actorRole: 'customer',
+                ipAddress: clientIp
+            });
+        } else {
+            const updateDoc: any = { updated_at: now };
+            if (sub && !user.auth0_sub) updateDoc.auth0_sub = sub;
+            if (picture && (!user.avatar_url || String(user.avatar_url).includes('ui-avatars.com'))) {
+                updateDoc.avatar_url = picture;
+            }
+            if (name && (!user.full_name || user.full_name === formatted.split('@')[0])) {
+                updateDoc.full_name = name;
+            }
+            if (Object.keys(updateDoc).length > 1) {
+                await db.collection('users').updateOne(
+                    { _id: user._id } as any,
+                    { $set: updateDoc }
+                );
+            }
+        }
+
+        const internalId = String(user._id);
+        const publicId = user.publicId || user.customerId || user.id || internalId;
+        const role = user.role || 'customer';
+        const token = signJwt({ sub: internalId, email: formatted, role });
+
+        const phone = user.phone || '';
+        const needsProfileCompletion = !phone || phone.trim() === '';
+
+        return {
+            token,
+            needsProfileCompletion,
+            user: {
+                id: publicId,
+                publicId,
+                customerId: publicId,
+                internalId,
+                email: user.email,
+                name: user.full_name,
+                phone,
+                role
+            }
+        };
     }
 }
 

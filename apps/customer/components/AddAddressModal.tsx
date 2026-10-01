@@ -234,25 +234,8 @@ export const AddAddressModal: React.FC<AddAddressModalProps> = ({
           </button>
         </div>
 
-        {/* GPS Location Highlight Card */}
-        <div className="rounded-2xl bg-gradient-to-br from-[#f0f7ff] to-[#e6f0ff] p-4 border border-[#cbe0ff] space-y-3 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-bold text-navy">
-              <Compass className="w-4 h-4 text-[#1d5bd8]" />
-              <span>Exact GPS Coordinates for Delivery Boy</span>
-            </div>
-            {coordinates && (
-              <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-                <Check className="w-3 h-3 stroke-[3]" />
-                <span>GPS Ready</span>
-              </span>
-            )}
-          </div>
-
-          <p className="text-xs text-slate-600 leading-relaxed">
-            Auto-capture your exact device coordinates so the delivery driver can navigate directly to your precise spot using Google Maps.
-          </p>
-
+        {/* GPS Location Button */}
+        <div className="space-y-3">
           <button
             type="button"
             onClick={handleGetLocation}
@@ -262,12 +245,12 @@ export const AddAddressModal: React.FC<AddAddressModalProps> = ({
             {isLocating ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin text-white" />
-                <span>Locating GPS & nearby postcodes...</span>
+                <span>Getting current location...</span>
               </>
             ) : (
               <>
                 <Navigation className="w-4 h-4 text-[#60a5fa]" />
-                <span>📍 Use my current location</span>
+                <span>Get current location</span>
               </>
             )}
           </button>

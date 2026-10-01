@@ -38,10 +38,10 @@ export default function AdminPage() {
           setSession(getStoredSession());
         }}
         onNavigateToCustomer={() => {
-          window.location.href = process.env.NEXT_PUBLIC_CUSTOMER_URL || (process.env.NODE_ENV === 'production' ? 'https://laundelle.co.uk' : 'http://localhost:3000');
+          window.location.href = process.env.NEXT_PUBLIC_CUSTOMER_URL || 'http://localhost:3000';
         }}
         onNavigateToManagerLogin={() => {
-          const opsBase = process.env.NEXT_PUBLIC_OPERATIONS_URL || (process.env.NODE_ENV === 'production' ? 'https://ops.laundelle.co.uk' : 'http://localhost:3001');
+          const opsBase = process.env.NEXT_PUBLIC_OPERATIONS_URL || 'http://localhost:3001';
           window.location.href = `${opsBase}/manager`;
         }}
       />

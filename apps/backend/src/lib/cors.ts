@@ -13,6 +13,10 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
   'http://127.0.0.1:3002',
+  'https://pqd8t2s4-3000.inc1.devtunnels.ms',
+  'https://pqd8t2s4-3001.inc1.devtunnels.ms',
+  'https://pqd8t2s4-3002.inc1.devtunnels.ms',
+  'https://pqd8t2s4-4000.inc1.devtunnels.ms',
 ];
 
 function getAllowedOrigins(): string[] {
@@ -32,6 +36,15 @@ function getAllowedOrigins(): string[] {
 export function isOriginAllowed(origin: string | null | undefined): boolean {
   if (!origin) return false;
   if (process.env.NODE_ENV !== 'production') return true;
+
+  if (
+    origin.includes('.ngrok-free.app') ||
+    origin.includes('.ngrok.io') ||
+    origin.includes('.github.dev') ||
+    origin.includes('.devtunnels.ms')
+  ) {
+    return true;
+  }
 
   const allowedOrigins = getAllowedOrigins();
   return allowedOrigins.includes(origin);

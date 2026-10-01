@@ -174,7 +174,7 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
               <div className="flex items-center justify-between p-3.5 bg-gray-50 rounded-2xl">
                 <div>
                   <span className="text-xs font-bold text-gray-900 block">Marketing & Seasonal Promos</span>
-                  <span className="text-[11px] text-gray-500">Exclusive subscriber vouchers</span>
+                  <span className="text-[11px] text-gray-500">Exclusive customer vouchers</span>
                 </div>
                 <input
                   type="checkbox"

@@ -504,9 +504,31 @@ export class NotificationService {
     const safeLimit = Math.min(Math.max(1, limit), 100);
     const skip = (Math.max(1, page) - 1) * safeLimit;
 
-    const total = await collection.countDocuments({ userId } as any);
+    // Resolve possible IDs for user
+    const possibleIds = new Set<string>([userId]);
+    try {
+      const userDoc = await db.collection('users').findOne({
+        $or: [
+          { _id: userId as any },
+          { id: userId },
+          { customerId: userId },
+          { publicId: userId },
+          { auth0_sub: userId }
+        ]
+      });
+      if (userDoc) {
+        if (userDoc._id) possibleIds.add(String(userDoc._id));
+        if (userDoc.customerId) possibleIds.add(String(userDoc.customerId));
+        if (userDoc.publicId) possibleIds.add(String(userDoc.publicId));
+        if (userDoc.id) possibleIds.add(String(userDoc.id));
+      }
+    } catch {}
+
+    const filter = { userId: { $in: Array.from(possibleIds) } };
+
+    const total = await collection.countDocuments(filter as any);
     const notifications = await collection
-      .find({ userId } as any)
+      .find(filter as any)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(safeLimit)

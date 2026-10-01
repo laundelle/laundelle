@@ -47,10 +47,18 @@ export const ManagerStaffView: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
 
   // Edit Modal State
+  const parsePhone = (raw?: string) => {
+    if (!raw) return { code: '+44', num: '' };
+    const match = raw.match(/^(\+\d{1,4})\s*(.*)$/);
+    if (match) return { code: match[1], num: match[2].trim() };
+    return { code: '+44', num: raw.replace(/^\+44/, '').trim() };
+  };
+
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
+  const [editPhoneCountryCode, setEditPhoneCountryCode] = useState('+44');
   const [editPhone, setEditPhone] = useState('');
   const [editIsActive, setEditIsActive] = useState(true);
   const [editAvailability, setEditAvailability] = useState<'available' | 'busy' | 'offline'>('available');
@@ -63,6 +71,7 @@ export const ManagerStaffView: React.FC = () => {
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
+  const [newPhoneCountryCode, setNewPhoneCountryCode] = useState('+44');
   const [newPhone, setNewPhone] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newVehicle, setNewVehicle] = useState('');
@@ -95,7 +104,9 @@ export const ManagerStaffView: React.FC = () => {
     setEditingStaff(staff);
     setEditName(staff.full_name || '');
     setEditEmail(staff.email || '');
-    setEditPhone(staff.phone || '');
+    const p = parsePhone(staff.phone);
+    setEditPhoneCountryCode(p.code);
+    setEditPhone(p.num);
     setEditIsActive(staff.is_active !== false);
     setEditAvailability(staff.availability || (staff.status as any) || 'available');
     setEditVehicle(staff.vehicle || '');
@@ -111,10 +122,11 @@ export const ManagerStaffView: React.FC = () => {
     if (!editingStaff) return;
     setSaving(true);
 
+    const fullEditPhone = editPhone.trim() ? `${editPhoneCountryCode} ${editPhone.trim().replace(/^0/, '')}`.trim() : '';
     const payload: any = {
       full_name: editName.trim(),
       email: editEmail.trim(),
-      phone: editPhone.trim(),
+      phone: fullEditPhone,
       is_active: editIsActive,
       availability: editAvailability,
       // NOTE: assigned_postcodes not sent — managed via plant service area
@@ -160,10 +172,11 @@ export const ManagerStaffView: React.FC = () => {
 
     setAdding(true);
 
+    const fullNewPhone = newPhone.trim() ? `${newPhoneCountryCode} ${newPhone.trim().replace(/^0/, '')}`.trim() : '';
     const payload: any = {
       full_name: newName.trim(),
       email: newEmail.trim(),
-      phone: newPhone.trim(),
+      phone: fullNewPhone,
       password: newPassword.trim(),
       role: newRole,
       is_active: true,
@@ -612,13 +625,29 @@ export const ManagerStaffView: React.FC = () => {
 
                 <div>
                   <label className="text-xs font-bold text-gray-700 block mb-1">Phone Number</label>
-                  <input
-                    type="text"
-                    value={editPhone}
-                    onChange={(e) => setEditPhone(e.target.value)}
-                    placeholder="+44 7700 900000"
-                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-[#0077B6] focus:bg-white"
-                  />
+                  <div className="flex gap-2">
+                    <select
+                      value={editPhoneCountryCode}
+                      onChange={(e) => setEditPhoneCountryCode(e.target.value)}
+                      className="w-24 px-2 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-[#03045E] focus:outline-hidden focus:border-[#0077B6] cursor-pointer shrink-0"
+                    >
+                      <option value="+44">UK (+44)</option>
+                      <option value="+1">US (+1)</option>
+                      <option value="+91">IN (+91)</option>
+                      <option value="+971">AE (+971)</option>
+                      <option value="+61">AU (+61)</option>
+                      <option value="+33">FR (+33)</option>
+                      <option value="+49">DE (+49)</option>
+                      <option value="+353">IE (+353)</option>
+                    </select>
+                    <input
+                      type="tel"
+                      value={editPhone}
+                      onChange={(e) => setEditPhone(e.target.value)}
+                      placeholder="7700 900000"
+                      className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-[#0077B6] focus:bg-white"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -809,13 +838,29 @@ export const ManagerStaffView: React.FC = () => {
 
                 <div>
                   <label className="text-xs font-bold text-gray-700 block mb-1">Phone Number</label>
-                  <input
-                    type="text"
-                    placeholder="+44 7700 900505"
-                    value={newPhone}
-                    onChange={(e) => setNewPhone(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-[#0077B6] focus:bg-white"
-                  />
+                  <div className="flex gap-2">
+                    <select
+                      value={newPhoneCountryCode}
+                      onChange={(e) => setNewPhoneCountryCode(e.target.value)}
+                      className="w-24 px-2 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-[#03045E] focus:outline-hidden focus:border-[#0077B6] cursor-pointer shrink-0"
+                    >
+                      <option value="+44">UK (+44)</option>
+                      <option value="+1">US (+1)</option>
+                      <option value="+91">IN (+91)</option>
+                      <option value="+971">AE (+971)</option>
+                      <option value="+61">AU (+61)</option>
+                      <option value="+33">FR (+33)</option>
+                      <option value="+49">DE (+49)</option>
+                      <option value="+353">IE (+353)</option>
+                    </select>
+                    <input
+                      type="tel"
+                      placeholder="7700 900505"
+                      value={newPhone}
+                      onChange={(e) => setNewPhone(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-[#0077B6] focus:bg-white"
+                    />
+                  </div>
                 </div>
               </div>
 

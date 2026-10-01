@@ -18,8 +18,16 @@ export const AdminStaffView: React.FC = () => {
 
 
   // New admin member form state
+  const parsePhone = (raw?: string) => {
+    if (!raw) return { code: '+44', num: '' };
+    const match = raw.match(/^(\+\d{1,4})\s*(.*)$/);
+    if (match) return { code: match[1], num: match[2].trim() };
+    return { code: '+44', num: raw.replace(/^\+44/, '').trim() };
+  };
+
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [phoneCountryCode, setPhoneCountryCode] = useState('+44');
   const [phone, setPhone] = useState('');
   const [role, setRole] = useState('manager');
   const [password, setPassword] = useState('');
@@ -39,6 +47,7 @@ export const AdminStaffView: React.FC = () => {
   const [vehicleReg, setVehicleReg] = useState('');
   const [licenseNum, setLicenseNum] = useState('');
   const [emergencyName, setEmergencyName] = useState('');
+  const [emergencyPhoneCountryCode, setEmergencyPhoneCountryCode] = useState('+44');
   const [emergencyPhone, setEmergencyPhone] = useState('');
 
 
@@ -122,6 +131,7 @@ export const AdminStaffView: React.FC = () => {
     setEditingStaff(null);
     setFullName('');
     setEmail('');
+    setPhoneCountryCode('+44');
     setPhone('');
     setRole('manager');
     setPassword('');
@@ -132,6 +142,7 @@ export const AdminStaffView: React.FC = () => {
     setVehicleReg('');
     setLicenseNum('');
     setEmergencyName('');
+    setEmergencyPhoneCountryCode('+44');
     setEmergencyPhone('');
     setSelectedManagerId('');
     setManagerPlantPreview(null);
@@ -142,7 +153,9 @@ export const AdminStaffView: React.FC = () => {
     setEditingStaff(stf);
     setFullName(stf.fullName);
     setEmail(stf.email);
-    setPhone(stf.phone);
+    const parsedP = parsePhone(stf.phone);
+    setPhoneCountryCode(parsedP.code);
+    setPhone(parsedP.num);
     setRole(stf.role);
     setPassword('');
     setPlantId(stf.plantId || '');
@@ -152,7 +165,9 @@ export const AdminStaffView: React.FC = () => {
     setVehicleReg(stf.vehicleReg || '');
     setLicenseNum(stf.licenseNum || '');
     setEmergencyName(stf.emergencyContact?.name || '');
-    setEmergencyPhone(stf.emergencyContact?.phone || '');
+    const parsedEP = parsePhone(stf.emergencyContact?.phone);
+    setEmergencyPhoneCountryCode(parsedEP.code);
+    setEmergencyPhone(parsedEP.num);
     setModalOpen(true);
   };
 
@@ -185,10 +200,11 @@ export const AdminStaffView: React.FC = () => {
       // manager requires a plant — OK to leave empty (warning only)
     }
 
+    const fullPhone = phone.trim() ? `${phoneCountryCode} ${phone.trim().replace(/^0/, '')}`.trim() : '';
     const staffData: any = {
       full_name: fullName,
       email,
-      phone,
+      phone: fullPhone,
       role,
       is_active: isActive,
     };
@@ -205,7 +221,8 @@ export const AdminStaffView: React.FC = () => {
         staffData.vehicle_type = vehicleType;
         staffData.vehicle_reg = vehicleReg.trim().toUpperCase();
         staffData.license_number = licenseNum.trim();
-        staffData.emergency_contact = { name: emergencyName.trim(), phone: emergencyPhone.trim() };
+        const fullEmergPhone = emergencyPhone.trim() ? `${emergencyPhoneCountryCode} ${emergencyPhone.trim().replace(/^0/, '')}`.trim() : '';
+        staffData.emergency_contact = { name: emergencyName.trim(), phone: fullEmergPhone };
         staffData.vehicle = `${vehicleType} - ${vehicleReg.trim().toUpperCase()}`;
       }
     } else if (role === 'manager') {
@@ -842,14 +859,30 @@ export const AdminStaffView: React.FC = () => {
 
               <div>
                 <label className="block font-bold text-gray-700 mb-1">Phone Number</label>
-                <input
-                  type="text"
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="e.g. +44 7700 900505"
-                  className="w-full px-4 py-2.5 bg-gray-50 border rounded-xl font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
-                />
+                <div className="flex gap-2">
+                  <select
+                    value={phoneCountryCode}
+                    onChange={(e) => setPhoneCountryCode(e.target.value)}
+                    className="w-24 px-2 py-2.5 bg-gray-50 border rounded-xl text-xs font-bold text-[#03045E] focus:ring-2 focus:ring-[#03045E] focus:outline-hidden cursor-pointer shrink-0"
+                  >
+                    <option value="+44">UK (+44)</option>
+                    <option value="+1">US (+1)</option>
+                    <option value="+91">IN (+91)</option>
+                    <option value="+971">AE (+971)</option>
+                    <option value="+61">AU (+61)</option>
+                    <option value="+33">FR (+33)</option>
+                    <option value="+49">DE (+49)</option>
+                    <option value="+353">IE (+353)</option>
+                  </select>
+                  <input
+                    type="tel"
+                    required
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="7700 900505"
+                    className="w-full px-4 py-2.5 bg-gray-50 border rounded-xl font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+                  />
+                </div>
               </div>
 
               <div>
@@ -1065,13 +1098,29 @@ export const AdminStaffView: React.FC = () => {
                     </div>
                     <div>
                       <label className="block font-bold text-gray-700 mb-1 text-[11px]">Emergency Phone</label>
-                      <input
-                        type="text"
-                        value={emergencyPhone}
-                        onChange={(e) => setEmergencyPhone(e.target.value)}
-                        placeholder="e.g. +44 7700 900111"
-                        className="w-full px-3 py-2 bg-white border rounded-xl text-xs focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
-                      />
+                      <div className="flex gap-1.5">
+                        <select
+                          value={emergencyPhoneCountryCode}
+                          onChange={(e) => setEmergencyPhoneCountryCode(e.target.value)}
+                          className="w-20 px-1.5 py-2 bg-white border rounded-xl text-[11px] font-bold text-[#03045E] focus:ring-2 focus:ring-[#03045E] focus:outline-hidden cursor-pointer shrink-0"
+                        >
+                          <option value="+44">+44</option>
+                          <option value="+1">+1</option>
+                          <option value="+91">+91</option>
+                          <option value="+971">+971</option>
+                          <option value="+61">+61</option>
+                          <option value="+33">+33</option>
+                          <option value="+49">+49</option>
+                          <option value="+353">+353</option>
+                        </select>
+                        <input
+                          type="tel"
+                          value={emergencyPhone}
+                          onChange={(e) => setEmergencyPhone(e.target.value)}
+                          placeholder="7700 900111"
+                          className="w-full px-3 py-2 bg-white border rounded-xl text-xs focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>

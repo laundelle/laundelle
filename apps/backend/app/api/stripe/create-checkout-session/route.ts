@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
             expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
         });
 
-        const origin = req.headers.get('origin') || process.env.CUSTOMER_APP_URL || (process.env.NODE_ENV === 'production' ? 'https://laundelle.co.uk' : 'http://localhost:3000');
+        const origin = req.headers.get('origin') || process.env.CUSTOMER_APP_URL || process.env.APP_URL || 'http://localhost:3000';
 
         const line_items = [{
             price_data: {

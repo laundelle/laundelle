@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Shirt, Sparkles, Filter, Info, ShoppingBag, ChevronDown, Clock, Droplets, ShieldCheck, Star, X, Zap, Award, CheckCircle2, Leaf, ArrowRight } from 'lucide-react';
+import { Search, Shirt, Sparkles, Filter, Info, ShoppingBag, ChevronDown, Clock, Droplets, ShieldCheck, Star, X, Zap, Award, CheckCircle2, ArrowRight } from 'lucide-react';
 import { ServiceItem, ActiveTab } from '@laundelle/types';
 import { ScrollReveal } from '@laundelle/ui';
 
@@ -38,8 +38,6 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [simulatedWeight, setSimulatedWeight] = useState<number>(6);
-  const [selectedTreatment, setSelectedTreatment] = useState<'eco' | 'ozone' | 'steam'>('ozone');
   const [showAiImage, setShowAiImage] = useState<boolean>(false);
   const [isAiMinimized, setIsAiMinimized] = useState<boolean>(false);
 
@@ -288,170 +286,10 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
       )}
 
       {/* ==================================================== */}
-      {/* 🚀 CRAZY AWESOME: FABRIC SPA LAB & LIVE ESTIMATOR     */}
+      {/* 🚀 UNRIVALED ADVANTAGES                                */}
       {/* ==================================================== */}
       <div className="w-full space-y-12 mt-16 pt-4">
-        {/* SECTION 1: THE SMART FABRIC SPA INTERACTIVE CALCULATOR */}
-        <ScrollReveal yOffset={28} className="w-full">
-          <div className="relative rounded-3xl sm:rounded-[36px] bg-gradient-to-br from-[#03045E] via-[#023E8A] to-[#0077B6] text-white p-6 sm:p-10 lg:p-12 shadow-2xl overflow-hidden border border-[#48CAE4]/30">
-            {/* Ambient Lighting & Holographic Glow */}
-            <div className="absolute -top-32 -left-32 w-96 h-96 bg-[#00B4D8]/25 rounded-full blur-[100px] pointer-events-none" />
-            <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-[#90E0EF]/20 rounded-full blur-[100px] pointer-events-none" />
-
-            <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
-              {/* Left Column: Interactive Controls */}
-              <div className="lg:col-span-7 space-y-6">
-                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-[#CAF0F8] text-xs font-black tracking-wider uppercase">
-                  <Sparkles className="w-3.5 h-3.5 text-[#48CAE4] animate-spin" />
-                  <span>Next-Gen Laundry Science</span>
-                </div>
-
-                <div className="space-y-2">
-                  <h2 className="text-2xl sm:text-4xl lg:text-5xl font-heading font-black tracking-tight leading-tight text-white">
-                    Estimate Your Load in <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#48CAE4] via-[#90E0EF] to-white">Real Time</span>
-                  </h2>
-                  <p className="text-white/80 text-xs sm:text-sm font-medium leading-relaxed max-w-xl">
-                    Drag the slider to preview instant laundry pricing, eco-water conservation metrics, and guaranteed turnaround speeds.
-                  </p>
-                </div>
-
-                {/* Slider Box */}
-                <div className="bg-white/10 backdrop-blur-xl border border-white/15 rounded-2xl p-5 space-y-4 shadow-inner">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-[#CAF0F8] uppercase tracking-wider">
-                      Total Garment Weight
-                    </span>
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-2xl sm:text-3xl font-black text-white">{simulatedWeight}</span>
-                      <span className="text-xs font-bold text-[#90E0EF]">KG (~{simulatedWeight * 5} Clothes)</span>
-                    </div>
-                  </div>
-
-                  {/* Range Input with custom slider */}
-                  <input
-                    type="range"
-                    min="2"
-                    max="20"
-                    step="1"
-                    value={simulatedWeight}
-                    onChange={(e) => setSimulatedWeight(Number(e.target.value))}
-                    className="w-full h-2.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#48CAE4]"
-                  />
-
-                  <div className="flex justify-between text-[11px] text-white/60 font-semibold">
-                    <span>2 kg (Daily Wear)</span>
-                    <span>10 kg (Weekly Family)</span>
-                    <span>20 kg (Mega Haul)</span>
-                  </div>
-                </div>
-
-                {/* Treatment Switcher */}
-                <div className="space-y-2">
-                  <span className="text-xs font-extrabold uppercase tracking-wider text-[#CAF0F8]">
-                    Select Fiber Spa Mode:
-                  </span>
-                  <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                    {[
-                      { id: 'eco', label: 'Eco Enzyme', desc: '100% Organic Clean', icon: Leaf },
-                      { id: 'ozone', label: 'Ozone Shield', desc: '99.9% Bacteria Kill', icon: ShieldCheck },
-                      { id: 'steam', label: 'Italian Steam', desc: 'Runway Crisp Finish', icon: Zap },
-                    ].map((t) => {
-                      const Icon = t.icon;
-                      const isActive = selectedTreatment === t.id;
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          onClick={() => setSelectedTreatment(t.id as any)}
-                          className={`p-3 rounded-2xl text-left transition-all cursor-pointer border ${isActive
-                              ? 'bg-white text-[#03045E] border-white shadow-xl scale-102 font-bold'
-                              : 'bg-white/5 hover:bg-white/10 text-white/90 border-white/15'
-                            }`}
-                        >
-                          <div className="flex items-center gap-2 mb-1">
-                            <Icon className={`w-4 h-4 ${isActive ? 'text-[#1D4ED8]' : 'text-[#48CAE4]'}`} />
-                            <span className="text-xs font-extrabold leading-tight">{t.label}</span>
-                          </div>
-                          <span className={`text-[10px] leading-tight block ${isActive ? 'text-slate-500 font-medium' : 'text-white/60'}`}>
-                            {t.desc}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* Right Column: Live Dynamic Metrics Card */}
-              <div className="lg:col-span-5">
-                <div className="bg-white rounded-3xl p-6 sm:p-7 text-slate-800 shadow-2xl border border-white/80 relative space-y-5">
-                  {/* Floating Live Badge */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
-                      <span className="text-xs font-extrabold text-emerald-700 uppercase tracking-wider">
-                        Live Smart Estimate
-                      </span>
-                    </div>
-                    <span className="px-3 py-1 rounded-full bg-[#EFF6FF] text-[#1D4ED8] text-[11px] font-black">
-                      ⚡ 30-Min Doorstep Pickup
-                    </span>
-                  </div>
-
-                  {/* Main Estimated Cost */}
-                  <div className="bg-slate-50/90 rounded-2xl p-4 border border-slate-100 flex items-baseline justify-between">
-                    <div>
-                      <span className="text-xs font-bold text-slate-400 block uppercase">Est. Wash & Fold</span>
-                      <span className="text-3xl sm:text-4xl font-black text-[#03045E] tracking-tight">
-                        £{(simulatedWeight * 4.2).toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-xs font-bold text-emerald-600 block">✓ Free Delivery</span>
-                      <span className="text-xs text-slate-400 font-medium">Ready in 24 Hrs</span>
-                    </div>
-                  </div>
-
-                  {/* Eco & Quality Stats Grid */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-[#EFF6FF] rounded-2xl p-3.5 border border-[#BFDBFE]/50 space-y-1">
-                      <div className="flex items-center gap-1.5 text-[#1D4ED8] font-bold text-xs">
-                        <Droplets className="w-3.5 h-3.5" />
-                        <span>Water Conserved</span>
-                      </div>
-                      <span className="text-lg font-extrabold text-[#03045E]">{simulatedWeight * 8.5} Liters</span>
-                      <p className="text-[10px] text-slate-500 leading-tight">Vs home machine washing</p>
-                    </div>
-
-                    <div className="bg-[#F0FDF4] rounded-2xl p-3.5 border border-[#BBF7D0]/50 space-y-1">
-                      <div className="flex items-center gap-1.5 text-emerald-700 font-bold text-xs">
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                        <span>Sanitization</span>
-                      </div>
-                      <span className="text-lg font-extrabold text-emerald-800">99.9% Sterile</span>
-                      <p className="text-[10px] text-slate-500 leading-tight">Micro-pathogen free</p>
-                    </div>
-                  </div>
-
-                  {/* Direct Action Button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (onNavigate) onNavigate('assistant');
-                    }}
-                    className="w-full bg-gradient-to-r from-[#1D4ED8] via-[#0284C7] to-[#03045E] hover:from-[#1E40AF] hover:to-[#023E8A] active:scale-98 text-white font-extrabold text-sm py-3.5 px-6 rounded-2xl shadow-lg hover:shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    <Sparkles className="w-4 h-4 text-[#90E0EF]" />
-                    <span>Book Custom Wash With AI</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </ScrollReveal>
-
-        {/* SECTION 2: 4 HOLOGRAPHIC CRAZY ADVANTAGES */}
+        {/* SECTION: 4 HOLOGRAPHIC CRAZY ADVANTAGES */}
         <ScrollReveal yOffset={28} className="w-full">
           <div className="space-y-6">
             <div className="text-center space-y-2 max-w-2xl mx-auto">

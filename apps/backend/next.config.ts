@@ -13,6 +13,10 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
   'http://127.0.0.1:3002',
+  'https://pqd8t2s4-3000.inc1.devtunnels.ms',
+  'https://pqd8t2s4-3001.inc1.devtunnels.ms',
+  'https://pqd8t2s4-3002.inc1.devtunnels.ms',
+  'https://pqd8t2s4-4000.inc1.devtunnels.ms',
 ];
 
 function getAllowedOrigins(): string[] {
@@ -56,7 +60,23 @@ const nextConfig: NextConfig = {
       ],
     }));
 
+    const tunnelHeader = {
+      source: '/api/:path*',
+      has: [
+        {
+          type: 'header' as const,
+          key: 'origin',
+          value: '(?<tunnelOrigin>https?://.*(?:ngrok-free\\.app|ngrok\\.io|github\\.dev|devtunnels\\.ms).*)',
+        },
+      ],
+      headers: [
+        { key: 'Access-Control-Allow-Origin', value: ':tunnelOrigin' },
+        { key: 'Access-Control-Allow-Credentials', value: 'true' },
+      ],
+    };
+
     return [
+      tunnelHeader,
       {
         source: '/api/:path*',
         headers: [

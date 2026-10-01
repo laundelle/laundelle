@@ -22,9 +22,10 @@ import { SupportView } from '../components/SupportView';
 import { NotificationsView } from '../components/NotificationsView';
 import { AccountView } from '../components/AccountView';
 import { AIAssistantView } from '../components/AIAssistantView';
-import { SubscriptionsView } from '../components/SubscriptionsView';
 import { OrderPlacedAnimationModal } from '../components/OrderPlacedAnimationModal';
+import { useAuth0 } from '@auth0/auth0-react';
 import { CustomerAuthModal } from '../components/CustomerAuthModal';
+import { CompleteProfileModal } from '../components/CompleteProfileModal';
 import { parseCurrentRoute, navigateToRoute, AuthSession, UserRole } from '@laundelle/utils';
 import { Footer } from '../components/Footer';
 import {
@@ -39,7 +40,8 @@ import {
   dbFetchNotifications,
   clearSession,
   dbFetchServices,
-  dbCancelOrder
+  dbCancelOrder,
+  dbAuth0Sync
 } from '@laundelle/api-client';
 
 export default function App({ initialTab }: { initialTab?: string }) {
@@ -51,7 +53,6 @@ export default function App({ initialTab }: { initialTab?: string }) {
       const p = window.location.pathname.replace(/^\//, '');
       if (p === 'orders') return 'orders';
       if (p === 'services') return 'services';
-      if (p === 'subscriptions') return 'subscriptions';
       if (p === 'support') return 'support';
       if (p === 'notifications') return 'notifications';
       if (p === 'account') return 'account';
@@ -182,7 +183,6 @@ export default function App({ initialTab }: { initialTab?: string }) {
 
     let path = '/home';
     if (activeTab === 'services') path = '/services';
-    else if (activeTab === 'subscriptions') path = '/subscriptions';
     else if (activeTab === 'orders') path = '/orders';
     else if (activeTab === 'support') path = '/support';
     else if (activeTab === 'notifications') path = '/notifications';
@@ -318,11 +318,88 @@ export default function App({ initialTab }: { initialTab?: string }) {
   };
 
   // Auth Session State
+  const {
+    isAuthenticated: isAuth0Authenticated,
+    user: auth0User,
+    isLoading: isAuth0Loading,
+    loginWithRedirect,
+  } = useAuth0();
+
   const [authSession, setAuthSession] = useState<AuthSession>({
     role: null,
     user: null,
     isAuthenticated: false,
   });
+
+  const handleOpenCustomerAuth = (screenHint?: 'signup') => {
+    try {
+      if (typeof window !== 'undefined' && cartDrawerOpen) {
+        localStorage.setItem('laundelle_open_cart', 'true');
+      }
+    } catch {}
+    loginWithRedirect({
+      authorizationParams: {
+        screen_hint: screenHint,
+      },
+    });
+  };
+
+  // Sync Auth0 authenticated user into backend and app session
+  React.useEffect(() => {
+    let isCancelled = false;
+
+    const syncAuth0 = async () => {
+      if (!isAuth0Loading && isAuth0Authenticated && auth0User) {
+        const email = auth0User.email || '';
+        const name = auth0User.name || auth0User.nickname || email.split('@')[0] || 'Customer';
+        const sub = auth0User.sub || '';
+        const picture = auth0User.picture;
+
+        try {
+          const syncResult = await dbAuth0Sync({ email, name, sub, picture });
+          if (isCancelled) return;
+
+          if (syncResult.user && syncResult.token) {
+            setAuthSession({
+              role: 'customer',
+              user: {
+                id: syncResult.user.id,
+                name: syncResult.user.name || name,
+                email: syncResult.user.email || email,
+                role: 'customer',
+                roleLabel: 'Customer Account',
+              },
+              isAuthenticated: true,
+            });
+
+            // Prompt user for Username & Mobile Number if missing (e.g. after Google OAuth signup)
+            if (syncResult.needsProfileCompletion || !syncResult.user?.phone) {
+              setCompleteProfileModalOpen(true);
+            }
+          }
+        } catch (err) {
+          console.error('[AppClient] Failed to sync Auth0 session with backend:', err);
+        }
+
+        // Restore cart drawer if user was checking out before login redirect
+        try {
+          if (typeof window !== 'undefined') {
+            const shouldOpenCart = localStorage.getItem('laundelle_open_cart') === 'true';
+            if (shouldOpenCart) {
+              localStorage.removeItem('laundelle_open_cart');
+              setCartDrawerOpen(true);
+            }
+          }
+        } catch {}
+      }
+    };
+
+    syncAuth0();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isAuth0Loading, isAuth0Authenticated, auth0User]);
 
   // Restore MongoDB auth session from localStorage on mount
   React.useEffect(() => {
@@ -367,11 +444,17 @@ export default function App({ initialTab }: { initialTab?: string }) {
   // Fetch MongoDB user data: Profile, Orders, Notifications
   React.useEffect(() => {
     const syncData = async () => {
-      if (authSession.isAuthenticated && authSession.role === 'customer' && authSession.user?.id) {
+      const stored = getStoredSession();
+      if (authSession.isAuthenticated && authSession.role === 'customer' && authSession.user?.id && stored?.token) {
         try {
           const userId = authSession.user.id;
           const p = await dbFetchProfile(userId);
           setProfile(p);
+
+          // Prompt user to complete profile if mobile number is missing in MongoDB
+          if (p && (!p.phone || p.phone.trim() === '')) {
+            setCompleteProfileModalOpen(true);
+          }
 
           const o = await dbFetchOrders(userId);
           setOrders(o);
@@ -381,7 +464,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
         } catch (e) {
           console.error('[AppClient] Failed to load user data from MongoDB:', e);
         }
-      } else {
+      } else if (!authSession.isAuthenticated) {
         setProfile({
           name: '',
           email: '',
@@ -482,6 +565,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
 
   // Customer Auth Modal State
   const [customerAuthOpen, setCustomerAuthOpen] = useState(false);
+  const [completeProfileModalOpen, setCompleteProfileModalOpen] = useState(false);
 
   // Hash Router URL State
   const [currentRoute, setCurrentRoute] = useState(parseCurrentRoute());
@@ -529,7 +613,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
         unreadNotificationsCount={unreadNotificationsCount}
         onOpenCart={() => setCartDrawerOpen(true)}
         onOpenPostcodeModal={() => setPostcodeModalOpen(true)}
-        onOpenCustomerAuth={() => setCustomerAuthOpen(true)}
+        onOpenCustomerAuth={() => handleOpenCustomerAuth()}
         onNavigateRoleLogin={handleNavigateRoleLogin}
         customerUser={authSession.role === 'customer' ? authSession.user : null}
         onOpenSchedulePickup={() => handleStartBookingWithService()}
@@ -561,10 +645,6 @@ export default function App({ initialTab }: { initialTab?: string }) {
           />
         )}
 
-        {activeTab === 'subscriptions' && (
-          <SubscriptionsView onOpenAuth={() => setCustomerAuthOpen(true)} />
-        )}
-
         {activeTab === 'orders' && (
           authSession.isAuthenticated && authSession.role === 'customer' ? (
             <OrdersView
@@ -590,10 +670,10 @@ export default function App({ initialTab }: { initialTab?: string }) {
               </p>
               <button
                 type="button"
-                onClick={() => setCustomerAuthOpen(true)}
+                onClick={() => handleOpenCustomerAuth()}
                 className="px-6 py-3 bg-[#082b78] hover:bg-[#072465] text-white text-xs font-bold rounded-2xl shadow-sm transition-all cursor-pointer"
               >
-                Sign In / Register
+                Sign In with Auth0
               </button>
             </div>
           )
@@ -670,10 +750,10 @@ export default function App({ initialTab }: { initialTab?: string }) {
                   </p>
                 </div>
                 <button
-                  onClick={() => setCustomerAuthOpen(true)}
+                  onClick={() => handleOpenCustomerAuth()}
                   className="w-full bg-[#03045E] hover:bg-[#023E8A] text-white py-4 rounded-2xl text-xs font-black shadow-xs cursor-pointer transition-colors"
                 >
-                  Sign In to Account
+                  Sign In with Auth0
                 </button>
               </div>
             </div>
@@ -689,7 +769,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
       </main>
 
       {/* Footer */}
-      {['home', 'services', 'subscriptions', 'support'].includes(activeTab) && (
+      {['home', 'services', 'support'].includes(activeTab) && (
         <Footer onNavigate={handleNavigate} onNavigateRoleLogin={handleNavigateRoleLogin} />
       )}
 
@@ -712,7 +792,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
         addresses={profile?.addresses || []}
         onOrderPlaced={handleOrderPlaced}
         isLoggedIn={authSession.isAuthenticated && authSession.role === 'customer'}
-        onRequireLogin={() => setCustomerAuthOpen(true)}
+        onRequireLogin={() => handleOpenCustomerAuth()}
         onAddressAdded={(newAddr) => {
           setProfile((prev) => {
             if (!prev) return prev;
@@ -755,6 +835,39 @@ export default function App({ initialTab }: { initialTab?: string }) {
         onClose={() => setCustomerAuthOpen(false)}
         onLoginSuccess={handleCustomerLoginSuccess}
         onNavigateRoleLogin={handleNavigateRoleLogin}
+      />
+
+      {/* Complete Profile Modal for capturing Username and Mobile Number */}
+      <CompleteProfileModal
+        isOpen={completeProfileModalOpen}
+        userId={authSession.user?.id || getStoredSession()?.user?.id || ''}
+        initialUsername={profile?.name || authSession.user?.name || auth0User?.name || ''}
+        initialPhone={profile?.phone || ''}
+        onSuccess={(updatedName, updatedPhone) => {
+          setCompleteProfileModalOpen(false);
+          if (profile) {
+            setProfile({
+              ...profile,
+              name: updatedName,
+              phone: updatedPhone,
+            });
+          }
+          if (authSession.user) {
+            setAuthSession((prev) => ({
+              ...prev,
+              user: prev.user ? { ...prev.user, name: updatedName } : null,
+            }));
+          }
+          showToast('✅ Profile saved to database successfully!');
+          try {
+            const shouldOpenCart = localStorage.getItem('laundelle_open_cart') === 'true';
+            if (shouldOpenCart) {
+              localStorage.removeItem('laundelle_open_cart');
+              setCartDrawerOpen(true);
+            }
+          } catch {}
+        }}
+        onClose={() => setCompleteProfileModalOpen(false)}
       />
 
       {/* Invoice Modal */}

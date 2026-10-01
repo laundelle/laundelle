@@ -45,8 +45,16 @@ export const ManagerProcessorsView: React.FC = () => {
   const [overrideModalOpen, setOverrideModalOpen] = useState(false);
   const [orderForOverride, setOrderForOverride] = useState<any | null>(null);
 
+  const parsePhone = (raw?: string) => {
+    if (!raw) return { code: '+44', num: '' };
+    const match = raw.match(/^(\+\d{1,4})\s*(.*)$/);
+    if (match) return { code: match[1], num: match[2].trim() };
+    return { code: '+44', num: raw.replace(/^\+44/, '').trim() };
+  };
+
   const [editProcessorModalOpen, setEditProcessorModalOpen] = useState(false);
   const [editingProcessor, setEditingProcessor] = useState<any | null>(null);
+  const [editPhoneCountryCode, setEditPhoneCountryCode] = useState('+44');
   const [editPhone, setEditPhone] = useState('');
   const [editPassword, setEditPassword] = useState('');
 
@@ -94,7 +102,8 @@ export const ManagerProcessorsView: React.FC = () => {
     if (!editingProcessor) return;
     setActionLoading(true);
 
-    const payload: any = { phone: editPhone };
+    const fullEditPhone = editPhone.trim() ? `${editPhoneCountryCode} ${editPhone.trim().replace(/^0/, '')}`.trim() : '';
+    const payload: any = { phone: fullEditPhone };
     if (editPassword) payload.password = editPassword;
 
     const res = await dbManagerUpdateStaff(editingProcessor._id, payload);
@@ -337,7 +346,9 @@ export const ManagerProcessorsView: React.FC = () => {
                           <button
                             onClick={() => {
                               setEditingProcessor(processor);
-                              setEditPhone(processor.phone || '');
+                              const p = parsePhone(processor.phone);
+                              setEditPhoneCountryCode(p.code);
+                              setEditPhone(p.num);
                               setEditPassword('');
                               setEditProcessorModalOpen(true);
                             }}
@@ -527,12 +538,29 @@ export const ManagerProcessorsView: React.FC = () => {
             <form onSubmit={handleSaveProcessorEdit} className="space-y-3.5 text-xs">
               <div>
                 <label className="block font-bold text-gray-700 mb-1">Contact Phone</label>
-                <input
-                  type="text"
-                  value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
-                />
+                <div className="flex gap-2">
+                  <select
+                    value={editPhoneCountryCode}
+                    onChange={(e) => setEditPhoneCountryCode(e.target.value)}
+                    className="w-24 px-2 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-[#03045E] focus:outline-hidden cursor-pointer shrink-0"
+                  >
+                    <option value="+44">UK (+44)</option>
+                    <option value="+1">US (+1)</option>
+                    <option value="+91">IN (+91)</option>
+                    <option value="+971">AE (+971)</option>
+                    <option value="+61">AU (+61)</option>
+                    <option value="+33">FR (+33)</option>
+                    <option value="+49">DE (+49)</option>
+                    <option value="+353">IE (+353)</option>
+                  </select>
+                  <input
+                    type="tel"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    placeholder="7700 900456"
+                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+                  />
+                </div>
               </div>
 
               <div>

@@ -88,6 +88,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     } else {
       setCurrentStep('cart');
       setSubmitError(null);
+      setDeclaredItemCountError(null);
     }
   }, [isOpen]);
 
@@ -112,8 +113,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
   }, [addresses]);
 
-  // Declared Item Count
+  // Declared Item Count (Mandatory)
   const [declaredItemCount, setDeclaredItemCount] = useState<string>('');
+  const [declaredItemCountError, setDeclaredItemCountError] = useState<string | null>(null);
 
   // -------------------------------------------------------------
   // SCREEN 1: SLOTS STATE (DYNAMIC FROM PLANT MANAGER)
@@ -294,7 +296,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     return '';
   });
   const [companyName, setCompanyName] = useState('');
-  const [phone, setPhone] = useState((session?.user as any)?.phone?.replace(/^\+44/, '') || '');
+  const [phoneCountryCode, setPhoneCountryCode] = useState('+44');
+  const [phone, setPhone] = useState(() => {
+    const raw = (session?.user as any)?.phone || '';
+    return raw.replace(/^\+44/, '').trim();
+  });
   const [email, setEmail] = useState(session?.user?.email || '');
   const [contactError, setContactError] = useState<string | null>(null);
 
@@ -304,7 +310,16 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
       if (!firstName && session.user.name) setFirstName(session.user.name.split(' ')[0] || '');
       if (!lastName && session.user.name) setLastName(session.user.name.split(' ').slice(1).join(' ') || '');
       if (!email && session.user.email) setEmail(session.user.email);
-      if (!phone && (session.user as any).phone) setPhone((session.user as any).phone.replace(/^\+44/, ''));
+      if (!phone && (session.user as any).phone) {
+        const raw = (session.user as any).phone;
+        const match = raw.match(/^(\+\d{1,4})(.*)$/);
+        if (match) {
+          setPhoneCountryCode(match[1]);
+          setPhone(match[2].trim());
+        } else {
+          setPhone(raw.replace(/^\+44/, '').trim());
+        }
+      }
     }
   }, [session]);
 
@@ -403,6 +418,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   // Step Validation Handlers
   const handleProceedFromSlots = () => {
     setScheduleError(null);
+    if (!declaredItemCount.trim()) {
+      setScheduleError('Estimated Total Items in Bag is required. Please return to Bag and enter the count.');
+      return;
+    }
     if (!activeAddr) {
       setScheduleError('Please add or select your service location first.');
       return;
@@ -499,7 +518,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           companyName: accountType === 'company' ? companyName.trim() : undefined,
-          phone: `+44${phone.replace(/^\+44/, '').trim()}`,
+          phone: `${phoneCountryCode}${phone.replace(/^\+?[0-9]{1,4}/, '').trim()}`,
           email: email.trim(),
         },
         paymentMethod: 'Pay Online (Stripe)',
@@ -778,24 +797,39 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   ))}
                 </div>
 
-                {/* Declared Item Count (Optional/Helpful) */}
-                <div className="rounded-2xl bg-white p-4 sm:p-5 shadow-xs border border-gray-100 space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-bold text-navy uppercase tracking-wider">
-                    <Shirt className="w-4 h-4 text-[#1d5bd8]" />
-                    <span>Estimated Total Items in Bag</span>
+                {/* Declared Item Count (Mandatory) */}
+                <div className={`rounded-2xl bg-white p-4 sm:p-5 shadow-xs border transition-colors space-y-2 ${declaredItemCountError ? 'border-red-400 bg-red-50/20' : 'border-gray-100'}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-navy uppercase tracking-wider">
+                      <Shirt className="w-4 h-4 text-[#1d5bd8]" />
+                      <span>Estimated Total Items in Bag <span className="text-red-500">*</span></span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">
+                      Required
+                    </span>
                   </div>
-                  <div className="rounded-xl p-3 bg-[#f8fbff] border border-dashed border-[#d0e1fd] flex items-center gap-3">
+                  <div className={`rounded-xl p-3 bg-[#f8fbff] border ${declaredItemCountError ? 'border-red-400' : 'border-dashed border-[#d0e1fd]'} flex items-center gap-3`}>
                     <input
                       type="text"
                       value={declaredItemCount}
-                      onChange={(e) => setDeclaredItemCount(e.target.value)}
+                      onChange={(e) => {
+                        setDeclaredItemCount(e.target.value);
+                        if (e.target.value.trim()) setDeclaredItemCountError(null);
+                      }}
                       placeholder="e.g. 7 (3 shirts, 4 pants)"
                       className="w-full bg-transparent text-xs sm:text-sm font-semibold placeholder:font-normal focus:outline-none text-navy placeholder:text-gray-400"
                     />
                   </div>
-                  <p className="text-[11px] text-gray-400">
-                    Optional: Helpful for our facility staff when weighing and counting garments.
-                  </p>
+                  {declaredItemCountError ? (
+                    <p className="text-xs text-red-600 font-semibold flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{declaredItemCountError}</span>
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-gray-500">
+                      Mandatory: Required for our facility staff when weighing, sorting, and counting garments.
+                    </p>
+                  )}
                 </div>
 
                 {/* Subtotal Banner & Button to proceed */}
@@ -807,7 +841,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     </div>
                     <button
                       type="button"
-                      onClick={() => setCurrentStep('slots')}
+                      onClick={() => {
+                        if (!declaredItemCount.trim()) {
+                          setDeclaredItemCountError('Please enter estimated total items in your bag before proceeding.');
+                          return;
+                        }
+                        setDeclaredItemCountError(null);
+                        setCurrentStep('slots');
+                      }}
                       className="px-8 py-3.5 bg-navy hover:bg-[#072465] text-white text-sm font-bold rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2 active:scale-98"
                     >
                       <span>Proceed to Time Slots</span>
@@ -1310,21 +1351,31 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     </div>
                   </div>
 
-                  {/* Phone with fixed +44 badge */}
+                  {/* Phone with selectable country code (+44 default) */}
                   <div>
                     <label className="block text-xs font-bold text-gray-700 mb-1">
                       Phone <span className="text-red-500">*</span>
                     </label>
                     <div className="relative flex items-center">
-                      <div className="h-11 px-3 bg-gray-100 border border-r-0 border-gray-200 rounded-l-xl text-xs font-bold text-gray-700 flex items-center gap-1.5 shrink-0">
-                        <span>🇬🇧</span>
-                        <span>+44</span>
-                      </div>
+                      <select
+                        value={phoneCountryCode}
+                        onChange={(e) => setPhoneCountryCode(e.target.value)}
+                        className="h-11 px-2.5 bg-gray-100 border border-r-0 border-gray-200 rounded-l-xl text-xs font-bold text-gray-800 focus:outline-none focus:border-[#1d5bd8] cursor-pointer shrink-0"
+                      >
+                        <option value="+44">🇬🇧 +44 (UK)</option>
+                        <option value="+1">🇺🇸 +1 (US)</option>
+                        <option value="+91">🇮🇳 +91 (IN)</option>
+                        <option value="+971">🇦🇪 +971 (AE)</option>
+                        <option value="+61">🇦🇺 +61 (AU)</option>
+                        <option value="+33">🇫🇷 +33 (FR)</option>
+                        <option value="+49">🇩🇪 +49 (DE)</option>
+                        <option value="+353">🇮🇪 +353 (IE)</option>
+                      </select>
                       <input
                         type="tel"
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
-                        placeholder="Your mobile number"
+                        placeholder="7700 900000"
                         className="w-full h-11 px-3.5 rounded-r-xl border border-gray-200 bg-white text-xs font-semibold text-navy focus:outline-none focus:border-[#1d5bd8]"
                       />
                     </div>

@@ -30,7 +30,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   const navItems: { tab: ActiveTab; label: string; icon?: React.ReactNode; isAi?: boolean }[] = [
     { tab: 'home', label: 'Home' },
     { tab: 'services', label: 'Services' },
-    { tab: 'subscriptions', label: 'Subscriptions' },
     { tab: 'orders', label: 'Orders' },
     {
       tab: 'assistant',

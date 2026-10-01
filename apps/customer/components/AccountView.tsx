@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { UserProfile, UserAddress, UserPreferences, RecurringSchedule, ActiveTab } from '@laundelle/types';
 import { mongoSignOut, dbUpdateProfile, apiFetch } from '@laundelle/api-client';
+import { useAuth0 } from '@auth0/auth0-react';
 import { AddAddressModal } from './AddAddressModal';
 
 interface AccountViewProps {
@@ -39,13 +40,23 @@ export const AccountView: React.FC<AccountViewProps> = ({
   onUpdateProfile,
   onNavigate
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'addresses' | 'preferences' | 'recurring' | 'subscriptions' | 'privacy'>('profile');
+  const { logout: auth0Logout, isAuthenticated: isAuth0Authenticated } = useAuth0();
+  const [activeTab, setActiveTab] = useState<'profile' | 'addresses' | 'preferences' | 'recurring' | 'privacy'>('profile');
 
   // Edit Profile modal
+  const parsePhone = (raw?: string) => {
+    if (!raw) return { code: '+44', num: '' };
+    const match = raw.match(/^(\+\d{1,4})\s*(.*)$/);
+    if (match) return { code: match[1], num: match[2].trim() };
+    return { code: '+44', num: raw.replace(/^\+44/, '').trim() };
+  };
+
+  const initialParsed = parsePhone(profile.phone);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
   const [editName, setEditName] = useState(profile.name || 'Mohammed Mehraj');
   const [editEmail, setEditEmail] = useState(profile.email || 'mehraj@gmail.com');
-  const [editPhone, setEditPhone] = useState(profile.phone || '8309664356');
+  const [phoneCountryCode, setPhoneCountryCode] = useState(initialParsed.code || '+44');
+  const [editPhone, setEditPhone] = useState(initialParsed.num || (profile.phone ? profile.phone.replace(/^\+44/, '').trim() : '7700 900123'));
 
   // Address modal
   const [addressModalOpen, setAddressModalOpen] = useState(false);
@@ -60,7 +71,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
   const displayName = profile.name || 'Mohammed Mehraj';
   const displayEmail = profile.email || 'mehraj@gmail.com';
-  const displayPhone = profile.phone || '8309664356';
+  const displayPhone = profile.phone || '+44 7700 900123';
 
   // Compute initials for the avatar badge (e.g. MM)
   const initials = displayName
@@ -72,15 +83,16 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    const fullPhone = `${phoneCountryCode} ${editPhone.trim().replace(/^0/, '')}`.trim();
     const updated = {
       ...profile,
       name: editName.trim(),
       email: editEmail.trim(),
-      phone: editPhone.trim()
+      phone: fullPhone
     };
     onUpdateProfile(updated);
     try {
-      await dbUpdateProfile(profile.name || 'user', editName.trim(), editPhone.trim());
+      await dbUpdateProfile(profile.name || 'user', editName.trim(), fullPhone);
     } catch (err) {
       console.error('Error saving profile:', err);
     }
@@ -190,9 +202,6 @@ export const AccountView: React.FC<AccountViewProps> = ({
                 <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white">
                   {displayName}
                 </h1>
-                <span className="bg-[#00c48c] text-white text-[10px] font-extrabold px-3 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
-                  {(profile as any).membershipTier || 'ECO PLUS MEMBER'}
-                </span>
               </div>
 
               {/* Email & Phone */}
@@ -228,18 +237,18 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
           {/* Right: Quick Action Buttons & Points */}
           <div className="flex items-center gap-2.5 w-full md:w-auto relative z-10 flex-wrap sm:flex-nowrap">
-            {/* Open Plans Button */}
+            {/* Open Orders Button */}
             <button
               type="button"
-              onClick={() => onNavigate('subscriptions')}
+              onClick={() => onNavigate('orders')}
               className="flex-1 sm:flex-initial bg-white/10 hover:bg-white/20 border border-white/15 transition-all p-3 px-4 rounded-2xl flex items-center justify-between sm:justify-start gap-2.5 cursor-pointer shadow-xs active:scale-98 text-left group"
             >
               <div className="w-8 h-8 rounded-xl bg-white/15 text-[#38bdf8] flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                <Calendar className="w-4 h-4" />
+                <Navigation className="w-4 h-4" />
               </div>
               <div>
-                <p className="text-[10px] text-white/70 font-medium">Laundry Plans</p>
-                <p className="text-xs font-black text-white leading-tight">Save 30%</p>
+                <p className="text-[10px] text-white/70 font-medium">Live Tracking</p>
+                <p className="text-xs font-black text-white leading-tight">My Orders</p>
               </div>
             </button>
 
@@ -284,22 +293,22 @@ export const AccountView: React.FC<AccountViewProps> = ({
           MAIN CONTENT AREA (PC 2-COLUMN LAYOUT)
       ========================================================================= */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        {/* Quick Access Mobile Buttons: Plans & Support */}
+        {/* Quick Access Mobile Buttons: Orders & Support */}
         <div className="grid grid-cols-2 gap-3 mb-6 lg:hidden">
           <button
             type="button"
-            onClick={() => onNavigate('subscriptions')}
+            onClick={() => onNavigate('orders')}
             className="bg-white p-3.5 rounded-2xl border border-blue-100 shadow-xs hover:border-blue-300 hover:shadow-sm transition-all flex items-center gap-3 text-left cursor-pointer active:scale-98"
           >
             <div className="w-10 h-10 rounded-xl bg-[#eff6ff] text-[#1d5bd8] flex items-center justify-center shrink-0 shadow-2xs">
-              <Calendar className="w-5 h-5" />
+              <Navigation className="w-5 h-5" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <span className="text-xs font-extrabold text-navy truncate">Plans</span>
-                <span className="text-[9px] bg-blue-100 text-[#1d5bd8] font-bold px-1.5 py-0.2 rounded-md shrink-0">Save 30%</span>
+                <span className="text-xs font-extrabold text-navy truncate">Orders</span>
+                <span className="text-[9px] bg-blue-100 text-[#1d5bd8] font-bold px-1.5 py-0.2 rounded-md shrink-0">Live</span>
               </div>
-              <p className="text-[10px] text-gray-400 truncate mt-0.5">Subscriptions</p>
+              <p className="text-[10px] text-gray-400 truncate mt-0.5">Track laundry</p>
             </div>
           </button>
 
@@ -385,19 +394,6 @@ export const AccountView: React.FC<AccountViewProps> = ({
                 <span>Recurring Laundry</span>
               </button>
 
-              {/* Subscriptions & Usage */}
-              <button
-                type="button"
-                onClick={() => setActiveTab('subscriptions')}
-                className={`w-full p-3.5 px-4 rounded-2xl text-xs font-bold flex items-center gap-3 transition-all cursor-pointer ${activeTab === 'subscriptions'
-                  ? 'bg-[#eff6ff] text-[#1d5bd8] shadow-2xs font-extrabold'
-                  : 'text-gray-700 hover:bg-gray-50'
-                  }`}
-              >
-                <CreditCard className={`w-4 h-4 ${activeTab === 'subscriptions' ? 'text-[#1d5bd8]' : 'text-gray-400'}`} />
-                <span>My Subscription</span>
-              </button>
-
               {/* GDPR & Privacy Data Rights */}
               <button
                 type="button"
@@ -416,21 +412,6 @@ export const AccountView: React.FC<AccountViewProps> = ({
                   Quick Access
                 </span>
               </div>
-
-              {/* View Membership Plans */}
-              <button
-                type="button"
-                onClick={() => onNavigate('subscriptions')}
-                className="w-full p-3.5 px-4 rounded-2xl text-xs font-bold flex items-center justify-between text-gray-700 hover:bg-blue-50/70 hover:text-[#1d5bd8] transition-all cursor-pointer group"
-              >
-                <div className="flex items-center gap-3">
-                  <Calendar className="w-4 h-4 text-[#1d5bd8] group-hover:scale-110 transition-transform" />
-                  <span>Membership Plans</span>
-                </div>
-                <span className="text-[10px] font-extrabold text-[#1d5bd8] bg-blue-100/70 px-2 py-0.5 rounded-full">
-                  Save 30%
-                </span>
-              </button>
 
               {/* Customer Support */}
               <button
@@ -509,7 +490,9 @@ export const AccountView: React.FC<AccountViewProps> = ({
                         onClick={() => {
                           setEditName(displayName);
                           setEditEmail(displayEmail);
-                          setEditPhone(displayPhone);
+                          const p = parsePhone(displayPhone);
+                          setPhoneCountryCode(p.code);
+                          setEditPhone(p.num);
                           setEditProfileOpen(true);
                         }}
                         className="text-xs font-bold text-[#1d5bd8] bg-[#eff6ff] hover:bg-[#dbeafe] px-3 py-1.5 rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors"
@@ -565,7 +548,9 @@ export const AccountView: React.FC<AccountViewProps> = ({
                         onClick={() => {
                           setEditName(displayName);
                           setEditEmail(displayEmail);
-                          setEditPhone(displayPhone);
+                          const p = parsePhone(displayPhone);
+                          setPhoneCountryCode(p.code);
+                          setEditPhone(p.num);
                           setEditProfileOpen(true);
                         }}
                         className="w-full py-3 rounded-2xl border-2 border-[#1d5bd8] text-[#1d5bd8] hover:bg-[#eff6ff] font-bold text-xs transition-colors cursor-pointer active:scale-98"
@@ -627,31 +612,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
                         <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-navy transition-colors" />
                       </div>
 
-                      {/* Action 3: Laundry Plans & Passes */}
-                      <div
-                        onClick={() => onNavigate('subscriptions')}
-                        className="p-3.5 px-4 rounded-2xl border border-gray-100 hover:border-blue-200 hover:bg-gray-50/80 transition-all flex items-center justify-between cursor-pointer group"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-blue-50 text-[#1d5bd8] flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                            <Calendar className="w-4 h-4" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-extrabold text-navy leading-snug">
-                                Membership & Laundry Plans
-                              </h4>
-                              <span className="text-[9px] bg-blue-100 text-[#1d5bd8] font-bold px-1.5 py-0.5 rounded-md">
-                                Save 30%
-                              </span>
-                            </div>
-                            <p className="text-[11px] text-gray-400 mt-0.5">
-                              Explore weekly passes, student discounts & family plans
-                            </p>
-                          </div>
-                        </div>
-                        <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-navy transition-colors" />
-                      </div>
+
 
                       {/* Action 4: Customer Care & Support */}
                       <div
@@ -683,7 +644,15 @@ export const AccountView: React.FC<AccountViewProps> = ({
                       <div
                         onClick={() => {
                           mongoSignOut();
-                          window.location.reload();
+                          if (isAuth0Authenticated) {
+                            auth0Logout({
+                              logoutParams: {
+                                returnTo: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000',
+                              },
+                            });
+                          } else {
+                            window.location.reload();
+                          }
                         }}
                         className="p-3.5 px-4 rounded-2xl border border-red-100/60 bg-red-50/30 hover:bg-red-50 hover:border-red-200 transition-all flex items-center justify-between cursor-pointer group"
                       >
@@ -933,14 +902,14 @@ export const AccountView: React.FC<AccountViewProps> = ({
             )}
 
             {/* =====================================================================
-                TAB 4: RECURRING LAUNDRY & SUBSCRIPTIONS
+                TAB 4: RECURRING LAUNDRY SCHEDULES
             ===================================================================== */}
             {activeTab === 'recurring' && (
               <div className="space-y-6 animate-in fade-in-50">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h3 className="text-base font-extrabold text-navy">
-                      Recurring Laundry Schedules & Subscriptions
+                      Recurring Laundry Schedules
                     </h3>
                     <p className="text-xs text-gray-500">
                       Automate your weekly or bi-weekly doorstep laundry pickups.
@@ -1113,104 +1082,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
               </div>
             )}
 
-            {/* =====================================================================
-                TAB 5: SUBSCRIPTIONS & USAGE TRACKING
-            ===================================================================== */}
-            {activeTab === 'subscriptions' && (
-              <div className="space-y-6 animate-in fade-in-50 duration-200">
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-extrabold text-navy tracking-tight">
-                    Laundry Subscription & Allowance
-                  </h2>
-                  <p className="text-xs sm:text-sm text-gray-500 mt-1">
-                    Track your monthly wash allowance, overage rates, and recurring collections.
-                  </p>
-                </div>
 
-                {/* Subscription Card */}
-                <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xs border border-gray-100 space-y-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
-                    <div>
-                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#1d5bd8] bg-[#eff6ff] px-2.5 py-1 rounded-full">
-                        ACTIVE PLAN
-                      </span>
-                      <h3 className="text-xl font-extrabold text-navy mt-1.5">
-                        Silver Essential Plan
-                      </h3>
-                      <p className="text-xs text-gray-500">Weekly automated doorstep collection</p>
-                    </div>
-
-                    <div className="text-right">
-                      <div className="text-3xl font-extrabold text-[#082b78]">£69</div>
-                      <span className="text-xs text-gray-500">per month (Billed via Stripe)</span>
-                    </div>
-                  </div>
-
-                  {/* Usage Progress Bar */}
-                  <div className="space-y-3 bg-[#f8fafc] p-5 rounded-2xl border border-gray-100">
-                    <div className="flex items-center justify-between text-xs font-bold">
-                      <span className="text-gray-700">Monthly Wash Allowance Usage</span>
-                      <span className="text-[#082b78]">14.2 kg / 20.0 kg (71%)</span>
-                    </div>
-                    <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-blue-500 to-[#1d5bd8] rounded-full transition-all duration-500"
-                        style={{ width: '71%' }}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between text-[11px] text-gray-500">
-                      <span>5.8 kg allowance remaining this cycle</span>
-                      <span>Renews in 12 days</span>
-                    </div>
-                  </div>
-
-                  {/* Overage & Allowance Rules */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-                    <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
-                      <span className="text-gray-500 block mb-1 font-medium">Bags Included</span>
-                      <span className="text-base font-extrabold text-navy">4 Bags / mo</span>
-                    </div>
-                    <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
-                      <span className="text-gray-500 block mb-1 font-medium">Overage Rate</span>
-                      <span className="text-base font-extrabold text-[#082b78]">£2.00 / kg</span>
-                    </div>
-                    <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
-                      <span className="text-gray-500 block mb-1 font-medium">Next Scheduled Pickup</span>
-                      <span className="text-base font-extrabold text-emerald-600">Monday, 10:00 AM</span>
-                    </div>
-                  </div>
-
-                  {/* Customer Plan Controls */}
-                  <div className="flex flex-wrap items-center gap-3 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => alert('Subscription paused for holiday. You will not be billed while paused.')}
-                      className="px-5 py-2.5 rounded-xl border border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100 font-bold text-xs cursor-pointer transition-colors"
-                    >
-                      Pause Subscription
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onNavigate('subscriptions')}
-                      className="px-5 py-2.5 rounded-xl border border-[#1d5bd8] text-[#1d5bd8] hover:bg-[#eff6ff] font-bold text-xs cursor-pointer transition-colors"
-                    >
-                      Change Plan
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (confirm('Are you sure you want to cancel your laundry subscription? You will retain benefits until the end of your billing cycle.')) {
-                          alert('Subscription cancellation confirmed.');
-                        }
-                      }}
-                      className="px-5 py-2.5 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs cursor-pointer transition-colors ml-auto"
-                    >
-                      Cancel Plan
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* =====================================================================
                 TAB 6: GDPR & DATA PRIVACY RIGHTS
@@ -1361,13 +1233,30 @@ export const AccountView: React.FC<AccountViewProps> = ({
                 <label className="block text-gray-700 font-bold mb-1">
                   Mobile Number (For Courier SMS)
                 </label>
-                <input
-                  type="text"
-                  value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
-                  className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl font-semibold text-navy focus:outline-none focus:border-[#1d5bd8] focus:ring-1 focus:ring-[#1d5bd8]"
-                  required
-                />
+                <div className="flex gap-2">
+                  <select
+                    value={phoneCountryCode}
+                    onChange={(e) => setPhoneCountryCode(e.target.value)}
+                    className="w-24 px-2 py-3 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-[#03045E] focus:outline-none focus:border-[#1d5bd8] cursor-pointer shrink-0"
+                  >
+                    <option value="+44">UK (+44)</option>
+                    <option value="+1">US (+1)</option>
+                    <option value="+91">IN (+91)</option>
+                    <option value="+971">AE (+971)</option>
+                    <option value="+61">AU (+61)</option>
+                    <option value="+33">FR (+33)</option>
+                    <option value="+49">DE (+49)</option>
+                    <option value="+353">IE (+353)</option>
+                  </select>
+                  <input
+                    type="tel"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    placeholder="7700 900000"
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl font-semibold text-navy focus:outline-none focus:border-[#1d5bd8] focus:ring-1 focus:ring-[#1d5bd8]"
+                    required
+                  />
+                </div>
               </div>
 
               <div className="flex justify-end gap-2.5 pt-2">

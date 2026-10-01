@@ -7,10 +7,23 @@ declare const process: any;
 
 
 export const getApiBase = (): string => {
-  if (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '');
+  if (typeof window !== 'undefined') {
+    // In browser context across all portals (customer, operations, admin),
+    // always use relative path ('') so requests route through the Next.js server
+    // rewrite proxy (/api/:path* -> http://127.0.0.1:4000/api/:path*).
+    // This completely eliminates CORS issues, mixed-content errors, and avoids
+    // needing to expose or tunnel port 4000.
+    return '';
   }
-  return '';
+
+  // Server-side context (SSR / node)
+  if (typeof process !== 'undefined') {
+    const internalUrl = process.env?.INTERNAL_API_URL || process.env?.NEXT_PUBLIC_API_URL;
+    if (internalUrl && !internalUrl.includes('devtunnels.ms') && !internalUrl.includes('ngrok')) {
+      return internalUrl.replace(/\/$/, '');
+    }
+  }
+  return 'http://localhost:4000';
 };
 export const apiUrl = (path: string): string => `${getApiBase()}${path.startsWith('/') ? path : '/' + path}`;
 export const apiFetch = (path: string, init?: RequestInit): Promise<Response> => {
@@ -73,9 +86,10 @@ export function authHeaders(): HeadersInit {
 // ─── Auth Actions ─────────────────────────────────────────────────────────────
 
 export interface AuthResult {
-    user: { id: string; email: string; name: string; role?: string } | null;
+    user: { id: string; email: string; name: string; phone?: string; role?: string } | null;
     token: string | null;
     error: string | null;
+    needsProfileCompletion?: boolean;
 }
 
 function getErrorMessage(err: any, fallback: string): string {
@@ -133,6 +147,41 @@ export async function mongoSignUp(
         };
         saveSession(session);
         return { user: data.user, token: data.token, error: null };
+    } catch (e: any) {
+        return { user: null, token: null, error: e.message || 'Network error' };
+    }
+}
+
+export async function dbAuth0Sync(auth0User: {
+    email: string;
+    name?: string;
+    sub?: string;
+    picture?: string;
+}): Promise<AuthResult> {
+    try {
+        const res = await apiFetch('/api/v1/auth/auth0-sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(auth0User),
+        });
+        const json = await res.json();
+        const data = json.success ? json.data : json;
+        if (!res.ok || data.error) {
+            return { user: null, token: null, error: getErrorMessage(data.error, 'Auth0 synchronization failed') };
+        }
+
+        const session: MongoAuthSession = {
+            token: data.token,
+            user: data.user,
+            isAuthenticated: true,
+        };
+        saveSession(session);
+        return { 
+            user: data.user, 
+            token: data.token, 
+            error: null,
+            needsProfileCompletion: Boolean(data.needsProfileCompletion || !data.user?.phone)
+        };
     } catch (e: any) {
         return { user: null, token: null, error: e.message || 'Network error' };
     }

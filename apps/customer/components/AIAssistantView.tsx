@@ -284,7 +284,6 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
                     </div>
                     <p className="text-xs text-gray-600">20% off your very first laundry or dry cleaning order.</p>
                   </div>
-                  <p className="text-xs text-gray-500">Plus, save up to 25% with our weekly Laundry Subscriptions!</p>
                 </div>
               ),
             },
@@ -429,7 +428,7 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
                 <p className="font-normal">Hi there! 👋</p>
                 <p className="font-bold text-gray-900 text-[12px] sm:text-[15px]">I'm Laundellee, your AI Assistant.</p>
                 <p className="text-gray-700 text-[11px] sm:text-[14px]">
-                  I'm here to help you with bookings, service details, pricing, orders, subscriptions, offers and anything related to laundry.
+                  I'm here to help you with bookings, service details, pricing, orders, offers and anything related to laundry.
                 </p>
                 <p className="font-bold text-gray-900 pt-0.5 text-[11px] sm:text-[14px]">
                   How can I help you today? 💙

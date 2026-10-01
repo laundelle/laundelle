@@ -94,6 +94,8 @@ export const metadata: Metadata = {
   },
 };
 
+import { Auth0ProviderWrapper } from '../components/Auth0ProviderWrapper';
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -107,7 +109,9 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700;800&display=swap" rel="stylesheet" />
       </head>
       <body className="bg-[#f8fafc] text-gray-900 font-sans antialiased">
-        {children}
+        <Auth0ProviderWrapper>
+          {children}
+        </Auth0ProviderWrapper>
       </body>
     </html>
   );

@@ -34,10 +34,40 @@ export class DriverService {
         return safe;
     }
 
+    public static userFilter(driverId: string) {
+        const idStr = String(driverId);
+        const orConditions: any[] = [
+            { _id: idStr },
+            { id: idStr },
+            { publicId: idStr },
+            { staffId: idStr },
+            { email: idStr }
+        ];
+        if (ObjectId.isValid(idStr)) {
+            orConditions.push({ _id: new ObjectId(idStr) });
+        }
+        return { $or: orConditions };
+    }
+
+    public static async getDriverIdentifiers(driverId: string): Promise<{ driverUser: any; driverIds: string[] }> {
+        const db = await getDb();
+        const driverUser = await db.collection('users').findOne(this.userFilter(driverId));
+        const idStr = String(driverId);
+        const ids = new Set<string>([idStr]);
+        if (driverUser) {
+            if (driverUser._id) ids.add(String(driverUser._id));
+            if (driverUser.id) ids.add(String(driverUser.id));
+            if (driverUser.publicId) ids.add(String(driverUser.publicId));
+            if (driverUser.staffId) ids.add(String(driverUser.staffId));
+            if (driverUser.employee_number) ids.add(String(driverUser.employee_number));
+            if (driverUser.email) ids.add(String(driverUser.email));
+        }
+        return { driverUser, driverIds: Array.from(ids) };
+    }
+
     static async getJobs(driverId: string) {
         const db = await getDb();
-        const _did = ObjectId.isValid(driverId) ? new ObjectId(driverId) : driverId;
-        const driverUser = await db.collection('users').findOne({ _id: _did as any });
+        const { driverUser, driverIds } = await this.getDriverIdentifiers(driverId);
         if (!driverUser || driverUser.role !== 'driver') {
             throw new ForbiddenError('Access denied: Driver account required.');
         }
@@ -64,14 +94,17 @@ export class DriverService {
         const driverPostcodes = driverUser.assigned_postcodes || driverUser.assignedSectors || [];
         const driverPlantId = driverUser.plant_id ? String(driverUser.plant_id) : null;
 
-        const driverQuery = {
-            $or: [
-                { assigned_driver_id: driverIdStr },
-                { assigned_driver_id: _did },
-                { 'driver.id': driverIdStr },
-                { 'driver.id': String(_did) }
-            ]
-        };
+        const driverQueryOr: any[] = [
+            { assigned_driver_id: { $in: driverIds } },
+            { 'driver.id': { $in: driverIds } }
+        ];
+        driverIds.forEach((id) => {
+            if (ObjectId.isValid(id)) {
+                driverQueryOr.push({ assigned_driver_id: new ObjectId(id) });
+            }
+        });
+
+        const driverQuery = { $or: driverQueryOr };
 
         let assigned = await db.collection('orders')
             .find({ ...driverQuery, status: { $in: ACTIVE_DRIVER_STATUSES } })
@@ -138,20 +171,24 @@ export class DriverService {
         }
 
         assigned = await Promise.all(assigned.map(async (order: any) => {
+            order.id = order.id || order.publicId || String(order._id);
             if (order.customer_id) {
                 const _cid = ObjectId.isValid(order.customer_id) ? new ObjectId(order.customer_id) : order.customer_id;
-                const cust = await db.collection('users').findOne({ $or: [{ _id: order.customer_id }, { _id: _cid }] });
-                if (cust) { order.customer_name = cust.full_name; order.customer_phone = cust.phone; }
+                const cust = await db.collection('users').findOne({ $or: [{ _id: String(order.customer_id) }, { _id: _cid }, { id: String(order.customer_id) }] });
+                if (cust) { 
+                    order.customer_name = cust.full_name || order.customer_name || order.customerName; 
+                    order.customer_phone = cust.phone || order.customer_phone || order.customerPhone; 
+                }
             }
+            if (!order.customer_name && order.customerName) order.customer_name = order.customerName;
+            if (!order.customer_phone && order.customerPhone) order.customer_phone = order.customerPhone;
             return this.sanitizeOrder(order);
         }));
 
         const completedQuery = {
             $or: [
-                { 'qr_tracking.collectedByDriverId': driverId },
-                { 'qr_tracking.collectedByDriverId': String(_did) },
-                { 'qr_tracking.deliveredByDriverId': driverId },
-                { 'qr_tracking.deliveredByDriverId': String(_did) },
+                { 'qr_tracking.collectedByDriverId': { $in: driverIds } },
+                { 'qr_tracking.deliveredByDriverId': { $in: driverIds } },
                 {
                     $and: [
                         driverQuery,
@@ -169,23 +206,25 @@ export class DriverService {
 
         let completed: any[] = [];
         for (const order of completedOrdersRaw) {
-            let customerInfo = { customer_name: order.customer_name, customer_phone: order.customer_phone };
+            order.id = order.id || order.publicId || String(order._id);
+            let customerInfo = { 
+                customer_name: order.customer_name || order.customerName, 
+                customer_phone: order.customer_phone || order.customerPhone 
+            };
             if (order.customer_id) {
                 const _cid = ObjectId.isValid(order.customer_id) ? new ObjectId(order.customer_id) : order.customer_id;
-                const cust = await db.collection('users').findOne({ $or: [{ _id: order.customer_id }, { _id: _cid }] });
+                const cust = await db.collection('users').findOne({ $or: [{ _id: String(order.customer_id) }, { _id: _cid }, { id: String(order.customer_id) }] });
                 if (cust) {
-                    customerInfo.customer_name = cust.full_name;
-                    customerInfo.customer_phone = cust.phone;
+                    customerInfo.customer_name = cust.full_name || customerInfo.customer_name;
+                    customerInfo.customer_phone = cust.phone || customerInfo.customer_phone;
                 }
             }
 
             const sanitized = this.sanitizeOrder({ ...order, ...customerInfo });
-            const didCollect = String(order.qr_tracking?.collectedByDriverId) === String(driverId) ||
-                String(order.qr_tracking?.collectedByDriverId) === String(_did);
-            const didDeliver = String(order.qr_tracking?.deliveredByDriverId) === String(driverId) ||
-                String(order.qr_tracking?.deliveredByDriverId) === String(_did) ||
+            const didCollect = driverIds.includes(String(order.qr_tracking?.collectedByDriverId));
+            const didDeliver = driverIds.includes(String(order.qr_tracking?.deliveredByDriverId)) ||
                 ((order.status === 'delivered' || order.status === 'completed') &&
-                 (String(order.assigned_driver_id) === String(driverId) || String(order.assigned_driver_id) === String(_did)));
+                 driverIds.includes(String(order.assigned_driver_id)));
 
             if (didCollect && didDeliver) {
                 completed.push({
@@ -273,9 +312,8 @@ export class DriverService {
 
     static async updateAvailability(driverId: string, isAvailable: boolean) {
         const db = await getDb();
-        const _did = ObjectId.isValid(driverId) ? new ObjectId(driverId) : driverId;
         await db.collection('users').updateOne(
-            { _id: _did as any, role: 'driver' },
+            { ...this.userFilter(driverId), role: 'driver' },
             { $set: { is_active: isAvailable, availability: isAvailable ? 'available' : 'off-duty' } }
         );
     }
@@ -288,16 +326,16 @@ export class DriverService {
         const db = await getDb();
         const now = new Date().toISOString();
 
-        const order = await db.collection('orders').findOne({ id: orderId });
+        const order = await db.collection('orders').findOne({ $or: [{ id: orderId }, { _id: orderId as any }] });
         if (!order) throw new NotFoundError('Order not found.');
         
-        // Safe string comparison for assignment ownership
-        if (String(order.assigned_driver_id) !== String(driverId)) {
+        const { driverUser, driverIds } = await this.getDriverIdentifiers(driverId);
+        if (!driverIds.includes(String(order.assigned_driver_id)) && !driverIds.includes(String(order.driver?.id))) {
             throw new ForbiddenError('You can only reject your own assignments.');
         }
 
         await db.collection('orders').updateOne(
-            { id: orderId },
+            { _id: order._id },
             {
                 $set: {
                     assigned_driver_id: null,
@@ -332,13 +370,12 @@ export class DriverService {
 
     static async sendOtp(driverId: string, orderId: string) {
         const db = await getDb();
-        const order = await db.collection('orders').findOne({ id: orderId });
+        const order = await db.collection('orders').findOne({ $or: [{ id: orderId }, { _id: orderId as any }] });
         
         if (!order) throw new NotFoundError('Order not found.');
-        const _did = ObjectId.isValid(driverId) ? new ObjectId(driverId) : driverId;
-        const isOwner = String(order.assigned_driver_id) === String(driverId) ||
-            String(order.assigned_driver_id) === String(_did) ||
-            (order.driver && (String(order.driver.id) === String(driverId) || String(order.driver.id) === String(_did))) ||
+        const { driverUser, driverIds } = await this.getDriverIdentifiers(driverId);
+        const isOwner = driverIds.includes(String(order.assigned_driver_id)) ||
+            (order.driver && driverIds.includes(String(order.driver.id))) ||
             (['ready_for_delivery', 'waiting_for_driver', 'qc_passed'].includes(order.status) && !order.assigned_driver_id);
 
         if (!isOwner) {
@@ -400,9 +437,9 @@ export class DriverService {
         const order = await db.collection('orders').findOne({ id: orderId });
         if (!order) throw new NotFoundError('Order not found.');
 
-        const _did = ObjectId.isValid(driverId) ? new ObjectId(driverId) : driverId;
-        const isOwner = String(order.assigned_driver_id) === String(driverId) ||
-            String(order.assigned_driver_id) === String(_did);
+        const { driverUser, driverIds } = await this.getDriverIdentifiers(driverId);
+        const isOwner = driverIds.includes(String(order.assigned_driver_id)) ||
+            (order.driver?.id && driverIds.includes(String(order.driver.id)));
 
         if (!isOwner) {
             throw new ForbiddenError('You can only log attempts for your own assigned pickups.');
@@ -411,7 +448,6 @@ export class DriverService {
         assertValidTransition(order.status, 'pickup_failed', 'driver', { reason, photoUrl });
 
         const now = new Date().toISOString();
-        const driverUser = await db.collection('users').findOne({ _id: _did as any });
         const driverName = driverUser?.full_name || order.driver?.name || 'Courier Driver';
 
         const attemptId = generatePickupAttemptId();
@@ -548,7 +584,10 @@ export class DriverService {
         const order = await db.collection('orders').findOne({ id: orderId });
         if (!order) throw new NotFoundError('Order not found.');
         
-        if (String(order.assigned_driver_id) !== String(driverId)) {
+        const { driverUser, driverIds } = await this.getDriverIdentifiers(driverId);
+        const isOwner = driverIds.includes(String(order.assigned_driver_id)) ||
+            (order.driver?.id && driverIds.includes(String(order.driver.id)));
+        if (!isOwner) {
             throw new ForbiddenError('You do not own this assignment.');
         }
         
@@ -640,8 +679,6 @@ export class DriverService {
         }
 
         const now = new Date().toISOString();
-        const _did = ObjectId.isValid(driverId) ? new ObjectId(driverId) : (driverId as any);
-        const driverUser = await db.collection('users').findOne({ _id: _did });
         const driverName = driverUser?.full_name || order.driver?.name || 'Assigned Driver';
 
         // Verify QR Tag integrity
@@ -778,7 +815,10 @@ export class DriverService {
         const db = await getDb();
         const order = await db.collection('orders').findOne({ id: orderId });
         if (!order) throw new NotFoundError('Order not found.');
-        if (String(order.assigned_driver_id) !== String(driverId)) {
+        const { driverIds } = await this.getDriverIdentifiers(driverId);
+        const isOwner = driverIds.includes(String(order.assigned_driver_id)) ||
+            (order.driver?.id && driverIds.includes(String(order.driver.id)));
+        if (!isOwner) {
             throw new ForbiddenError('You do not own this assignment.');
         }
 
@@ -819,15 +859,14 @@ export class DriverService {
 
     static async confirmHandover(driverId: string, orderId: string, packageQr: string) {
         const db = await getDb();
-        const _did = ObjectId.isValid(driverId) ? new ObjectId(driverId) : driverId;
+        const { driverIds } = await this.getDriverIdentifiers(driverId);
 
         const order = await db.collection('orders').findOne({ id: orderId });
         if (!order) throw new NotFoundError('Order not found.');
 
-        const didCollect = String(order.assigned_driver_id) === String(driverId) ||
-            String(order.assigned_driver_id) === String(_did) ||
-            String(order.qr_tracking?.collectedByDriverId) === String(driverId) ||
-            String(order.qr_tracking?.collectedByDriverId) === String(_did);
+        const didCollect = driverIds.includes(String(order.assigned_driver_id)) ||
+            (order.driver?.id && driverIds.includes(String(order.driver.id))) ||
+            (order.qr_tracking?.collectedByDriverId && driverIds.includes(String(order.qr_tracking.collectedByDriverId)));
 
         if (!didCollect) {
             throw new ForbiddenError('Access denied: You are not the driver assigned to this order.');
@@ -903,16 +942,14 @@ export class DriverService {
         }
 
         // Driver must cover the postcode
-        const driver = await db.collection('users').findOne({ 
-            _id: (ObjectId.isValid(driverId) ? new ObjectId(driverId) : driverId) as any 
-        });
+        const { driverUser: driver, driverIds } = await this.getDriverIdentifiers(driverId);
         const driverPostcodes = driver?.assigned_postcodes || driver?.assignedSectors || [];
         if (driverPostcodes.length > 0 && !matchesPostcode(order.postcode || order.address, driverPostcodes)) {
             throw new ForbiddenError('You are not assigned to the postcode area for this delivery.');
         }
 
         const now = new Date().toISOString();
-        const driverObjId = ObjectId.isValid(driverId) ? new ObjectId(driverId) : driverId;
+        const primaryDriverId = driver?._id ? String(driver._id) : driverId;
 
         // Atomic update to avoid race condition where two drivers accept simultaneously
         const result = await db.collection('orders').updateOne(
@@ -922,14 +959,13 @@ export class DriverService {
                 $or: [
                     { assigned_driver_id: null },
                     { assigned_driver_id: { $exists: false } },
-                    { assigned_driver_id: driverId },
-                    { assigned_driver_id: driverObjId }
+                    { assigned_driver_id: { $in: driverIds } }
                 ]
             },
             {
                 $set: {
-                    assigned_driver_id: driverObjId,
-                    driver: { id: driverId, name: driver?.full_name, phone: driver?.phone },
+                    assigned_driver_id: primaryDriverId,
+                    driver: { id: primaryDriverId, name: driver?.full_name, phone: driver?.phone },
                     status: 'delivery_driver_assigned',
                     statusLabel: 'Delivery Driver Assigned',
                     updated_at: now
@@ -966,7 +1002,10 @@ export class DriverService {
         const db = await getDb();
         const order = await db.collection('orders').findOne({ id: orderId });
         if (!order) throw new NotFoundError('Order not found.');
-        if (String(order.assigned_driver_id) !== String(driverId)) {
+        const { driverIds } = await this.getDriverIdentifiers(driverId);
+        const isOwner = driverIds.includes(String(order.assigned_driver_id)) ||
+            (order.driver?.id && driverIds.includes(String(order.driver.id)));
+        if (!isOwner) {
             throw new ForbiddenError('You do not own this assignment.');
         }
 
@@ -999,7 +1038,10 @@ export class DriverService {
         const db = await getDb();
         const order = await db.collection('orders').findOne({ id: orderId });
         if (!order) throw new NotFoundError('Order not found.');
-        if (String(order.assigned_driver_id) !== String(driverId)) {
+        const { driverIds } = await this.getDriverIdentifiers(driverId);
+        const isOwner = driverIds.includes(String(order.assigned_driver_id)) ||
+            (order.driver?.id && driverIds.includes(String(order.driver.id)));
+        if (!isOwner) {
             throw new ForbiddenError('You do not own this assignment.');
         }
         
@@ -1051,7 +1093,10 @@ export class DriverService {
         const db = await getDb();
         const order = await db.collection('orders').findOne({ id: orderId });
         if (!order) throw new NotFoundError('Order not found.');
-        if (String(order.assigned_driver_id) !== String(driverId)) {
+        const { driverIds } = await this.getDriverIdentifiers(driverId);
+        const isOwner = driverIds.includes(String(order.assigned_driver_id)) ||
+            (order.driver?.id && driverIds.includes(String(order.driver.id)));
+        if (!isOwner) {
             throw new ForbiddenError('You do not own this assignment.');
         }
         if (order.status === 'out_for_delivery') return { success: true };
@@ -1121,9 +1166,9 @@ export class DriverService {
         const order = await db.collection('orders').findOne({ id: orderId });
         if (!order) throw new NotFoundError('Order not found.');
 
-        const _did = ObjectId.isValid(driverId) ? new ObjectId(driverId) : driverId;
-        const isOwner = String(order.assigned_driver_id) === String(driverId) ||
-            String(order.assigned_driver_id) === String(_did);
+        const { driverUser, driverIds } = await this.getDriverIdentifiers(driverId);
+        const isOwner = driverIds.includes(String(order.assigned_driver_id)) ||
+            (order.driver?.id && driverIds.includes(String(order.driver.id)));
 
         if (!isOwner) {
             throw new ForbiddenError('You can only log delivery attempts for your own assignments.');
@@ -1132,7 +1177,6 @@ export class DriverService {
         assertValidTransition(order.status, 'delivery_failed', 'driver', { reason, photoUrl });
 
         const now = new Date().toISOString();
-        const driverUser = await db.collection('users').findOne({ _id: _did as any });
         const driverName = driverUser?.full_name || order.driver?.name || 'Courier Driver';
 
         const attemptId = generateDeliveryAttemptId();
@@ -1268,10 +1312,9 @@ export class DriverService {
         const db = await getDb();
         const order = await db.collection('orders').findOne({ id: orderId });
         if (!order) throw new NotFoundError('Order not found.');
-        const _did = ObjectId.isValid(driverId) ? new ObjectId(driverId) : driverId;
-        const isOwner = String(order.assigned_driver_id) === String(driverId) ||
-            String(order.assigned_driver_id) === String(_did) ||
-            (order.driver && (String(order.driver.id) === String(driverId) || String(order.driver.id) === String(_did))) ||
+        const { driverUser, driverIds } = await this.getDriverIdentifiers(driverId);
+        const isOwner = driverIds.includes(String(order.assigned_driver_id)) ||
+            (order.driver?.id && driverIds.includes(String(order.driver.id))) ||
             (['ready_for_delivery', 'waiting_for_driver', 'qc_passed'].includes(order.status) && !order.assigned_driver_id);
 
         if (!isOwner) {
@@ -1335,8 +1378,6 @@ export class DriverService {
         }
 
         const now = new Date().toISOString();
-        const driverObjId = ObjectId.isValid(driverId) ? new ObjectId(driverId) : (driverId as any);
-        const driverUser = await db.collection('users').findOne({ _id: driverObjId as any });
         const driverName = driverUser?.full_name || order.driver?.name || 'Assigned Driver';
 
         // 1. Record successful attempt in delivery_attempts collection
@@ -1378,7 +1419,7 @@ export class DriverService {
             },
             {
                 $set: {
-                    assigned_driver_id: order.assigned_driver_id || (ObjectId.isValid(driverId) ? new ObjectId(driverId) : driverId),
+                    assigned_driver_id: order.assigned_driver_id || String(driverUser?._id || driverId),
                     status: 'delivered',
                     statusLabel: 'Completed',
                     updated_at: now,

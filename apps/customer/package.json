@@ -4,12 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
+    "dev:3000": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@auth0/auth0-react": "^2.27.0",
     "@laundelle/api-client": "workspace:*",
     "@laundelle/auth": "workspace:*",
     "@laundelle/config": "workspace:*",

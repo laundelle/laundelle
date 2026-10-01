@@ -22,6 +22,7 @@ export const PostcodeCheckerModal: React.FC<PostcodeCheckerModalProps> = ({
   // Form fields for waiting list
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [phoneCountryCode, setPhoneCountryCode] = useState('+44');
   const [phone, setPhone] = useState('');
   const [requestedService, setRequestedService] = useState('Everyday Wash & Fold');
   const [launchConsent, setLaunchConsent] = useState(true);
@@ -58,10 +59,11 @@ export const PostcodeCheckerModal: React.FC<PostcodeCheckerModalProps> = ({
 
     setChecking(true);
     try {
+      const fullPhone = phone.trim() ? `${phoneCountryCode} ${phone.trim().replace(/^0/, '')}`.trim() : '';
       const res = await joinWaitingList({
         full_name: fullName,
         email,
-        phone,
+        phone: fullPhone,
         postcode: postcode.trim().toUpperCase(),
         requested_service_id: requestedService,
         launch_notification_consent: launchConsent,
@@ -250,13 +252,29 @@ export const PostcodeCheckerModal: React.FC<PostcodeCheckerModalProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[11px] font-bold text-gray-600 mb-1">Phone Number</label>
-                    <input
-                      type="tel"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="+44 7700 900000"
-                      className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-[#03045E]"
-                    />
+                    <div className="flex gap-1.5">
+                      <select
+                        value={phoneCountryCode}
+                        onChange={(e) => setPhoneCountryCode(e.target.value)}
+                        className="w-20 px-1.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-[#03045E] focus:outline-hidden focus:border-[#03045E] cursor-pointer shrink-0"
+                      >
+                        <option value="+44">UK (+44)</option>
+                        <option value="+1">US (+1)</option>
+                        <option value="+91">IN (+91)</option>
+                        <option value="+971">AE (+971)</option>
+                        <option value="+61">AU (+61)</option>
+                        <option value="+33">FR (+33)</option>
+                        <option value="+49">DE (+49)</option>
+                        <option value="+353">IE (+353)</option>
+                      </select>
+                      <input
+                        type="tel"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        placeholder="7700 900000"
+                        className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-[#03045E]"
+                      />
+                    </div>
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-gray-600 mb-1">Primary Laundry Service</label>
@@ -270,7 +288,7 @@ export const PostcodeCheckerModal: React.FC<PostcodeCheckerModalProps> = ({
                       <option value="Ironing / Pressing">Ironing / Pressing</option>
                       <option value="Duvets & Bulky Bedding">Duvets & Bulky Bedding</option>
                       <option value="Suits & Dry Cleaning">Suits & Dry Cleaning</option>
-                      <option value="Recurring Weekly Subscription">Recurring Weekly Subscription</option>
+                      <option value="Recurring Weekly Laundry">Recurring Weekly Laundry</option>
                     </select>
                   </div>
                 </div>

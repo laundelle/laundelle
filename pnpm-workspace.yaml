@@ -4,5 +4,6 @@ packages:
 
 allowBuilds:
   '@google/genai': true
+  browser-tabs-lock: true
   protobufjs: true
   unrs-resolver: true

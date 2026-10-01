@@ -617,39 +617,48 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
     };
 
     // Merge assigned orders and any available deliveries covering driver's postcodes
+    // Merge assigned orders and any available deliveries covering driver's postcodes
     const allActiveOrders = [...assigned];
-    const assignedIds = new Set(assigned.map((o: any) => o.id));
+    const assignedIds = new Set(assigned.map((o: any) => o.id || o.publicId || (o._id ? String(o._id) : '')));
     (availableDeliveries || []).forEach((delOrder: any) => {
-        if (!assignedIds.has(delOrder.id)) {
+        const delId = delOrder.id || delOrder.publicId || (delOrder._id ? String(delOrder._id) : '');
+        if (delId && !assignedIds.has(delId)) {
             allActiveOrders.push(delOrder);
-            assignedIds.add(delOrder.id);
+            assignedIds.add(delId);
         }
     });
 
     // Map real DB active orders into DriverJobItem format
     const mappedAssignedJobs: DriverJobItem[] = allActiveOrders.map((order: any) => {
-        const isPickup = ['order_placed', 'pending_payment', 'booking_confirmed', 'collection_scheduled', 'driver_assigned', 'pickup_in_progress'].includes(order.status);
-        const addrParts = (order.address || '').split(',').map((s: string) => s.trim()).filter(Boolean);
-        const line1 = addrParts[0] || '123 High Street';
-        const line2 = addrParts.slice(1).join(', ') || (order.city ? `${order.city} ${order.postcode || ''}` : 'London');
+        const isPickup = ['order_placed', 'pending_payment', 'booking_confirmed', 'collection_scheduled', 'driver_assigned', 'pickup_in_progress', 'pickup_failed'].includes(order.status);
+        const rawAddress = order.address || order.fullAddress || (order.deliveryAddress ? (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : `${order.deliveryAddress.line1 || ''}, ${order.deliveryAddress.city || ''} ${order.deliveryAddress.postcode || ''}`) : '') || '';
+        const addrParts = rawAddress.split(',').map((s: string) => s.trim()).filter(Boolean);
+        const line1 = addrParts[0] || order.addressLine1 || '123 High Street';
+        const line2 = addrParts.slice(1).join(', ') || order.addressLine2 || (order.city ? `${order.city} ${order.postcode || ''}` : (order.postcode || 'London'));
 
         let displayTime = '10:00 AM';
-        if (order.pickup_slot && isPickup) displayTime = order.pickup_slot;
-        else if (order.delivery_slot) displayTime = order.delivery_slot;
-        else if (order.pickup_slot) displayTime = order.pickup_slot;
-        else if (order.created_at) displayTime = formatTime(order.created_at);
+        if (isPickup) {
+            displayTime = order.pickup_slot || order.pickupSlot || order.pickupTime || (order.created_at ? formatTime(order.created_at) : '10:00 AM');
+        } else {
+            displayTime = order.delivery_slot || order.deliverySlot || order.deliveryTime || order.pickup_slot || order.pickupSlot || (order.created_at ? formatTime(order.created_at) : '10:00 AM');
+        }
+
+        const orderId = order.id || order.publicId || (order._id ? String(order._id) : 'ORD-UNKNOWN');
+        const customerName = order.customerName || order.customer_name || order.user_name || order.customer?.name || order.userName || 'Valued Customer';
+        const customerPhone = order.customerPhone || order.customer_phone || order.phone || order.customer?.phone || '+44 7700 900123';
 
         return {
-            id: order.id,
+            id: orderId,
             type: isPickup ? 'collection' : 'delivery',
-            customerName: order.user_name || order.customer_name || 'Valued Customer',
-            customerPhone: order.phone || order.customer_phone || '+44 7700 900123',
+            customerName,
+            customerPhone,
             time: displayTime,
+            formattedTimeSlot: displayTime,
             addressLine1: line1,
             addressLine2: line2,
-            fullAddress: order.address || `${line1}, ${line2}`,
-            orderCode: order.publicId || order.orderNumber || order.id,
-            bagCount: order.bag_count || (order.items && order.items.length > 0 ? order.items.reduce((sum: number, it: any) => sum + (it.quantity || 1), 0) : 3),
+            fullAddress: rawAddress || `${line1}, ${line2}`,
+            orderCode: order.publicId || order.orderNumber || order.id || orderId,
+            bagCount: order.bag_count || order.bagCount || (order.items && order.items.length > 0 ? order.items.reduce((sum: number, it: any) => sum + (it.quantity || 1), 0) : 3),
             status: order.status,
             items: order.items || [{ name: 'Assorted Garments', quantity: 3 }],
             rawOrder: order,

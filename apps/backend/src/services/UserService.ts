@@ -1,12 +1,32 @@
 import { getDb } from '@/lib/mongodb';
+import { ObjectId } from 'mongodb';
 import { NotFoundError, BadRequestError } from '@/lib/api';
 import { generateAddressId } from '@laundelle/ids';
 
 export class UserService {
     
+    public static buildUserFilter(userId: string) {
+        const queries: any[] = [
+            { _id: userId as any },
+            { id: userId },
+            { customerId: userId },
+            { publicId: userId },
+            { auth0_sub: userId }
+        ];
+        if (typeof userId === 'string' && userId.includes('@')) {
+            queries.push({ email: userId.toLowerCase().trim() });
+        }
+        if (typeof userId === 'string' && ObjectId.isValid(userId)) {
+            try {
+                queries.push({ _id: new ObjectId(userId) as any });
+            } catch {}
+        }
+        return { $or: queries };
+    }
+
     static async getProfile(userId: string) {
         const db = await getDb();
-        const user = await db.collection('users').findOne({ _id: userId as any });
+        const user = await db.collection('users').findOne(this.buildUserFilter(userId));
         
         if (!user) {
             throw new NotFoundError('User not found.');
@@ -59,7 +79,7 @@ export class UserService {
         if (phone !== undefined) updateData.phone = phone;
 
         await db.collection('users').updateOne(
-            { _id: userId as any },
+            this.buildUserFilter(userId),
             { $set: updateData }
         );
 
@@ -72,7 +92,7 @@ export class UserService {
         const now = new Date().toISOString();
 
         await db.collection('users').updateOne(
-            { _id: userId as any },
+            this.buildUserFilter(userId),
             { 
                 $set: { 
                     preferences, 
@@ -92,9 +112,9 @@ export class UserService {
         const addr = { ...address, id: addrId, publicId: addrId };
         
         if (addr.isDefault) {
-            await db.collection('users').updateOne({ _id: userId as any }, { $set: { 'addresses.$[].isDefault': false } });
+            await db.collection('users').updateOne(this.buildUserFilter(userId), { $set: { 'addresses.$[].isDefault': false } });
         }
-        await db.collection('users').updateOne({ _id: userId as any }, { $push: { addresses: addr } } as any);
+        await db.collection('users').updateOne(this.buildUserFilter(userId), { $push: { addresses: addr } } as any);
         return { success: true, address: addr };
     }
 
@@ -103,11 +123,11 @@ export class UserService {
         const address = { ...addressUpdates, id: addressId };
         
         if (address.isDefault) {
-            await db.collection('users').updateOne({ _id: userId as any }, { $set: { 'addresses.$[].isDefault': false } } as any);
+            await db.collection('users').updateOne(this.buildUserFilter(userId), { $set: { 'addresses.$[].isDefault': false } } as any);
         }
         
         const result = await db.collection('users').updateOne(
-            { _id: userId as any, 'addresses.id': addressId },
+            { ...this.buildUserFilter(userId), 'addresses.id': addressId },
             { $set: { 'addresses.$': address } } as any
         );
 
@@ -121,7 +141,7 @@ export class UserService {
     static async deleteAddress(userId: string, addressId: string) {
         const db = await getDb();
         const result = await db.collection('users').updateOne(
-            { _id: userId as any },
+            this.buildUserFilter(userId),
             { $pull: { addresses: { id: addressId } } } as any
         );
         
