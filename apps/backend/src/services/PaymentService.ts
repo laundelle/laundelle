@@ -11,7 +11,7 @@ export class PaymentService {
     private static getStripe(): Stripe {
         const key = process.env.STRIPE_SECRET_KEY;
         if (!key) throw new Error('STRIPE_SECRET_KEY is not configured.');
-        return new Stripe(key, { apiVersion: '2025-06-30' as any });
+        return new Stripe(key, { apiVersion: (process.env.STRIPE_API_VERSION || '2025-06-30.basil') as any });
     }
 
     /**
