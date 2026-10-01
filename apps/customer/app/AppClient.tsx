@@ -41,7 +41,9 @@ import {
   clearSession,
   dbFetchServices,
   dbCancelOrder,
-  dbAuth0Sync
+  dbAuth0Sync,
+  apiFetch,
+  authHeaders
 } from '@laundelle/api-client';
 
 export default function App({ initialTab }: { initialTab?: string }) {
@@ -107,24 +109,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
   }, [auth0Error]);
 
   // Handle Stripe payment redirect callbacks
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const params = new URLSearchParams(window.location.search);
-    const paymentStatus = params.get('payment');
-    if (paymentStatus === 'success') {
-      // Clear cart ONLY on successful payment
-      setCart([]);
-      try {
-        localStorage.removeItem('laundelle_user_cart');
-      } catch {}
-      const orderId = params.get('orderId');
-      if (orderId) {
-        setSelectedTrackingOrderId(orderId);
-      }
-    } else if (paymentStatus === 'cancel') {
-      // Payment cancelled/returned - cart is preserved!
-    }
-  }, []);
+
 
   const handleSplashComplete = () => {
     setShowSplash(false);
@@ -545,7 +530,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
 
     const sessionId = params.get('session_id') || params.get('stripe_session_id');
 
-    if (payment === 'success' && orderId) {
+    if (payment === 'success') {
       // Ensure splash screen is never shown after payment redirect
       setShowSplash(false);
       try {
@@ -553,57 +538,64 @@ export default function App({ initialTab }: { initialTab?: string }) {
       } catch { }
 
       setActiveTab('orders');
-      setSelectedTrackingOrderId(orderId);
-      showToast(`💳 Payment completed successfully for booking #${orderId}!`);
-
-      // Immediately display the Order Placed delivery truck animation in full screen!
-      const placeholderOrder: Order = {
-        id: orderId,
-        createdAt: new Date().toISOString(),
-        status: 'booking_confirmed',
-        statusLabel: 'Booking Confirmed',
-        items: [],
-        itemCount: 1,
-        subtotal: 0,
-        discount: 0,
-        tax: 0,
-        collectionFee: 0,
-        deliveryFee: 0,
-        expressFee: 0,
-        total: 0,
-        pickupDate: 'Today',
-        pickupSlot: '10:00 AM – 12:00 PM',
-        deliveryDate: 'Tomorrow',
-        address: 'Doorstep Collection Address',
-        addressLabel: 'Home',
-        paymentMethod: 'Pay Online (Stripe)',
-        paymentStatus: 'Paid',
-        isPaid: true,
-      };
-      setAnimationModalOrder(placeholderOrder);
+      if (orderId) setSelectedTrackingOrderId(orderId);
 
       // Clean up query param from URL without pushing back to home
       const cleanPath = window.location.pathname === '/' ? '/orders' : window.location.pathname;
       window.history.replaceState({}, document.title, cleanPath);
 
-      // Fetch fresh orders from database with sessionId to trigger immediate fulfillment if webhook pending
-      dbFetchOrders(authSession.user?.id, sessionId || undefined).then((freshOrders) => {
-        if (freshOrders && freshOrders.length > 0) {
-          setOrders(freshOrders);
-          const found = freshOrders.find((o) => o.id === orderId || o.publicId === orderId || o.orderNumber === orderId);
-          if (found) {
-            setAnimationModalOrder(found);
-            setSelectedTrackingOrderId(found.id);
-          } else if (freshOrders[0]) {
-            setAnimationModalOrder(freshOrders[0]);
-            setSelectedTrackingOrderId(freshOrders[0].id);
+      if (!sessionId) {
+        showToast('⚠️ Payment returned without session verification ID. Checking orders...');
+        dbFetchOrders(authSession.user?.id).then((freshOrders) => {
+          if (freshOrders && freshOrders.length > 0) setOrders(freshOrders);
+        });
+        return;
+      }
+
+      showToast('🔄 Verifying payment confirmation with Stripe...');
+
+      // Call our secure backend confirmation endpoint which verifies payment_status with Stripe API
+      apiFetch('/api/stripe/confirm-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(),
+        },
+        body: JSON.stringify({ sessionId }),
+      })
+        .then(async (res) => {
+          const data = await res.json();
+          if (res.ok && data.confirmed && data.order) {
+            // Payment is verified and confirmed by Stripe!
+            // Clear cart ONLY now that payment is confirmed
+            setCart([]);
+            try {
+              localStorage.removeItem('laundelle_user_cart');
+            } catch {}
+
+            const confirmedId = data.order.publicId || data.order.orderNumber || data.order.id || orderId;
+            showToast(`💳 Payment confirmed! Order #${confirmedId} is placed.`);
+            setAnimationModalOrder(data.order);
+            setSelectedTrackingOrderId(data.order.id || data.order.publicId);
+
+            // Refresh orders list with the confirmed order
+            dbFetchOrders(authSession.user?.id).then((freshOrders) => {
+              if (freshOrders && freshOrders.length > 0) setOrders(freshOrders);
+            });
+          } else {
+            console.warn('[Payment Verification Failed]', data.error);
+            showToast(`❌ Payment not verified: ${data.error || 'Payment was not marked as paid by Stripe'}`);
+            // Note: Cart is NOT cleared so the user does not lose their items!
           }
-        }
-      });
+        })
+        .catch((err) => {
+          console.error('[Payment Verification Network Error]', err);
+          showToast('⚠️ Could not verify payment with server. Please check your connection.');
+        });
     } else if (payment === 'cancel') {
       const cleanPath = window.location.pathname === '/' ? '/orders' : window.location.pathname;
       window.history.replaceState({}, document.title, cleanPath);
-      showToast('❌ Payment process cancelled.');
+      showToast('❌ Payment process cancelled. Your cart has been preserved.');
     }
   }, []);
 

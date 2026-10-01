@@ -670,10 +670,15 @@ export class OrderService {
 
         const routing = await locatePlantAndDriverForOrder(db, rawPostcode, orderData.address, now);
 
-        // 2. Status setup
-        const isPendingOnlinePayment = orderData.paymentStatus !== 'paid' && orderData.paymentMethod !== 'Cash on Delivery' && orderData.paymentMethod !== 'Cash';
+        // 2. Status & Payment Security Check
+        const isCash = orderData.paymentMethod === 'Cash on Delivery' || orderData.paymentMethod === 'Cash';
+        if (!isCash && (orderData.paymentStatus === 'Paid' || orderData.paymentStatus === 'paid' || orderData.isPaid)) {
+            throw new BadRequestError('Online orders cannot be directly created as Paid. All online payments must be verified via Stripe Checkout.');
+        }
+
+        const isPendingOnlinePayment = !isCash;
         const initialStatus = isPendingOnlinePayment ? 'pending_payment' : (routing.driver ? 'collection_scheduled' : 'booking_confirmed');
-        const initialStatusLabel = isPendingOnlinePayment ? 'Pending Payment' : (routing.driver ? 'Collection Scheduled' : 'Booking Confirmed');
+        const initialStatusLabel = isPendingOnlinePayment ? 'Pending Payment Authorization' : (routing.driver ? 'Collection Scheduled' : 'Booking Confirmed');
 
         // 3. Cryptographically Secure In-App Order PINs (6 digits pickup, 4 digits delivery)
         const pickupPin = generateSecureNumericPin(6);
