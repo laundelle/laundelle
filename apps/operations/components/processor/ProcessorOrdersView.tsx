@@ -190,7 +190,9 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
   const [orders, setOrders] = useState<ProcessorOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterTab, setFilterTab] = useState<'all' | 'sorting' | 'washing' | 'finishing' | 'qc' | 'ready'>('all');
+  const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
+  const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
+  const filterDropdownRef = React.useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'kanban'>('grid');
 
   // Active side sheet drawer for order details
@@ -207,6 +209,16 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(e.target as Node)) {
+        setIsFilterDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const loadOrders = async () => {
     try {
       const rawSession = localStorage.getItem('l2u_auth_session');
@@ -219,7 +231,7 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
         const mapped: ProcessorOrder[] = data.assigned.map((o: any) => ({
           id: o.publicId || o.orderNumber || o.id || o._id?.toString(),
           customerName: o.customerName || o.customer_name || 'Valued Customer',
-          customerPhone: o.customerPhone || o.phone || '',
+          customerPhone: o.customerPhone || o.phone || o.customer?.phone || o.customer_phone || '',
           serviceType: o.items?.[0]?.name || o.service || 'Laundry Garments',
           status: normalizeStatus(o.status),
           scannedAt: o.intake_at
@@ -313,35 +325,83 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
     }
   };
 
-  // Filtered orders list
-  const filteredOrders = useMemo(() => {
-    return orders.filter(o => {
-      // Search query
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchId = o.id.toLowerCase().includes(q);
-        const matchCustomer = o.customerName.toLowerCase().includes(q);
-        const matchQr = o.bagQr.toLowerCase().includes(q);
-        const matchService = o.serviceType.toLowerCase().includes(q);
-        if (!matchId && !matchCustomer && !matchQr && !matchService) return false;
-      }
-
-      // Filter tabs
-      if (filterTab === 'sorting') return o.status === 'received' || o.status === 'sorting';
-      if (filterTab === 'washing') return o.status === 'washing' || o.status === 'drying';
-      if (filterTab === 'finishing') return o.status === 'ironing' || o.status === 'folding';
-      if (filterTab === 'qc') return o.status === 'quality_check';
-      if (filterTab === 'ready') return o.status === 'ready_for_delivery';
-      return true;
-    });
-  }, [orders, searchQuery, filterTab]);
-
   // Counts for KPIs
   const activeCount = orders.filter(o => o.status !== 'ready_for_delivery').length;
   const inWashDryCount = orders.filter(o => o.status === 'washing' || o.status === 'drying').length;
   const inFinishingCount = orders.filter(o => o.status === 'ironing' || o.status === 'folding').length;
   const inQcCount = orders.filter(o => o.status === 'quality_check').length;
   const readyCount = orders.filter(o => o.status === 'ready_for_delivery').length;
+
+  const FILTER_OPTIONS = useMemo(() => [
+    {
+      id: 'sorting',
+      label: 'Intake & Sorting',
+      count: orders.filter(o => o.status === 'received' || o.status === 'sorting').length,
+      statuses: ['received', 'sorting'] as ProcessorStatus[]
+    },
+    {
+      id: 'washing',
+      label: 'Wash & Dry',
+      count: inWashDryCount,
+      statuses: ['washing', 'drying'] as ProcessorStatus[]
+    },
+    {
+      id: 'finishing',
+      label: 'Press & Fold',
+      count: inFinishingCount,
+      statuses: ['ironing', 'folding'] as ProcessorStatus[]
+    },
+    {
+      id: 'qc',
+      label: 'Quality Check',
+      count: inQcCount,
+      statuses: ['quality_check'] as ProcessorStatus[]
+    },
+    {
+      id: 'ready',
+      label: 'Dispatched / Ready',
+      count: readyCount,
+      statuses: ['ready_for_delivery'] as ProcessorStatus[]
+    }
+  ], [orders, inWashDryCount, inFinishingCount, inQcCount, readyCount]);
+
+  const toggleFilter = (filterId: string) => {
+    setSelectedFilters(prev =>
+      prev.includes(filterId) ? prev.filter(id => id !== filterId) : [...prev, filterId]
+    );
+  };
+
+  // Filtered orders list
+  const filteredOrders = useMemo(() => {
+    return orders.filter(o => {
+      // Search query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const qDigits = q.replace(/\D/g, '');
+        const phoneDigits = (o.customerPhone || '').replace(/\D/g, '');
+        const matchPhone = Boolean(
+          (o.customerPhone && o.customerPhone.toLowerCase().includes(q)) ||
+          (qDigits.length >= 3 && phoneDigits.includes(qDigits))
+        );
+        const matchId = o.id.toLowerCase().includes(q);
+        const matchCustomer = o.customerName.toLowerCase().includes(q);
+        const matchQr = o.bagQr.toLowerCase().includes(q);
+        const matchService = o.serviceType.toLowerCase().includes(q);
+        if (!matchId && !matchCustomer && !matchPhone && !matchQr && !matchService) return false;
+      }
+
+      // Filter dropdown selections
+      if (selectedFilters.length > 0) {
+        const activeStatuses = selectedFilters.flatMap(fId => {
+          const opt = FILTER_OPTIONS.find(f => f.id === fId);
+          return opt ? opt.statuses : [];
+        });
+        if (!activeStatuses.includes(o.status)) return false;
+      }
+
+      return true;
+    });
+  }, [orders, searchQuery, selectedFilters, FILTER_OPTIONS]);
 
   // Pipeline columns for Kanban view
   const KANBAN_COLUMNS: { id: string; title: string; subtitle: string; statuses: ProcessorStatus[]; badgeColor: string }[] = [
@@ -376,7 +436,7 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
   ];
 
   return (
-    <div className="w-full min-h-screen bg-slate-50/60 p-4 sm:p-6 pb-28 md:pb-12 space-y-6">
+    <div className="w-full space-y-6 pb-28 md:pb-12">
 
       {/* ── Toast Notification ── */}
       {toastMessage && (
@@ -389,144 +449,116 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
         </div>
       )}
 
-      {/* ── Top Operational KPI Chips ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <div className="bg-white rounded-3xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Total Active Jobs</p>
-            <p className="text-2xl font-black text-[#03045E] mt-0.5">{activeCount}</p>
-          </div>
-          <div className="w-10 h-10 rounded-2xl bg-[#0077B6]/10 text-[#0077B6] flex items-center justify-center">
-            <ShoppingBag className="w-5 h-5" />
-          </div>
-        </div>
 
-        <div className="bg-white rounded-3xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Washing & Drying</p>
-            <p className="text-2xl font-black text-cyan-700 mt-0.5">{inWashDryCount}</p>
-          </div>
-          <div className="w-10 h-10 rounded-2xl bg-cyan-50 text-cyan-600 flex items-center justify-center">
-            <Sparkles className="w-5 h-5" />
-          </div>
-        </div>
-
-        <div className="bg-white rounded-3xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Pressing & Folding</p>
-            <p className="text-2xl font-black text-purple-700 mt-0.5">{inFinishingCount}</p>
-          </div>
-          <div className="w-10 h-10 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center">
-            <Flame className="w-5 h-5" />
-          </div>
-        </div>
-
-        <div
-          onClick={() => onNavigateTab && onNavigateTab('qc')}
-          className="bg-white hover:bg-amber-50/40 rounded-3xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between cursor-pointer transition-colors group"
-        >
-          <div>
-            <div className="flex items-center gap-1.5">
-              <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Ready for QC</p>
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+      {/* ── Toolbar: Search & Filter Dropdown (Sticky on scroll) ── */}
+      <div className="sticky top-16 md:top-[68px] z-10 py-2.5 -my-2.5 bg-[#f8fafc]/95 backdrop-blur-md">
+        <div className="bg-white rounded-2xl md:rounded-3xl p-3 sm:p-3.5 border border-slate-200/80 shadow-xs">
+          <div className="flex items-center gap-2.5">
+            {/* Search Box */}
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by Order ID, Name, Mobile Number..."
+                className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#0077B6] focus:bg-white transition-all"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+                >
+                  Clear
+                </button>
+              )}
             </div>
-            <p className="text-2xl font-black text-amber-700 mt-0.5">{inQcCount}</p>
-          </div>
-          <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center group-hover:scale-105 transition-transform">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
-        </div>
 
-        <div className="col-span-2 sm:col-span-1 bg-white rounded-3xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Ready for Driver</p>
-            <p className="text-2xl font-black text-emerald-700 mt-0.5">{readyCount}</p>
-          </div>
-          <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-            <CheckCircle2 className="w-5 h-5" />
-          </div>
-        </div>
-      </div>
-
-      {/* ── Toolbar: Search, Filters & View Mode ── */}
-      <div className="bg-white rounded-3xl p-3.5 border border-slate-200/80 shadow-xs space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          {/* Search Box */}
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by order ID, customer name, or bag QR code..."
-              className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#0077B6] focus:bg-white transition-all"
-            />
-            {searchQuery && (
+            {/* Filter Dropdown beside Search Bar */}
+            <div className="relative" ref={filterDropdownRef}>
               <button
                 type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                onClick={() => setIsFilterDropdownOpen(prev => !prev)}
+                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all border cursor-pointer select-none ${selectedFilters.length > 0
+                  ? 'bg-[#03045E] text-white border-[#03045E] shadow-xs'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                  }`}
               >
-                Clear
+                <Filter className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">Filters</span>
+                {selectedFilters.length > 0 && (
+                  <span className="w-5 h-5 rounded-full bg-[#48CAE4] text-[#03045E] font-black text-[10px] flex items-center justify-center">
+                    {selectedFilters.length}
+                  </span>
+                )}
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isFilterDropdownOpen ? 'rotate-180' : ''}`} />
               </button>
-            )}
-          </div>
 
-          {/* View Mode Switcher & Sync Status */}
-          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+              {/* Dropdown Menu */}
+              {isFilterDropdownOpen && (
+                <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 p-2 z-40 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
+                    <span className="text-xs font-black text-slate-800 uppercase tracking-wider">Filter by Stage</span>
+                    {selectedFilters.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFilters([])}
+                        className="text-[11px] font-bold text-[#0077B6] hover:underline cursor-pointer"
+                      >
+                        Clear all
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="py-1.5 space-y-1">
+                    {FILTER_OPTIONS.map(opt => {
+                      const isChecked = selectedFilters.includes(opt.id);
+                      return (
+                        <label
+                          key={opt.id}
+                          className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${isChecked ? 'bg-blue-50 text-[#03045E]' : 'hover:bg-slate-50 text-slate-700'
+                            }`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleFilter(opt.id)}
+                              className="w-4 h-4 rounded-md border-slate-300 text-[#03045E] focus:ring-[#0077B6] cursor-pointer"
+                            />
+                            <span>{opt.label}</span>
+                          </div>
+                          <span className="text-[11px] font-mono text-slate-400">
+                            ({opt.count})
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  {selectedFilters.length > 0 && (
+                    <div className="pt-2 border-t border-slate-100 px-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsFilterDropdownOpen(false)}
+                        className="w-full py-1.5 bg-[#03045E] text-white text-xs font-bold rounded-xl hover:bg-[#023E8A] transition-colors cursor-pointer"
+                      >
+                        Apply ({filteredOrders.length} {filteredOrders.length === 1 ? 'job' : 'jobs'})
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Sync Status */}
             {lastSyncedAt && (
-              <span className="text-[11px] text-slate-400 font-mono hidden md:inline">
+              <span className="text-[11px] text-slate-400 font-mono hidden lg:inline shrink-0">
                 Synced {lastSyncedAt}
               </span>
             )}
-            <div className="flex items-center p-1 bg-slate-100 rounded-2xl text-xs font-bold">
-              <button
-                type="button"
-                onClick={() => setViewMode('grid')}
-                className={`px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer ${
-                  viewMode === 'grid' ? 'bg-white text-slate-900 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>Job Cards</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('kanban')}
-                className={`px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer ${
-                  viewMode === 'kanban' ? 'bg-white text-slate-900 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Kanban className="w-3.5 h-3.5" />
-                <span>Pipeline Board</span>
-              </button>
-            </div>
           </div>
-        </div>
-
-        {/* Filter Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-bold pt-1 border-t border-slate-100">
-          {[
-            { id: 'all' as const, label: 'All Jobs', count: orders.length },
-            { id: 'sorting' as const, label: 'Intake & Sorting', count: orders.filter(o => o.status === 'received' || o.status === 'sorting').length },
-            { id: 'washing' as const, label: 'Wash & Dry', count: inWashDryCount },
-            { id: 'finishing' as const, label: 'Press & Fold', count: inFinishingCount },
-            { id: 'qc' as const, label: 'Quality Check', count: inQcCount },
-            { id: 'ready' as const, label: 'Dispatched / Ready', count: readyCount },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setFilterTab(tab.id)}
-              className={`px-3.5 py-1.5 rounded-xl whitespace-nowrap transition-all cursor-pointer ${
-                filterTab === tab.id
-                  ? 'bg-[#03045E] text-white shadow-2xs font-extrabold'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70 border border-transparent'
-              }`}
-            >
-              {tab.label} <span className="text-[10px] opacity-80 font-mono">({tab.count})</span>
-            </button>
-          ))}
         </div>
       </div>
 
@@ -548,7 +580,7 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
 
       {/* ── Empty State ── */}
       {!loading && filteredOrders.length === 0 && (
-        <div className="text-center py-20 px-4 bg-white rounded-3xl border-2 border-dashed border-slate-200 shadow-2xs space-y-4">
+        <div className="text-center mt-5 h-full p-4 bg-white rounded-3xl border-2 border-dashed border-slate-200 shadow-2xs space-y-4">
           <div className="w-14 h-14 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center mx-auto">
             <ShoppingBag className="w-7 h-7" />
           </div>
@@ -605,7 +637,12 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
 
                   {/* Customer & Service Info */}
                   <div>
-                    <h3 className="font-extrabold text-sm text-slate-900 truncate">{order.customerName}</h3>
+                    <div className="flex items-center justify-between gap-1">
+                      <h3 className="font-extrabold text-sm text-slate-900 truncate">{order.customerName}</h3>
+                      {order.customerPhone && (
+                        <span className="text-[11px] font-mono text-slate-400 font-medium shrink-0">{order.customerPhone}</span>
+                      )}
+                    </div>
                     <p className="text-xs text-slate-500 font-medium truncate mt-0.5">
                       {order.serviceType} • <span className="font-bold text-slate-700">{order.weightKg} kg</span> • {order.itemCount} piece(s)
                     </p>
@@ -636,9 +673,8 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
                       {WORKFLOW.map((w, idx) => (
                         <div
                           key={w.value}
-                          className={`flex-1 h-full rounded-full transition-all ${
-                            idx <= stepIndex ? 'bg-[#0077B6]' : 'bg-slate-200'
-                          }`}
+                          className={`flex-1 h-full rounded-full transition-all ${idx <= stepIndex ? 'bg-[#0077B6]' : 'bg-slate-200'
+                            }`}
                         />
                       ))}
                     </div>
@@ -715,9 +751,8 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
                             key={w.value}
                             type="button"
                             onClick={() => executeStageTransition(order.id, w.value, order.bagQr)}
-                            className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer ${
-                              order.status === w.value ? 'bg-[#03045E] text-white' : 'text-slate-700 hover:bg-slate-100'
-                            }`}
+                            className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer ${order.status === w.value ? 'bg-[#03045E] text-white' : 'text-slate-700 hover:bg-slate-100'
+                              }`}
                           >
                             <span>{w.emoji}</span>
                             <span className="truncate">{w.label}</span>

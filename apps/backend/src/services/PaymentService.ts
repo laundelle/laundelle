@@ -15,22 +15,92 @@ export class PaymentService {
     }
 
     /**
-     * Verifies Stripe checkout session status and creates the order if paid.
+     * READ-ONLY verification for the Stripe redirect fallback (confirm-session endpoint).
+     *
+     * SECURITY DESIGN:
+     * - Verifies payment status with Stripe API.
+     * - ONLY looks up an order already created by the webhook (checkout.session.completed).
+     * - NEVER creates orders. Order creation is EXCLUSIVE to the webhook handler.
+     * - If the webhook has not yet processed the event, returns { status: 'pending' }.
+     *
+     * This ensures that if the webhook is not running, no order is ever confirmed.
      */
-    static async verifyAndFulfillSession(sessionId: string) {
-        if (!sessionId) return null;
+    static async verifySessionPayment(sessionId: string, authenticatedUserId: string): Promise<{
+        status: 'paid' | 'pending' | 'unpaid' | 'error';
+        order?: any;
+        message?: string;
+    }> {
+        if (!sessionId) return { status: 'error', message: 'No session ID provided.' };
+
+        // STRIPE_WEBHOOK_SECRET must be set - this proves the server is configured for webhooks
+        const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+        if (!webhookSecret || webhookSecret.trim() === '' || webhookSecret === 'whsec_YOUR_STRIPE_WEBHOOK_SIGNING_SECRET') {
+            console.error('[PaymentService] STRIPE_WEBHOOK_SECRET is not configured.');
+            return { status: 'error', message: 'Payment system is not configured. Please contact support.' };
+        }
+
         try {
             const stripe = this.getStripe();
             const session = await stripe.checkout.sessions.retrieve(sessionId);
-            if (session && session.payment_status === 'paid') {
-                const db = await getDb();
-                const now = new Date().toISOString();
-                return await this.processCheckoutCompleted(db, session, now);
+
+            if (!session || session.payment_status !== 'paid') {
+                return { status: session?.payment_status === 'unpaid' ? 'unpaid' : 'unpaid', message: 'Payment has not been completed.' };
             }
-        } catch (e) {
-            console.error('[PaymentService] verifyAndFulfillSession error:', e);
+
+            // Checkout sessions are private payment credentials. Bind the redirect
+            // verification to the same authenticated customer that created it.
+            if (!session.metadata?.userId || session.metadata.userId !== authenticatedUserId) {
+                return { status: 'error', message: 'This checkout session does not belong to the signed-in customer.' };
+            }
+
+            // Payment IS confirmed by Stripe. Now look up the order that the WEBHOOK should have created.
+            const db = await getDb();
+            const existingOrder = await db.collection('orders').findOne({
+                stripe_session_id: sessionId,
+                $or: [{ payment_status: 'Paid' }, { paymentStatus: 'Paid' }, { isPaid: true }]
+            });
+
+            if (existingOrder) {
+                console.log(`[PaymentService] verifySessionPayment: Order found for session ${sessionId} (webhook processed).`);
+                return { status: 'paid', order: existingOrder };
+            }
+
+            // Stripe says paid, but webhook hasn't processed it yet (or webhook is not running).
+            // We NEVER create the order here. Do not auto-refund after an arbitrary
+            // browser timeout: Stripe can legitimately retry delivery later, and a
+            // refund plus a later fulfilled order would be worse than a pending state.
+            console.warn(`[PaymentService] verifySessionPayment: Stripe reports paid for ${sessionId} but no order found in DB. Webhook may not have processed yet or is not running.`);
+            return {
+                status: 'pending',
+                message: 'Payment received by Stripe, but your order confirmation is still being processed by the webhook. Please wait a moment.'
+            };
+        } catch (e: any) {
+            console.error('[PaymentService] verifySessionPayment error:', e);
+            return { status: 'error', message: e.message || 'Failed to verify payment status.' };
         }
-        return null;
+    }
+
+    /**
+     * Asserts that the Stripe webhook infrastructure is operational before creating a checkout session.
+     * Guarantees STRIPE_WEBHOOK_SECRET is set and valid without blocking on webhookEndpoints.list
+     * (which breaks local CLI development and restricted API keys).
+     */
+    static async assertWebhookOperational(): Promise<void> {
+        const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+        if (!webhookSecret || webhookSecret.trim() === '' || webhookSecret === 'whsec_YOUR_STRIPE_WEBHOOK_SIGNING_SECRET') {
+            throw new BadRequestError('Payment system configuration error: STRIPE_WEBHOOK_SECRET is not configured on the server. Checkout cannot proceed without webhook security.');
+        }
+
+        try {
+            const stripe = this.getStripe();
+            if (!stripe) {
+                throw new BadRequestError('Stripe API client is not initialized.');
+            }
+        } catch (e: any) {
+            if (e instanceof BadRequestError) throw e;
+            console.error('[PaymentService] Unable to verify Stripe configuration:', e.message);
+            throw new BadRequestError('Payment rejected: Unable to verify Stripe payment gateway configuration.');
+        }
     }
 
     /**
@@ -38,6 +108,8 @@ export class PaymentService {
      */
     static async createCheckoutSession(userId: string, orderId: string, origin: string) {
         if (!orderId) throw new BadRequestError('Missing required parameter: orderId');
+
+        await this.assertWebhookOperational();
 
         const db = await getDb();
         const order = await db.collection('orders').findOne(buildEntityLookupQuery(orderId, 'order'));
@@ -70,7 +142,7 @@ export class PaymentService {
             payment_method_types: ['card'],
             line_items,
             mode: 'payment',
-            success_url: `${origin}/orders?payment=success&orderId=${canonicalOrderId}`,
+            success_url: `${origin}/orders?payment=verify&orderId=${canonicalOrderId}&session_id={CHECKOUT_SESSION_ID}`,
             cancel_url: `${origin}/orders?payment=cancel&orderId=${canonicalOrderId}`,
             customer_email: order.customerEmail || undefined,
             metadata: {
@@ -96,70 +168,110 @@ export class PaymentService {
      * Handles the Stripe Webhook, verifies signatures, and applies idempotent state updates.
      */
     static async handleStripeWebhook(rawBody: string, signature: string | null) {
-        if (!signature) throw new BadRequestError('Missing stripe-signature header');
-
         const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-        let event: Stripe.Event;
 
-        if (webhookSecret && webhookSecret !== 'whsec_YOUR_STRIPE_WEBHOOK_SIGNING_SECRET') {
-            try {
-                const stripe = this.getStripe();
-                event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
-            } catch (err: any) {
-                console.error('[Stripe Webhook] Signature verification failed:', err.message);
-                throw new BadRequestError(`Webhook error: ${err.message}`);
-            }
-        } else {
-            if (process.env.NODE_ENV === 'production') {
-                throw new BadRequestError('STRIPE_WEBHOOK_SECRET is not configured. Webhook rejected for security.');
-            }
-            console.warn('[Stripe Webhook] Running in non-production without signature verification — set STRIPE_WEBHOOK_SECRET.');
-            try {
-                event = JSON.parse(rawBody) as Stripe.Event;
-            } catch {
-                throw new BadRequestError('Invalid JSON payload');
-            }
+        // Security requirement: STRIPE_WEBHOOK_SECRET is mandatory in ALL environments (dev & prod)
+        if (!webhookSecret || webhookSecret.trim() === '' || webhookSecret === 'whsec_YOUR_STRIPE_WEBHOOK_SIGNING_SECRET') {
+            console.error('[Stripe Webhook] STRIPE_WEBHOOK_SECRET is not configured. Webhook rejected for security.');
+            throw new BadRequestError('STRIPE_WEBHOOK_SECRET is not configured. Webhook rejected for security.');
+        }
+
+        if (!signature) {
+            throw new BadRequestError('Missing stripe-signature header');
+        }
+
+        let event: Stripe.Event;
+        try {
+            const stripe = this.getStripe();
+            event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+        } catch (err: any) {
+            console.error('[Stripe Webhook] Signature verification failed:', err.message);
+            throw new BadRequestError(`Webhook signature verification failed: ${err.message}`);
         }
 
         const db = await getDb();
         const now = new Date().toISOString();
 
-        // Idempotency Check: Prevent duplicate webhook processing
+        // Persist lifecycle state, not merely receipt. Recording an event before its
+        // side effects finish used to make a transient database error permanent: the
+        // next Stripe retry saw the event and skipped order creation.
         try {
             await db.collection('stripe_events').insertOne({
                 _id: event.id as any,
                 type: event.type,
-                processedAt: now
+                status: 'processing',
+                receivedAt: now,
+                attempts: 1
             });
         } catch (e: any) {
             if (e.code === 11000) {
-                console.log(`[Stripe Webhook] Event ${event.id} already processed. Idempotency triggered.`);
-                return { received: true, idempotent: true };
+                const previousEvent = await db.collection('stripe_events').findOne({ _id: event.id as any });
+                if (previousEvent?.status === 'completed') {
+                    console.log(`[Stripe Webhook] Event ${event.id} already processed. Idempotency triggered.`);
+                    return { received: true, idempotent: true };
+                }
+
+                // A previous delivery failed partway through. The order/payment writes
+                // below are themselves keyed by Stripe IDs, so replaying is safe.
+                await db.collection('stripe_events').updateOne(
+                    { _id: event.id as any },
+                    { $set: { status: 'processing', retryStartedAt: now }, $inc: { attempts: 1 } }
+                );
+            } else {
+                throw e;
             }
-            throw e;
         }
 
         console.log(`[Stripe Webhook] Processing verified new event: ${event.type}`);
 
-        if (event.type === 'checkout.session.completed') {
-            await this.processCheckoutCompleted(db, event.data.object as Stripe.Checkout.Session, now);
-        } else if (event.type === 'payment_intent.payment_failed') {
-            await this.processPaymentFailed(db, event.data.object as Stripe.PaymentIntent, now);
+        try {
+            if (event.type === 'checkout.session.completed') {
+                await this.processCheckoutCompleted(db, event.data.object as Stripe.Checkout.Session, now);
+            } else if (event.type === 'payment_intent.payment_failed') {
+                await this.processPaymentFailed(db, event.data.object as Stripe.PaymentIntent, now);
+            }
+            await db.collection('stripe_events').updateOne(
+                { _id: event.id as any },
+                { $set: { status: 'completed', processedAt: new Date().toISOString() } }
+            );
+        } catch (error: any) {
+            await db.collection('stripe_events').updateOne(
+                { _id: event.id as any },
+                { $set: { status: 'failed', failedAt: new Date().toISOString(), error: error.message || 'Unknown processing error' } }
+            ).catch(() => {});
+            throw error;
         }
 
         return { received: true };
     }
 
     private static async processCheckoutCompleted(db: any, session: Stripe.Checkout.Session, now: string) {
+        // A signed Checkout event is not by itself proof that money was collected.
+        // In particular, delayed payment methods can emit checkout.session.completed
+        // while the session remains unpaid. No order may be created until Stripe marks
+        // this session paid.
+        if (session.payment_status !== 'paid') {
+            console.warn(`[Stripe Webhook] Ignoring unpaid Checkout Session ${session.id}.`);
+            return null;
+        }
+
         const checkoutId = session.metadata?.checkoutId;
         const orderId = session.metadata?.orderId;
         const userId = session.metadata?.userId || 'guest';
         const stripeSessionId = session.id;
 
-        // 1. Idempotency Check: if order already exists for this stripeSessionId, return existing
+        // 1. Idempotency Check: if order already exists for this stripeSessionId and is paid, return existing
         const existingOrder = await db.collection('orders').findOne({ stripe_session_id: stripeSessionId });
         if (existingOrder) {
-            return existingOrder;
+            if (existingOrder.payment_status === 'Paid' || existingOrder.paymentStatus === 'Paid' || existingOrder.isPaid) {
+                return existingOrder;
+            }
+            const updated = await this.updateExistingOrderToPaid(db, existingOrder, session, now);
+            if (checkoutId) {
+                await db.collection('pending_checkouts').deleteOne({ _id: checkoutId }).catch(() => {});
+            }
+            await db.collection('pending_checkouts').deleteMany({ stripeSessionId: stripeSessionId }).catch(() => {});
+            return updated;
         }
 
         // 2. Check pending_checkouts collection
@@ -172,6 +284,36 @@ export class PaymentService {
         }
 
         if (pendingCheckout) {
+            if (pendingCheckout.status !== 'pending') {
+                console.warn(`[Stripe Webhook] Checkout ${checkoutId || stripeSessionId} is not pending; refusing order creation.`);
+                return null;
+            }
+
+            if (pendingCheckout.stripeSessionId && pendingCheckout.stripeSessionId !== stripeSessionId) {
+                console.error(`[Stripe Webhook] Checkout/session mismatch for ${checkoutId}.`);
+                return null;
+            }
+
+            if (pendingCheckout.expiresAt && new Date(pendingCheckout.expiresAt).getTime() < Date.now()) {
+                await db.collection('pending_checkouts').updateOne(
+                    { _id: pendingCheckout._id },
+                    { $set: { status: 'expired', updatedAt: now } }
+                );
+                console.warn(`[Stripe Webhook] Checkout ${checkoutId || stripeSessionId} expired before payment confirmation.`);
+                return null;
+            }
+
+            const authorizedAmount = Number(pendingCheckout.authorizedAmount);
+            const paidAmount = Number(session.amount_total || 0) / 100;
+            if (!Number.isFinite(authorizedAmount) || Math.abs(authorizedAmount - paidAmount) > 0.01) {
+                await db.collection('pending_checkouts').updateOne(
+                    { _id: pendingCheckout._id },
+                    { $set: { status: 'amount_mismatch', updatedAt: now } }
+                );
+                console.error(`[Stripe Webhook] Amount mismatch for session ${stripeSessionId}; refusing order creation.`);
+                return null;
+            }
+
             // Check if this checkout belongs to an existing order in the database
             const targetOrderId = pendingCheckout.orderPayload?.id || pendingCheckout.orderPayload?._id || orderId;
             let existingDbOrder = null;
@@ -203,6 +345,7 @@ export class PaymentService {
             return await this.updateExistingOrderToPaid(db, order, session, now);
         }
     }
+
 
     private static async updateExistingOrderToPaid(db: any, order: any, session: Stripe.Checkout.Session, now: string) {
         const orderId = order.id || String(order._id);
@@ -393,6 +536,17 @@ export class PaymentService {
             );
         }
 
+        // 6. Clean up any remaining pending checkout records associated with this session or order
+        await db.collection('pending_checkouts').deleteMany({
+            $or: [
+                { stripeSessionId },
+                { 'orderPayload.id': orderId },
+                { 'orderPayload._id': orderId },
+                { 'orderPayload.publicId': orderId },
+                ...(session.metadata?.checkoutId ? [{ _id: session.metadata.checkoutId }] : [])
+            ]
+        }).catch(() => {});
+
         return await db.collection('orders').findOne({ $or: [{ id: orderId }, { _id: order._id || orderId }] });
     }
 
@@ -400,7 +554,30 @@ export class PaymentService {
         const orderId = intent.metadata?.orderId;
         const userId = intent.metadata?.userId;
 
+        // Payment Element failures occur before an official order exists. Preserve
+        // the pending checkout and error detail so the customer can safely enter a
+        // different card or cancel, without losing the cart.
+        if (intent.metadata?.checkoutId) {
+            await db.collection('pending_checkouts').updateOne(
+                { stripePaymentIntentId: intent.id, status: 'pending' },
+                {
+                    $set: {
+                        lastPaymentError: intent.last_payment_error?.message || 'Payment could not be completed.',
+                        lastPaymentErrorCode: intent.last_payment_error?.decline_code || intent.last_payment_error?.code || 'payment_failed',
+                        lastPaymentFailedAt: now,
+                        updatedAt: now,
+                    }
+                }
+            );
+        }
+
         if (!orderId) return;
+
+        // The Payment Element creates no order until a later succeeded webhook.
+        // Do not emit a failed-order notification/audit entry for a declined card
+        // when the only record is the recoverable pending checkout.
+        const existingOrder = await db.collection('orders').findOne(buildEntityLookupQuery(orderId, 'order'));
+        if (!existingOrder) return;
 
         await db.collection('orders').updateOne(
             { id: orderId },

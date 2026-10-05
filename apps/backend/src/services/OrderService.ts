@@ -386,7 +386,19 @@ export class OrderService {
 
         const stripeSessionId = stripeSession?.id || checkoutData?.stripeSessionId || '';
         const paymentIntentId = stripeSession?.payment_intent || '';
+        // SECURITY: Always use Stripe's confirmed amount_total (authoritative).
+        // Fall back to orderData.total ONLY if Stripe provides no total (should not happen in prod).
         const amountGBP = stripeSession?.amount_total ? stripeSession.amount_total / 100 : (orderData.total || 0);
+
+        // Cross-check: Stripe-confirmed amount vs server-authorized amount stored at checkout creation
+        const authorizedAmount = checkoutData?.authorizedAmount ?? orderData?.total;
+        if (authorizedAmount && Math.abs(amountGBP - authorizedAmount) > 0.01) {
+            console.warn(
+                `[OrderService] SECURITY: Stripe-confirmed amount (£${amountGBP.toFixed(2)}) differs from ` +
+                `server-authorized amount (£${Number(authorizedAmount).toFixed(2)}) for session ${stripeSessionId}. ` +
+                `Using Stripe-confirmed amount. Investigate possible price manipulation.`
+            );
+        }
 
         // Idempotency: Check if order already exists for this stripeSessionId
         if (stripeSessionId) {
@@ -655,7 +667,7 @@ export class OrderService {
             }
         }
 
-        const orderId = orderData.id || generateOrderNumber();
+        const orderId = (orderData.id && typeof orderData.id === 'string' && orderData.id.startsWith('ORD-')) ? orderData.id : generateOrderNumber();
 
         // 1. Postcode extraction, Plant, Plant Manager, and Driver location
         let rawPostcode = orderData.postcode || '';

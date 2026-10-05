@@ -167,8 +167,8 @@ const REFERENCE_JOBS: DriverJobItem[] = [
 
 const REFERENCE_COMPLETED_JOBS: any[] = [
     {
-        id: 'L2U-46308',
-        original_id: 'L2U-46308',
+        id: 'ORD-4630891284',
+        original_id: 'ORD-4630891284',
         status: 'delivered',
         completed_action: 'both',
         is_both: true,
@@ -185,8 +185,8 @@ const REFERENCE_COMPLETED_JOBS: any[] = [
         createdAt: '2026-08-26T08:50:52.714Z'
     },
     {
-        id: 'L2U-14823',
-        original_id: 'L2U-14823',
+        id: 'ORD-1482390572',
+        original_id: 'ORD-1482390572',
         status: 'laundry_collected',
         completed_action: 'collection',
         is_delivered: false,

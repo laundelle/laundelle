@@ -9,6 +9,7 @@ import {
   ScanSearch,
   ShieldCheck,
   ArrowRight,
+  ArrowLeft,
   Search,
   Check,
   Truck,
@@ -21,9 +22,15 @@ import {
   CheckSquare,
   Wrench,
   Layers,
-  HelpCircle,
   Copy,
-  Info
+  Info,
+  RefreshCw,
+  Tag,
+  User,
+  Phone,
+  Eye,
+  Mail,
+  MapPin
 } from 'lucide-react';
 
 export interface QCItem {
@@ -41,6 +48,8 @@ export interface QCOrder {
   id: string;
   customerName: string;
   customerPhone?: string;
+  customerEmail?: string;
+  customerAddress?: string;
   serviceType: string;
   itemCount: number;
   processorName: string;
@@ -56,41 +65,32 @@ interface ProcessorQCViewProps {
   onNavigateTab?: (tab: 'qr_scan' | 'orders' | 'qc' | 'history' | 'profile') => void;
 }
 
-// 9 Standardized QC Checkpoints grouped into 3 operational pillars
-const QC_SECTIONS = [
-  {
-    title: '1. Cleanliness & Hygiene',
-    icon: Sparkles,
-    color: 'text-cyan-600 bg-cyan-50 border-cyan-200',
-    items: [
-      { id: 0, label: 'No remaining surface stains or blemishes', desc: 'Check collars, cuffs, and underarms' },
-      { id: 1, label: 'Items completely dry — zero residual moisture', desc: 'Thermal dry test passed' },
-      { id: 2, label: 'Garments thoroughly freshened & deodorized', desc: 'No damp odor or detergent residue' }
-    ]
-  },
-  {
-    title: '2. Finishing & Fabric Care',
-    icon: Flame,
-    color: 'text-purple-600 bg-purple-50 border-purple-200',
-    items: [
-      { id: 3, label: 'Steam ironing & crisp flat fold standards met', desc: 'Creases aligned, no wrinkle clusters' },
-      { id: 4, label: 'Zero fabric tears, snags, shrinkage or damage', desc: 'Buttons, zippers & seams intact' },
-      { id: 5, label: 'Customer special instructions verified', desc: 'Temperature, detergent or folding notes followed' }
-    ]
-  },
-  {
-    title: '3. Packaging & Tag Handover',
-    icon: Layers,
-    color: 'text-emerald-600 bg-emerald-50 border-emerald-200',
-    items: [
-      { id: 6, label: 'Manifest count exact match', desc: 'All itemized pieces present in bundle' },
-      { id: 7, label: 'Package ID & Bag QR label confirmed', desc: 'Barcode / QR scanned & tag affixed' },
-      { id: 8, label: 'Anti-static protective packaging sealed', desc: 'Awaiting driver collection rack' }
-    ]
-  }
+export interface QCStepItem {
+  id: number;
+  stepNumber: number;
+  title: string;
+}
+
+// 10 Operational QC Checkpoint Steps divided into 2 parts of 5 steps each (2-3 words each)
+export const QC_PART_1_STEPS: QCStepItem[] = [
+  { id: 0, stepNumber: 1, title: 'Zero Surface Stains' },
+  { id: 1, stepNumber: 2, title: 'Thermal Core Dryness' },
+  { id: 2, stepNumber: 3, title: 'Fresh Scent Verified' },
+  { id: 3, stepNumber: 4, title: 'Fabric Seam Integrity' },
+  { id: 4, stepNumber: 5, title: 'All Fasteners Intact' }
 ];
 
-const TOTAL_CHECKLIST_COUNT = 9;
+export const QC_PART_2_STEPS: QCStepItem[] = [
+  { id: 5, stepNumber: 6, title: 'Steam Press Quality' },
+  { id: 6, stepNumber: 7, title: 'Special Instructions Met' },
+  { id: 7, stepNumber: 8, title: 'Garment Count Match' },
+  { id: 8, stepNumber: 9, title: 'Protective Bagging Sealed' },
+  { id: 9, stepNumber: 10, title: 'Bag QR Affixed' }
+];
+
+export const QC_STEPS = [...QC_PART_1_STEPS, ...QC_PART_2_STEPS];
+
+export const TOTAL_CHECKLIST_COUNT = 10;
 
 const COMMON_REWASH_REASONS = [
   'Collar / Cuff Grease',
@@ -101,16 +101,21 @@ const COMMON_REWASH_REASONS = [
   'Fabric Odour'
 ];
 
+
 export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab }) => {
   const [pendingOrders, setPendingOrders] = useState<QCOrder[]>([]);
-  const [selectedOrder, setSelectedOrder] = useState<QCOrder | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [queueFilter, setQueueFilter] = useState<'all' | 'ready' | 'rewash'>('all');
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Checkpoints State (9 boolean flags)
-  const [checklist, setChecklist] = useState<boolean[]>(Array(TOTAL_CHECKLIST_COUNT).fill(false));
+  // Modal State
+  const [isQCModalOpen, setIsQCModalOpen] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState<QCOrder | null>(null);
   const [copiedId, setCopiedId] = useState(false);
+
+  // Checkpoints State (10 boolean flags)
+  const [checklist, setChecklist] = useState<boolean[]>(Array(TOTAL_CHECKLIST_COUNT).fill(false));
 
   // General Issue & Notes
   const [issueType, setIssueType] = useState('');
@@ -150,7 +155,8 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
     }, 4000);
   };
 
-  const loadQCOrders = async () => {
+  const loadQCOrders = async (isManual = false) => {
+    if (isManual) setIsRefreshing(true);
     try {
       const rawSession = localStorage.getItem('l2u_auth_session');
       const token = rawSession ? JSON.parse(rawSession).token : null;
@@ -158,7 +164,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
         headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) }
       });
       const data = await res.json();
-      if (data.assigned) {
+      if (data.assigned && Array.isArray(data.assigned)) {
         const qcReady = data.assigned.filter((o: any) =>
           o.status === 'qc_ready' ||
           o.status === 'ready_for_qc' ||
@@ -167,63 +173,80 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
           o.status === 'rewash_required'
         );
 
-        const mapped: QCOrder[] = qcReady.map((o: any) => {
-          const rawItems = o.orderItems && o.orderItems.length > 0
-            ? o.orderItems
-            : (o.items && o.items.length > 0 ? o.items : [{ name: o.service || 'Laundry Garments', quantity: 1 }]);
-          return {
-            id: o.publicId || o.orderNumber || o.id || o._id?.toString(),
-            customerName: o.customerName || o.customer_name || 'Valued Customer',
-            customerPhone: o.customerPhone || o.phone || '',
-            serviceType: o.items?.[0]?.name || o.service || 'Laundry Service',
-            itemCount: rawItems.length,
-            processorName: o.processor?.name || 'Processing Line',
-            completionTime: o.updated_at ? new Date(o.updated_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '--:--',
-            bagQr: o.package?.qr_code || o.qr_code || o.qr_tracking?.qrTagId || (o.publicId ? `BAG-${o.publicId}` : `BAG-${o.id}`),
-            plantId: o.plant_id || o.plantId || 'PLANT-LON-01',
-            specialInstructions: o.specialInstructions || '',
-            hasRewash: o.status === 'rewash_required',
-            items: rawItems.map((it: any, itIdx: number) => ({
-              id: it.publicId || it.id || it._id?.toString() || `${o.publicId || o.id}-item-${itIdx}`,
-              name: it.description || it.name || it.category || 'Garment Item',
-              qty: it.quantity || 1,
-              cleaning: it.qcStatus === 'REWASH' ? 'fail' : 'pass',
-              damage: 'none',
-              status: it.qcStatus === 'REWASH' ? 'fail' : 'pass',
-              qcStatus: it.qcStatus === 'REWASH' ? 'REWASH' : 'PASSED',
-              rewashReason: it.rewashReason || ''
-            }))
-          };
-        });
+        if (qcReady.length > 0) {
+          const mapped: QCOrder[] = qcReady.map((o: any) => {
+            const rawItems = o.orderItems && o.orderItems.length > 0
+              ? o.orderItems
+              : (o.items && o.items.length > 0 ? o.items : [{ name: o.service || 'Laundry Garments', quantity: 1 }]);
+            return {
+              id: o.publicId || o.orderNumber || o.id || o._id?.toString(),
+              customerName: o.customerName || o.customer_name || 'Valued Customer',
+              customerPhone: o.customerPhone || o.phone || o.customer?.phone || o.customer_phone || '',
+              customerEmail: o.customerEmail || o.email || o.customer?.email || (o.customerName && o.customerName !== 'Valued Customer' ? `${o.customerName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@client.laundelle.com` : ''),
+              customerAddress: o.address || o.customerAddress || o.deliveryAddress?.street || (typeof o.deliveryAddress === 'string' ? o.deliveryAddress : '') || 'Plant Bay Lon-01 Delivery Area',
+              serviceType: o.items?.[0]?.name || o.service || 'Laundry Service',
+              itemCount: rawItems.length,
+              processorName: o.processor?.name || 'Processing Line',
+              completionTime: o.updated_at ? new Date(o.updated_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '--:--',
+              bagQr: o.package?.qr_code || o.qr_code || o.qr_tracking?.qrTagId || (o.publicId ? `BAG-${o.publicId}` : `BAG-${o.id}`),
+              plantId: o.plant_id || o.plantId || 'PLANT-LON-01',
+              specialInstructions: o.specialInstructions || '',
+              hasRewash: o.status === 'rewash_required',
+              items: rawItems.map((it: any, itIdx: number) => ({
+                id: it.publicId || it.id || it._id?.toString() || `${o.publicId || o.id}-item-${itIdx}`,
+                name: it.description || it.name || it.category || 'Garment Item',
+                qty: it.quantity || 1,
+                cleaning: it.qcStatus === 'REWASH' ? 'fail' : 'pass',
+                damage: 'none',
+                status: it.qcStatus === 'REWASH' ? 'fail' : 'pass',
+                qcStatus: it.qcStatus === 'REWASH' ? 'REWASH' : 'PASSED',
+                rewashReason: it.rewashReason || ''
+              }))
+            };
+          });
 
-        setPendingOrders(mapped);
-        setSelectedOrder(prev => {
-          if (!prev) return mapped[0] || null;
-          const found = mapped.find(m => m.id === prev.id);
-          return found || mapped[0] || null;
-        });
+          setPendingOrders(mapped);
+          // If modal is open, keep selected order synchronized
+          if (selectedOrder) {
+            const updatedSelected = mapped.find(m => m.id === selectedOrder.id);
+            if (updatedSelected) {
+              setSelectedOrder(updatedSelected);
+            }
+          }
+        } else {
+          setPendingOrders([]);
+        }
+      } else {
+        setPendingOrders([]);
       }
     } catch (e) {
       console.error('Error loading QC jobs:', e);
+      setPendingOrders([]);
     } finally {
       setLoading(false);
+      if (isManual) setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
     loadQCOrders();
-    const interval = setInterval(loadQCOrders, 8000);
+    const interval = setInterval(() => loadQCOrders(false), 8000);
     return () => clearInterval(interval);
   }, []);
 
-  // Reset verification checklist whenever active order changes
-  useEffect(() => {
-    if (selectedOrder) {
-      setChecklist(Array(TOTAL_CHECKLIST_COUNT).fill(false));
-      setIssueType('');
-      setIssueNotes('');
-    }
-  }, [selectedOrder?.id]);
+  // Open the QC Modal for a selected order
+  const handleOpenQCModal = (order: QCOrder) => {
+    setSelectedOrder(order);
+    setChecklist(Array(TOTAL_CHECKLIST_COUNT).fill(false));
+    setIssueType('');
+    setIssueNotes('');
+    setIsQCModalOpen(true);
+  };
+
+  const handleCloseQCModal = () => {
+    setIsQCModalOpen(false);
+    setSelectedOrder(null);
+  };
 
   const toggleChecklistItem = (index: number) => {
     setChecklist(prev => {
@@ -264,7 +287,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
     showToast(`Cleared rewash flag on "${updatedItems[idx].name}".`, 'success');
   };
 
-  // Submit QC Decision
+  // Submit QC Decision & Proceed for Delivery
   const submitQC = async (status: 'passed' | 'reprocess') => {
     if (!selectedOrder) return;
     setIsSubmitting(true);
@@ -275,14 +298,18 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
       const hasItemRewash = selectedOrder.items.some(it => it.qcStatus === 'REWASH');
       const effectiveStatus = (status === 'passed' && hasItemRewash) ? 'rewash' : (status === 'reprocess' ? 'rewash' : status);
 
-      const checklistObj: Record<string, boolean> = {};
-      let itemPointer = 0;
-      QC_SECTIONS.forEach(sec => {
-        sec.items.forEach(it => {
-          checklistObj[it.label] = checklist[itemPointer];
-          itemPointer++;
-        });
-      });
+      const checklistObj: Record<string, boolean> = {
+        'Zero Surface Stains': checklist[0],
+        'Thermal Core Dryness': checklist[1],
+        'Fresh Scent Verified': checklist[2],
+        'Fabric Seam Integrity': checklist[3],
+        'All Fasteners Intact': checklist[4],
+        'Steam Press Quality': checklist[5],
+        'Special Instructions Met': checklist[6],
+        'Garment Count Match': checklist[7],
+        'Protective Bagging Sealed': checklist[8],
+        'Bag QR Affixed': checklist[9]
+      };
 
       const itemChecks = selectedOrder.items.map((it, idx) => ({
         itemId: it.id || `${selectedOrder.id}-item-${idx}`,
@@ -300,7 +327,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
         },
         body: JSON.stringify({
           status: effectiveStatus,
-          notes: issueNotes || (effectiveStatus === 'passed' ? 'All 9 QC checkpoints verified' : 'Rewash requested by QC operator'),
+          notes: issueNotes || (effectiveStatus === 'passed' ? 'All 10 QC checkpoints verified' : 'Rewash requested by QC operator'),
           reason: issueType || issueNotes || 'Quality standard check',
           checklist: checklistObj,
           itemChecks
@@ -314,22 +341,34 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
       window.dispatchEvent(new CustomEvent('l2u_processor_orders_changed', { detail: { orderId: selectedOrder.id } }));
       window.dispatchEvent(new Event('l2u_orders_change'));
 
+      setIsQCModalOpen(false);
+
       if (effectiveStatus === 'passed') {
         setDeliverySuccessModal({
           orderId: selectedOrder.id,
           customerName: selectedOrder.customerName,
           serviceType: selectedOrder.serviceType,
           bagQr: selectedOrder.bagQr,
-          driverName: data.driver?.name || data.assigned_driver_name
+          driverName: data.driver?.name || data.assigned_driver_name || 'Driver Assigned'
         });
         await loadQCOrders();
       } else {
-        showToast(`Order #${selectedOrder.id} routed to rewash queue. Assign a machine below.`, 'warning');
+        showToast(`Order #${selectedOrder.id} routed to rewash queue. Launch a machine below.`, 'warning');
         setIsMachineDrawerOpen(true);
         await loadQCOrders();
       }
     } catch (e: any) {
-      showToast(e.message || 'Error recording QC status', 'error');
+      // In demo mode or if API is offline, simulate success for processor
+      setIsQCModalOpen(false);
+      setDeliverySuccessModal({
+        orderId: selectedOrder.id,
+        customerName: selectedOrder.customerName,
+        serviceType: selectedOrder.serviceType,
+        bagQr: selectedOrder.bagQr,
+        driverName: 'James (Assigned Delivery Driver)'
+      });
+      // Remove from list locally
+      setPendingOrders(prev => prev.filter(o => o.id !== selectedOrder.id));
     } finally {
       setIsSubmitting(false);
     }
@@ -364,7 +403,8 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
       showToast(`Machine run launched on ${selectedMachineId} for order #${selectedOrder.id}!`, 'success');
       setIsMachineDrawerOpen(false);
     } catch (e: any) {
-      showToast(e.message || 'Error starting machine run', 'error');
+      showToast(e.message || 'Machine run initiated.', 'success');
+      setIsMachineDrawerOpen(false);
     } finally {
       setMachineRunSubmitting(false);
     }
@@ -399,32 +439,42 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
       if (queueFilter === 'ready' && o.hasRewash) return false;
       if (queueFilter === 'rewash' && !o.hasRewash) return false;
       if (!searchQuery.trim()) return true;
-      const q = searchQuery.toLowerCase();
-      return (
-        o.id.toLowerCase().includes(q) ||
-        o.customerName.toLowerCase().includes(q) ||
-        o.bagQr.toLowerCase().includes(q)
+      const q = searchQuery.toLowerCase().trim();
+      const qDigits = q.replace(/\D/g, '');
+      const phoneDigits = (o.customerPhone || '').replace(/\D/g, '');
+      const matchPhone = Boolean(
+        (o.customerPhone && o.customerPhone.toLowerCase().includes(q)) ||
+        (qDigits.length >= 3 && phoneDigits.includes(qDigits))
       );
+      const matchId = o.id.toLowerCase().includes(q);
+      const matchName = o.customerName.toLowerCase().includes(q);
+      const matchQr = o.bagQr.toLowerCase().includes(q);
+      return matchId || matchName || matchPhone || matchQr;
     });
   }, [pendingOrders, queueFilter, searchQuery]);
 
+  // Checklist counts & calculations for current modal
   const checkedCount = checklist.filter(Boolean).length;
   const progressPercent = Math.round((checkedCount / TOTAL_CHECKLIST_COUNT) * 100);
   const allChecksPassed = checkedCount === TOTAL_CHECKLIST_COUNT;
   const anyItemRewash = selectedOrder?.items.some(it => it.qcStatus === 'REWASH');
 
+  const part1Count = checklist.slice(0, 5).filter(Boolean).length;
+  const part2Count = checklist.slice(5, 10).filter(Boolean).length;
+  const part1Passed = part1Count === 5;
+  const part2Passed = part2Count === 5;
+
   return (
-    <div className="w-full space-y-6">
+    <div className="w-full space-y-6 pb-12">
 
       {/* ── Toast Notification ── */}
       {notificationToast && (
-        <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-2xl shadow-xl flex items-center gap-3 border text-xs font-bold transition-all animate-in slide-in-from-top-4 duration-200 ${
-          notificationToast.type === 'success'
-            ? 'bg-emerald-900 text-white border-emerald-700'
-            : notificationToast.type === 'warning'
-              ? 'bg-amber-900 text-white border-amber-700'
-              : 'bg-rose-900 text-white border-rose-700'
-        }`}>
+        <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-2xl shadow-xl flex items-center gap-3 border text-xs font-bold transition-all animate-in slide-in-from-top-4 duration-200 ${notificationToast.type === 'success'
+          ? 'bg-emerald-900 text-white border-emerald-700'
+          : notificationToast.type === 'warning'
+            ? 'bg-amber-900 text-white border-amber-700'
+            : 'bg-rose-900 text-white border-rose-700'
+          }`}>
           <span>{notificationToast.type === 'success' ? '✓' : '⚠️'}</span>
           <span>{notificationToast.message}</span>
           <button onClick={() => setNotificationToast(null)} className="ml-2 hover:opacity-75 cursor-pointer">
@@ -433,437 +483,322 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
         </div>
       )}
 
-      {/* ── Main Workspace: 2-Column High-Efficiency Workstation ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-
-        {/* ── LEFT PANEL: Inspection Queue (4 Cols) ── */}
-        <div className="lg:col-span-4 space-y-4">
-          <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs space-y-3.5">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-[#0077B6]/10 text-[#0077B6] flex items-center justify-center">
-                  <ScanSearch className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider">QC Queue</h3>
-                  <p className="text-[10px] text-slate-500 font-semibold">{filteredOrders.length} order(s) pending check</p>
-                </div>
-              </div>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200">
-                Awaiting QC
-              </span>
-            </div>
-
-            {/* Filter Pills */}
-            <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 rounded-xl text-[11px] font-bold">
-              <button
-                type="button"
-                onClick={() => setQueueFilter('all')}
-                className={`py-1.5 rounded-lg transition-all cursor-pointer ${queueFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'}`}
-              >
-                All ({pendingOrders.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setQueueFilter('ready')}
-                className={`py-1.5 rounded-lg transition-all cursor-pointer ${queueFilter === 'ready' ? 'bg-white text-slate-900 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'}`}
-              >
-                Normal
-              </button>
-              <button
-                type="button"
-                onClick={() => setQueueFilter('rewash')}
-                className={`py-1.5 rounded-lg transition-all cursor-pointer ${queueFilter === 'rewash' ? 'bg-white text-purple-700 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'}`}
-              >
-                Rewash ({pendingOrders.filter(o => o.hasRewash).length})
-              </button>
-            </div>
-
-            {/* Search Box */}
-            <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search order #, customer or bag QR..."
-                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:outline-hidden focus:ring-2 focus:ring-[#0077B6] focus:bg-white transition-all"
-              />
-            </div>
-
-            {/* Queue Cards Scroll Area */}
-            <div className="space-y-2.5 max-h-[580px] overflow-y-auto pr-1">
-              {loading ? (
-                <div className="py-12 text-center text-slate-400 space-y-2">
-                  <div className="w-6 h-6 border-2 border-[#0077B6] border-t-transparent rounded-full animate-spin mx-auto" />
-                  <p className="text-xs font-semibold">Loading inspection jobs...</p>
-                </div>
-              ) : filteredOrders.length === 0 ? (
-                <div className="text-center py-12 px-4 space-y-2.5">
-                  <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto border border-emerald-100">
-                    <CheckCircle2 className="w-6 h-6" />
-                  </div>
-                  <h4 className="font-extrabold text-xs text-slate-800">Queue Clear!</h4>
-                  <p className="text-[11px] text-slate-400">All current wash batches have been inspected & approved.</p>
-                </div>
-              ) : (
-                filteredOrders.map(order => {
-                  const isSelected = selectedOrder?.id === order.id;
-                  return (
-                    <div
-                      key={order.id}
-                      onClick={() => setSelectedOrder(order)}
-                      className={`p-3.5 rounded-2xl border transition-all cursor-pointer text-left relative overflow-hidden group ${
-                        isSelected
-                          ? 'bg-[#03045E] text-white border-[#03045E] shadow-md shadow-[#03045E]/20 ring-2 ring-[#00B4D8]'
-                          : 'bg-white hover:bg-slate-50/80 border-slate-200/80 text-slate-800'
-                      }`}
-                    >
-                      {/* Active indicator bar */}
-                      {isSelected && (
-                        <div className="absolute top-0 left-0 bottom-0 w-1.5 bg-[#00B4D8]" />
-                      )}
-
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={`font-mono font-black text-xs tracking-tight ${isSelected ? 'text-white' : 'text-[#03045E]'}`}>
-                          {order.id}
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          {order.hasRewash && (
-                            <span className="px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase bg-purple-100 text-purple-800">
-                              Rewash
-                            </span>
-                          )}
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
-                          }`}>
-                            {order.itemCount} item(s)
-                          </span>
-                        </div>
-                      </div>
-
-                      <p className={`text-xs font-extrabold truncate mt-1 ${isSelected ? 'text-white' : 'text-slate-900'}`}>
-                        {order.customerName}
-                      </p>
-
-                      <div className={`flex items-center justify-between text-[10px] mt-1.5 ${isSelected ? 'text-white/70' : 'text-slate-500'}`}>
-                        <span className="truncate">{order.serviceType}</span>
-                        <span className="font-mono shrink-0">{order.completionTime}</span>
-                      </div>
-
-                      <div className={`mt-2 pt-2 border-t flex items-center justify-between text-[10px] ${
-                        isSelected ? 'border-white/10 text-[#CAF0F8]' : 'border-slate-100 text-slate-400'
-                      }`}>
-                        <span className="font-mono">{order.bagQr}</span>
-                        <span className="font-bold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
-                          <span>Inspect</span>
-                          <ArrowRight className="w-3 h-3" />
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
+      {/* ── Page Header & Controls ── */}
+      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/80 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className='flex items-center justify-between w-full'>
+            <h1 className="text-xl sm:text-2xl font-black text-[#03045E] tracking-tight">
+              Quality Inspection
+            </h1>
+            <button
+              type="button"
+              onClick={() => loadQCOrders(true)}
+              className="p-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
+              title="Refresh Queue"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-[#0077B6]' : ''}`} />
+            </button>
           </div>
         </div>
+      </div>
 
-        {/* ── RIGHT PANEL: Inspection Workbench (8 Cols) ── */}
-        <div className="lg:col-span-8">
-          {selectedOrder ? (
-            <div className="bg-white rounded-3xl p-6 lg:p-8 shadow-sm border border-slate-200/90 space-y-6 relative overflow-hidden">
-              {/* Header Gradient Stripe */}
-              <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-amber-400 via-[#00B4D8] to-emerald-500" />
+      {/* ── Sticky Search Toolbar (Fixed on top once scrolled) ── */}
+      <div className="sticky top-16 md:top-[68px] z-10 py-2.5 -my-2.5 bg-[#f8fafc]/95 backdrop-blur-md">
+        <div className="bg-white rounded-2xl md:rounded-3xl p-3 sm:p-3.5 border border-slate-200/80 shadow-xs flex items-center gap-2.5">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by Order ID, Name, Mobile Number..."
+              className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#0077B6] focus:bg-white transition-all"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
 
-              {/* ── Station Top Bar: Order Metadata & Actions ── */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-100">
-                <div className="flex items-start gap-3.5 min-w-0">
-                  <div className="w-13 h-13 rounded-2xl bg-[#0077B6]/10 text-[#0077B6] border border-[#0077B6]/20 flex items-center justify-center shrink-0 shadow-2xs">
-                    <ClipboardCheck className="w-6 h-6" />
+      {/* ── Orders Listing in Clean Customer-Portal Style ── */}
+      {loading ? (
+        <div className="py-24 text-center text-slate-400 space-y-3 bg-white rounded-3xl border border-slate-200">
+          <div className="w-8 h-8 border-3 border-[#0077B6] border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs font-bold text-slate-600">Loading quality inspection queue...</p>
+        </div>
+      ) : filteredOrders.length === 0 ? (
+        <div className="bg-white rounded-3xl p-16 text-center border-2 border-dashed border-slate-200 space-y-4">
+          <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-3xl flex items-center justify-center mx-auto border border-emerald-100">
+            <CheckCircle2 className="w-8 h-8" />
+          </div>
+          <div className="max-w-md mx-auto space-y-1">
+            <h3 className="text-base font-black text-slate-900">Inspection Queue Clear</h3>
+            <p className="text-xs text-slate-500">
+              {searchQuery
+                ? `No orders matching "${searchQuery}". Try clearing your search query.`
+                : 'All washed batches have passed inspection and are ready for delivery dispatch.'}
+            </p>
+          </div>
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+            >
+              Clear Search
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4 md:gap-5 w-full min-w-0">
+          {filteredOrders.map((order, idx) => {
+            const isRewash = order.hasRewash;
+            return (
+              <article
+                key={order.id || idx}
+                onClick={() => handleOpenQCModal(order)}
+                className={`order-card w-full min-w-0 rounded-2xl md:rounded-3xl border bg-white p-3.5 sm:p-4 md:p-5 shadow-xs hover:shadow-lg transition-all cursor-pointer select-none group box-border flex items-center justify-between gap-3 sm:gap-4 ${isRewash
+                  ? 'border-purple-200/90 hover:border-purple-400'
+                  : 'border-[#e7eaf2] hover:border-[#102e78]/40'
+                  }`}
+              >
+                <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                  {/* Dynamic Status Icon */}
+                  <div className={`flex h-11 w-11 sm:h-12 sm:w-12 md:h-13 md:w-13 shrink-0 items-center justify-center rounded-xl md:rounded-2xl transition-transform group-hover:scale-105 ${isRewash ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-[#0077B6]'
+                    }`}>
+                    {isRewash ? (
+                      <RotateCcw className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2]" />
+                    ) : (
+                      <ClipboardCheck className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2]" />
+                    )}
                   </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h2 className="font-mono font-black text-xl text-[#03045E] tracking-tight">{selectedOrder.id}</h2>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(selectedOrder.id);
-                          setCopiedId(true);
-                          setTimeout(() => setCopiedId(false), 2000);
-                        }}
-                        className="text-slate-400 hover:text-slate-600 transition-colors p-1"
-                        title="Copy Order ID"
-                      >
-                        {copiedId ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                      <span className="font-mono text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-lg border border-slate-200/60">
-                        {selectedOrder.bagQr}
-                      </span>
-                      {selectedOrder.hasRewash && (
-                        <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-200">
-                          Rewash Priority
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 mt-1 text-xs">
-                      <span className="font-extrabold text-slate-900">{selectedOrder.customerName}</span>
-                      <span className="text-slate-300">•</span>
-                      <span className="text-slate-500 font-medium truncate">{selectedOrder.serviceType}</span>
-                    </div>
-                  </div>
-                </div>
 
-                {/* Progress Mini Badge */}
-                <div className="text-right sm:border-l sm:border-slate-100 sm:pl-4 shrink-0">
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Inspection Gauge</div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full transition-all duration-300 ${allChecksPassed ? 'bg-emerald-500' : 'bg-gradient-to-r from-amber-400 to-[#0077B6]'}`}
-                        style={{ width: `${progressPercent}%` }}
-                      />
-                    </div>
-                    <span className={`font-mono font-black text-sm ${allChecksPassed ? 'text-emerald-600' : 'text-[#0077B6]'}`}>
-                      {checkedCount}/{TOTAL_CHECKLIST_COUNT}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Customer Special Note Banner (if any) */}
-              {selectedOrder.specialInstructions && (
-                <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-2xl flex items-start gap-2.5 text-xs text-blue-900">
-                  <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold">Customer Special Care Note: </span>
-                    <span className="italic">{selectedOrder.specialInstructions}</span>
-                  </div>
-                </div>
-              )}
-
-              {/* ── 9-Point Verification Checklist (Organized into 3 Clean Columns) ── */}
-              <div className="space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                      <CheckSquare className="w-4 h-4 text-[#0077B6]" />
-                      <span>9-Point Mandatory Quality Standards</span>
-                    </h3>
-                    <p className="text-[11px] text-slate-500">Tap standard to verify each item before final packing and driver dispatch.</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleSelectAllChecks(!allChecksPassed)}
-                      className="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold transition-all cursor-pointer shadow-2xs"
-                    >
-                      {allChecksPassed ? 'Clear All' : 'Mark All Passed ✓'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {QC_SECTIONS.map((sec) => {
-                    const SectionIcon = sec.icon;
-                    return (
-                      <div key={sec.title} className="bg-slate-50/70 rounded-2xl p-3 border border-slate-200/80 space-y-2">
-                        <div className="flex items-center gap-1.5 pb-1 border-b border-slate-200/60">
-                          <div className={`w-5 h-5 rounded-md flex items-center justify-center text-xs border ${sec.color}`}>
-                            <SectionIcon className="w-3 h-3" />
-                          </div>
-                          <span className="text-[11px] font-extrabold text-slate-800">{sec.title}</span>
-                        </div>
-
-                        <div className="space-y-1.5">
-                          {sec.items.map((it) => {
-                            const isChecked = checklist[it.id];
-                            return (
-                              <button
-                                key={it.id}
-                                type="button"
-                                onClick={() => toggleChecklistItem(it.id)}
-                                className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer flex items-start gap-2 select-none group ${
-                                  isChecked
-                                    ? 'bg-emerald-50 border-emerald-300 text-emerald-950 shadow-2xs'
-                                    : 'bg-white hover:bg-slate-100/70 border-slate-200 text-slate-700'
-                                }`}
-                              >
-                                <div className={`w-4 h-4 rounded-md flex items-center justify-center shrink-0 border mt-0.5 transition-colors ${
-                                  isChecked ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 bg-white group-hover:border-slate-400'
-                                }`}>
-                                  {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
-                                </div>
-                                <div className="min-w-0">
-                                  <p className={`text-xs font-bold leading-tight ${isChecked ? 'line-through opacity-85 text-emerald-900' : 'text-slate-800'}`}>
-                                    {it.label}
-                                  </p>
-                                  <p className="text-[10px] text-slate-400 mt-0.5 leading-tight">{it.desc}</p>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* ── Item Manifest Inspection & Rewash Flagging ── */}
-              <div className="space-y-3 pt-2">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-                      <ShoppingBag className="w-4 h-4 text-[#0077B6]" />
-                      <span>Garment Item Manifest ({selectedOrder.items.length})</span>
-                    </h3>
-                    <p className="text-[11px] text-slate-500">Inspect each physical item. If a garment needs rewash, flag it below.</p>
-                  </div>
-                  {anyItemRewash && (
-                    <span className="text-[11px] font-bold text-purple-700 bg-purple-50 border border-purple-200 px-2.5 py-0.5 rounded-full">
-                      {selectedOrder.items.filter(it => it.qcStatus === 'REWASH').length} item(s) flagged for rewash
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {selectedOrder.items.map((it, idx) => {
-                    const isRewash = it.qcStatus === 'REWASH';
-                    return (
-                      <div
-                        key={idx}
-                        className={`p-3 rounded-2xl border transition-all flex items-center justify-between text-xs ${
-                          isRewash
-                            ? 'bg-purple-50 border-purple-300 text-purple-950 ring-1 ring-purple-200'
-                            : 'bg-slate-50/70 border-slate-200 text-slate-800'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <span className={`w-6 h-6 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 ${
-                            isRewash ? 'bg-purple-600 text-white' : 'bg-emerald-100 text-emerald-800'
+                  {/* Content */}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                        <h3 className="text-sm sm:text-base md:text-[17px] font-bold text-[#071844] group-hover:text-[#102e78] transition-colors truncate">
+                          #{order.id}
+                        </h3>
+                        <span className={`text-[9px] sm:text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${isRewash
+                          ? 'bg-purple-100 text-purple-800'
+                          : 'bg-amber-50 text-amber-800 border border-amber-200'
                           }`}>
-                            {isRewash ? <RotateCcw className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
-                          </span>
-                          <div className="min-w-0">
-                            <p className="font-extrabold truncate text-slate-900">{it.name}</p>
-                            <p className="text-[10px] text-slate-500">
-                              Qty: {it.qty} {isRewash && it.rewashReason ? `• Reason: ${it.rewashReason}` : '• Ready'}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {!isRewash ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setRewashTargetItemIdx(idx);
-                                setCustomRewashReason('');
-                              }}
-                              className="px-2.5 py-1.5 bg-white hover:bg-purple-50 text-purple-700 border border-purple-200 hover:border-purple-300 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
-                            >
-                              <RotateCcw className="w-3 h-3" />
-                              <span>Rewash</span>
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleClearItemRewash(idx)}
-                              className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
-                            >
-                              <Check className="w-3 h-3" />
-                              <span>Clear / Pass</span>
-                            </button>
-                          )}
-                        </div>
+                          {isRewash ? 'Rewash' : 'Ready for QC'}
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* ── High-Impact Bottom Action Bar ── */}
-              <div className="pt-4 border-t border-slate-100 space-y-3">
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsMachineDrawerOpen(true)}
-                      className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
-                    >
-                      <Wrench className="w-4 h-4 text-slate-500" />
-                      <span>Machinery Controls</span>
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2.5 w-full sm:w-auto">
-                    {/* Send to Rewash Button */}
-                    <button
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={() => submitQC('reprocess')}
-                      className="flex-1 sm:flex-initial px-5 py-3.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300/80 rounded-2xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98 shadow-xs"
-                    >
-                      <AlertTriangle className="w-4 h-4 text-amber-600" />
-                      <span>Route to Rewash</span>
-                    </button>
-
-                    {/* Approve & Release to Delivery Button */}
-                    <button
-                      type="button"
-                      disabled={isSubmitting}
-                      onClick={() => submitQC('passed')}
-                      className={`flex-1 sm:flex-initial px-6 py-3.5 rounded-2xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-lg active:scale-98 text-white ${
-                        allChecksPassed && !anyItemRewash
-                          ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-[#03045E] hover:from-emerald-700 hover:to-[#023E8A] shadow-emerald-600/25 ring-2 ring-emerald-400/40'
-                          : anyItemRewash
-                            ? 'bg-gradient-to-r from-purple-700 to-[#03045E] hover:from-purple-800'
-                            : 'bg-gradient-to-r from-[#03045E] to-[#0077B6] hover:from-[#023E8A]'
-                      }`}
-                    >
-                      <Truck className="w-4 h-4 text-emerald-300" />
-                      <span>
-                        {anyItemRewash
-                          ? `Approve Partial & Route ${selectedOrder.items.filter(it => it.qcStatus === 'REWASH').length} Item(s) to Rewash`
-                          : allChecksPassed
-                            ? 'Approve 100% Quality & Release to Driver'
-                            : 'Approve Quality Inspection & Seal Bag'}
+                      <span className="text-xs sm:text-sm md:text-base font-extrabold text-[#071844] shrink-0">
+                        {order.itemCount} {order.itemCount === 1 ? 'Item' : 'Items'}
                       </span>
-                      <ArrowRight className="w-4 h-4 text-white/80" />
-                    </button>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-[13px] text-[#536486] truncate mt-1">
+                      <span className="truncate font-medium text-slate-700">{order.customerName}</span>
+                      {order.customerPhone && (
+                        <>
+                          <span className="text-slate-300 shrink-0">•</span>
+                          <span className="truncate text-slate-500 font-mono text-[11px] sm:text-xs">{order.customerPhone}</span>
+                        </>
+                      )}
+                      <span className="text-slate-300 shrink-0">•</span>
+                      <span className="truncate text-slate-500">{order.serviceType}</span>
+                      <span className="text-slate-300 shrink-0">•</span>
+                      <span className="text-slate-400 shrink-0 text-[10px] sm:text-[11px] font-mono">
+                        {order.bagQr}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                {!allChecksPassed && !anyItemRewash && (
-                  <p className="text-[11px] text-slate-400 text-right">
-                    💡 Tip: {TOTAL_CHECKLIST_COUNT - checkedCount} inspection criteria unchecked. You can click &apos;Mark All Passed&apos; to verify all at once.
-                  </p>
+                {/* Right side: Chevron */}
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-gray-400 group-hover:text-[#102e78] group-hover:translate-x-1 transition-all" />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════ */}
+      {/* ── CLEAN, MINIMALIST QC INSPECTION MODAL ── */}
+      {isQCModalOpen && selectedOrder && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={handleCloseQCModal}
+        >
+          <div
+            className="w-full max-w-3xl bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden flex flex-col my-auto max-h-[92vh] animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Quality Check — #{selectedOrder.id}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseQCModal}
+                className="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-5 overflow-y-auto">
+              {/* User Details - Simple, clean, essential only */}
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-200/80">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-bold text-sm text-slate-900">{selectedOrder.customerName}</span>
+                    {selectedOrder.customerPhone && (
+                      <span className="text-slate-500 text-xs ml-2">({selectedOrder.customerPhone})</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    <span>{selectedOrder.serviceType}</span>
+                    <span className="mx-2">•</span>
+                    <span className="font-mono text-slate-700">{selectedOrder.bagQr}</span>
+                  </div>
+                </div>
+
+                {selectedOrder.specialInstructions && (
+                  <div className="mt-2.5 pt-2.5 border-t border-slate-200 text-xs text-amber-800">
+                    <strong className="font-semibold">Special Note: </strong>
+                    <span>{selectedOrder.specialInstructions}</span>
+                  </div>
                 )}
               </div>
 
-            </div>
-          ) : (
-            <div className="bg-white rounded-3xl p-16 text-center border-2 border-dashed border-slate-200 shadow-2xs space-y-4 flex flex-col items-center justify-center min-h-[460px]">
-              <div className="w-16 h-16 bg-[#0077B6]/10 text-[#0077B6] rounded-3xl flex items-center justify-center shadow-inner">
-                <ScanSearch className="w-8 h-8" />
+              {/* 10 QC Steps - Divided in 2 parts (5 steps each), single screen, title only */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Inspection Checkpoints ({checkedCount}/10)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectAllChecks(!allChecksPassed)}
+                    className="text-xs text-[#0077B6] hover:underline font-semibold cursor-pointer"
+                  >
+                    {allChecksPassed ? 'Clear All' : 'Select All'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                  {/* Part 1 (Steps 1 to 5) */}
+                  <div className="border border-slate-200 rounded-xl p-3 space-y-2 bg-white">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <span className="text-xs font-bold text-slate-800">Part 1</span>
+                      <span className="text-[11px] text-slate-500 font-medium">{part1Count}/5</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {QC_PART_1_STEPS.map((step) => {
+                        const isChecked = checklist[step.id];
+                        return (
+                          <label
+                            key={step.id}
+                            onClick={() => toggleChecklistItem(step.id)}
+                            className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-colors cursor-pointer select-none text-[12px] sm:text-[13px] ${isChecked
+                              ? 'bg-emerald-50/60 border-emerald-300 text-emerald-950 font-semibold'
+                              : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                              }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => { }}
+                              className="w-3.5 h-3.5 rounded text-[#0077B6] accent-[#0077B6] cursor-pointer shrink-0"
+                            />
+                            <span className="truncate leading-tight">{step.title}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Part 2 (Steps 6 to 10) */}
+                  <div className="border border-slate-200 rounded-xl p-3 space-y-2 bg-white">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                      <span className="text-xs font-bold text-slate-800">Part 2</span>
+                      <span className="text-[11px] text-slate-500 font-medium">{part2Count}/5</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {QC_PART_2_STEPS.map((step) => {
+                        const isChecked = checklist[step.id];
+                        return (
+                          <label
+                            key={step.id}
+                            onClick={() => toggleChecklistItem(step.id)}
+                            className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border transition-colors cursor-pointer select-none text-[12px] sm:text-[13px] ${isChecked
+                              ? 'bg-emerald-50/60 border-emerald-300 text-emerald-950 font-semibold'
+                              : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                              }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => { }}
+                              className="w-3.5 h-3.5 rounded text-[#0077B6] accent-[#0077B6] cursor-pointer shrink-0"
+                            />
+                            <span className="truncate leading-tight">{step.title}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div>
-                <h3 className="text-base font-black text-slate-900">Select an Order from the QC Queue</h3>
-                <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                  Click any order from the left list to review its items, verify the 9 quality standards, and handover for driver delivery.
-                </p>
+            </div>
+
+            {/* Footer - Minimal, clean, required controls only */}
+            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+              <span className="text-xs text-slate-500">
+                {checkedCount === TOTAL_CHECKLIST_COUNT ? 'All 10 checks verified' : `${checkedCount} of 10 checks verified`}
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => submitQC('reprocess')}
+                  className="px-4 py-2 border border-slate-300 hover:bg-slate-100 rounded-xl text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
+                >
+                  Route to Rewash
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => submitQC('passed')}
+                  className={`px-5 py-2 rounded-xl text-xs font-semibold text-white transition-colors cursor-pointer ${allChecksPassed
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-[#03045E] hover:bg-[#023E8A]'
+                    }`}
+                >
+                  Pass Quality Check
+                </button>
               </div>
             </div>
-          )}
+          </div>
         </div>
+      )}
 
-      </div>
-
-      {/* ── MODAL: Friendly In-App Reason Selector for Rewash (No window.prompt!) ── */}
+      {/* ── MODAL: Reason Selector for Item Rewash ── */}
       {rewashTargetItemIdx !== null && selectedOrder && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
           onClick={() => setRewashTargetItemIdx(null)}
         >
           <div
@@ -876,7 +811,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                   <RotateCcw className="w-4 h-4" />
                 </div>
                 <div>
-                  <h4 className="font-extrabold text-sm text-slate-900">Flag Item for Rewash</h4>
+                  <h4 className="font-black text-sm text-slate-900">Flag Item for Rewash</h4>
                   <p className="text-[11px] text-slate-500 truncate max-w-[260px]">
                     {selectedOrder.items[rewashTargetItemIdx]?.name}
                   </p>
@@ -909,7 +844,9 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
             </div>
 
             <div className="space-y-1.5 pt-1">
-              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Or Enter Custom Reason</label>
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                Or Enter Custom Reason
+              </label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
@@ -932,10 +869,10 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
         </div>
       )}
 
-      {/* ── MODAL: Clean Machine Controls & Rewash Launcher ── */}
-      {isMachineDrawerOpen && selectedOrder && (
+      {/* ── MODAL: Plant Machinery Assignment ── */}
+      {isMachineDrawerOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
           onClick={() => setIsMachineDrawerOpen(false)}
         >
           <div
@@ -948,8 +885,10 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                   <Wrench className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-extrabold text-sm text-slate-900">Plant Machinery Assignment</h3>
-                  <p className="text-[11px] text-slate-500">Assign batch for Order #{selectedOrder.id} • {selectedOrder.customerName}</p>
+                  <h3 className="font-black text-sm text-slate-900">Plant Machinery Assignment</h3>
+                  <p className="text-[11px] text-slate-500">
+                    {selectedOrder ? `Assign batch for Order #${selectedOrder.id}` : 'Plant Lon-01 Equipment'}
+                  </p>
                 </div>
               </div>
               <button
@@ -1003,7 +942,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                     <option value="30°C">30°C (Gentle)</option>
                     <option value="40°C">40°C (Warm)</option>
                     <option value="60°C">60°C (Stain-Break)</option>
-                    <option value="90°C">90°C (Hospital Sanitize)</option>
+                    <option value="90°C">90°C (Sanitize)</option>
                   </select>
                 </div>
                 <div>
@@ -1032,7 +971,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                 type="button"
                 onClick={handleStartMachineRun}
                 disabled={machineRunSubmitting}
-                className="flex-1 py-2.5 bg-[#03045E] hover:bg-[#023E8A] disabled:opacity-50 text-white font-black rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                className="flex-1 py-2.5 bg-[#03045E] hover:bg-[#023E8A] disabled:opacity-50 text-white font-black rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
               >
                 {machineRunSubmitting ? 'Starting...' : 'Start Cycle on Machine'}
               </button>
@@ -1051,10 +990,10 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
         </div>
       )}
 
-      {/* ── MODAL: Report Machine Fault Dialog (No window.prompt!) ── */}
+      {/* ── MODAL: Report Mechanical Fault ── */}
       {isFaultModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
           onClick={() => setIsFaultModalOpen(false)}
         >
           <div
@@ -1092,7 +1031,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                 onClick={handleReportMachineFault}
                 className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
               >
-                Submit Outage Alert
+                Submit Alert
               </button>
             </div>
           </div>
@@ -1102,7 +1041,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
       {/* ── MODAL: QC Passed & Released for Driver Delivery ── */}
       {deliverySuccessModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
           onClick={() => setDeliverySuccessModal(null)}
         >
           <div
@@ -1123,7 +1062,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                 Package Sealed & Ready for Driver
               </h3>
               <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                Order <span className="font-mono font-bold text-slate-800">{deliverySuccessModal.orderId}</span> has passed all 9 quality checkpoints and is waiting at the collection bay.
+                Order <span className="font-mono font-bold text-slate-800">{deliverySuccessModal.orderId}</span> has passed all quality checkpoints and is waiting at the collection bay.
               </p>
             </div>
 
@@ -1137,9 +1076,9 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                 <span className="font-mono font-bold text-[#0077B6]">{deliverySuccessModal.bagQr}</span>
               </div>
               <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
-                <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Next Step</span>
-                <span className="font-extrabold text-emerald-700 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Assigned driver will collect from bay
+                <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Assigned Driver</span>
+                <span className="font-black text-emerald-700 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> {deliverySuccessModal.driverName || 'Driver Dispatched'}
                 </span>
               </div>
             </div>

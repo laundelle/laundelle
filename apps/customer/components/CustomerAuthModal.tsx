@@ -129,7 +129,7 @@ export const CustomerAuthModal: React.FC<CustomerAuthModalProps> = ({
         {/* Header Branding */}
         <div className="text-center space-y-2">
           <div className="w-14 h-14 bg-[#CAF0F8] text-[#03045E] rounded-2xl flex items-center justify-center mx-auto mb-2 font-black text-2xl shadow-sm">
-            L2U
+            L
           </div>
           <h2 className="text-2xl font-heading font-extrabold text-[#03045E]">
             {mode === 'login' ? 'Customer Sign In' : 'Create Customer Account'}

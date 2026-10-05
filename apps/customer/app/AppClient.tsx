@@ -22,7 +22,7 @@ import { SupportView } from '../components/SupportView';
 import { NotificationsView } from '../components/NotificationsView';
 import { AccountView } from '../components/AccountView';
 import { AIAssistantView } from '../components/AIAssistantView';
-import { OrderPlacedAnimationModal } from '../components/OrderPlacedAnimationModal';
+import { PaymentStatus } from '../components/payment/PaymentStatus';
 import { useAuth0 } from '@auth0/auth0-react';
 import { CustomerAuthModal } from '../components/CustomerAuthModal';
 import { CompleteProfileModal } from '../components/CompleteProfileModal';
@@ -108,7 +108,6 @@ export default function App({ initialTab }: { initialTab?: string }) {
     }
   }, [auth0Error]);
 
-  // Handle Stripe payment redirect callbacks
 
 
   const handleSplashComplete = () => {
@@ -167,10 +166,17 @@ export default function App({ initialTab }: { initialTab?: string }) {
   const [postcodeModalOpen, setPostcodeModalOpen] = useState(false);
   const [activeInvoiceOrder, setActiveInvoiceOrder] = useState<Order | null>(null);
   const [rescheduleCancelOrder, setRescheduleCancelOrder] = useState<Order | null>(null);
-  const [rescheduleCancelMode, setRescheduleCancelMode] = useState<'reschedule' | 'cancel'>('reschedule');
+  const [rescheduleCancelMode, setRescheduleCancelMode] = useState<'reschedule' | 'cancel' | 'reschedule_pickup' | 'reschedule_delivery'>('reschedule');
   const [activeChargeOrder, setActiveChargeOrder] = useState<Order | null>(null);
   const [serviceToCustomize, setServiceToCustomize] = useState<ServiceItem | null>(null);
-  const [animationModalOrder, setAnimationModalOrder] = useState<Order | null>(null);
+  const [targetServiceQuery, setTargetServiceQuery] = useState<string | null>(null);
+  const [paymentResult, setPaymentResult] = useState<{
+    status: 'processing' | 'success' | 'failed';
+    orderId?: string;
+    amount?: number | string;
+    currency?: string;
+    error?: string;
+  } | null>(null);
 
   // Toast banner
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -186,6 +192,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
 
   const handleNavigate = (tab: ActiveTab) => {
     setActiveTab(tab);
+    setTargetServiceQuery(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -218,13 +225,14 @@ export default function App({ initialTab }: { initialTab?: string }) {
   }, [activeTab, isAuth0Loading]);
 
   // Direct Book Now navigation with service pre-selected
-  const handleStartBookingWithService = (serviceId?: string) => {
+  const handleStartBookingWithService = (serviceIdOrName?: string) => {
     setActiveTab('services');
-    if (serviceId) {
-      const s = services.find((x) => x.id === serviceId);
-      if (s) setServiceToCustomize(s);
+    if (serviceIdOrName) {
+      setTargetServiceQuery(serviceIdOrName);
+    } else {
+      setTargetServiceQuery(null);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // Cart operations (Guests can freely add items without sign-in prompt)
@@ -315,8 +323,13 @@ export default function App({ initialTab }: { initialTab?: string }) {
     };
     setNotifications((prev) => [newNotif, ...prev]);
 
-    // Show Order Placed delivery truck animation modal
-    setAnimationModalOrder(newOrder);
+    // Show PaymentStatus success UI with confetti
+    setPaymentResult({
+      status: 'success',
+      orderId: newOrder.publicId || newOrder.orderNumber || newOrder.id,
+      amount: newOrder.total ?? (newOrder as any).total_price ?? (newOrder as any).amount,
+      currency: '£',
+    });
 
     // Navigate to Orders tab (tracking is now integrated there)
     setActiveTab('orders');
@@ -335,9 +348,14 @@ export default function App({ initialTab }: { initialTab?: string }) {
     await dbCancelOrder(authSession.user?.id || 'guest', orderId, reason);
   };
 
-  const handleOrderRescheduled = (orderId: string, newDate: string, newTime: string) => {
-    setOrders(orders.map(o => o.id === orderId ? { ...o, pickupDate: newDate, pickupTime: newTime } : o));
-    showToast(`Booking #${orderId} rescheduled to ${newDate} (${newTime}).`);
+  const handleOrderRescheduled = (orderId: string, newDate: string, newTime: string, mode?: string) => {
+    if (mode === 'reschedule_delivery') {
+      setOrders(orders.map(o => o.id === orderId ? { ...o, deliveryDate: newDate, deliverySlot: newTime, deliveryTime: newTime } : o));
+      showToast(`Delivery for Order #${orderId} rescheduled to ${newDate} (${newTime}).`);
+    } else {
+      setOrders(orders.map(o => o.id === orderId ? { ...o, pickupDate: newDate, pickupSlot: newTime, pickupTime: newTime } : o));
+      showToast(`Pickup for Order #${orderId} rescheduled to ${newDate} (${newTime}).`);
+    }
   };
 
   // Auth Session State
@@ -530,72 +548,134 @@ export default function App({ initialTab }: { initialTab?: string }) {
 
     const sessionId = params.get('session_id') || params.get('stripe_session_id');
 
-    if (payment === 'success') {
+    // SECURITY: Only 'verify' is the valid payment return signal.
+    //   - 'verify' = set by our Stripe success_url: triggers backend verification (correct).
+    //   - 'success' = old/legacy value, now REJECTED to prevent accidental re-introduction
+    //     of a flow that might bypass webhook verification in future code changes.
+    // NEVER treat 'payment=success' as confirmation of payment.
+    if (payment === 'verify') {
       // Ensure splash screen is never shown after payment redirect
       setShowSplash(false);
       try {
         localStorage.setItem('laundelle_splash_shown', 'true');
       } catch { }
 
-      setActiveTab('orders');
-      if (orderId) setSelectedTrackingOrderId(orderId);
-
-      // Clean up query param from URL without pushing back to home
+      // Immediately clean up sensitive query params from URL bar
       const cleanPath = window.location.pathname === '/' ? '/orders' : window.location.pathname;
       window.history.replaceState({}, document.title, cleanPath);
 
       if (!sessionId) {
-        showToast('⚠️ Payment returned without session verification ID. Checking orders...');
-        dbFetchOrders(authSession.user?.id).then((freshOrders) => {
-          if (freshOrders && freshOrders.length > 0) setOrders(freshOrders);
+        showToast('⚠️ Payment returned without session verification ID.');
+        setPaymentResult({
+          status: 'failed',
+          orderId: orderId || undefined,
+          error: 'No Stripe session verification ID was found.',
         });
         return;
       }
 
-      showToast('🔄 Verifying payment confirmation with Stripe...');
+      showToast('🔄 Verifying payment confirmation with webhook...');
+      setPaymentResult({
+        status: 'processing',
+        orderId: orderId || undefined,
+        error: 'Stripe received your payment details. Verifying webhook order confirmation...',
+      });
 
-      // Call our secure backend confirmation endpoint which verifies payment_status with Stripe API
-      apiFetch('/api/stripe/confirm-session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders(),
-        },
-        body: JSON.stringify({ sessionId }),
-      })
-        .then(async (res) => {
+      // Polls /api/stripe/confirm-session until an order created by the webhook appears.
+      // A browser redirect must never create or refund an order by itself.
+      const pollConfirmSession = async (attempt = 1): Promise<void> => {
+        const MAX_ATTEMPTS = 5;
+        const POLL_DELAY_MS = 2000; // 2 seconds between polls
+        const isFinalAttempt = attempt >= MAX_ATTEMPTS;
+
+        try {
+          const res = await apiFetch('/api/stripe/confirm-session', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...authHeaders(),
+            },
+            body: JSON.stringify({
+              sessionId
+            }),
+          });
           const data = await res.json();
+
           if (res.ok && data.confirmed && data.order) {
-            // Payment is verified and confirmed by Stripe!
-            // Clear cart ONLY now that payment is confirmed
+            // ✅ Webhook ran, order found in DB, payment confirmed
             setCart([]);
-            try {
-              localStorage.removeItem('laundelle_user_cart');
-            } catch {}
-
+            try { localStorage.removeItem('laundelle_user_cart'); } catch {}
             const confirmedId = data.order.publicId || data.order.orderNumber || data.order.id || orderId;
+            const confirmedTotal = data.order.total ?? (data.order as any).total_price ?? (data.order as any).amount;
             showToast(`💳 Payment confirmed! Order #${confirmedId} is placed.`);
-            setAnimationModalOrder(data.order);
+            setActiveTab('orders');
             setSelectedTrackingOrderId(data.order.id || data.order.publicId);
-
-            // Refresh orders list with the confirmed order
+            setPaymentResult({ status: 'success', orderId: confirmedId, amount: confirmedTotal, currency: '£' });
             dbFetchOrders(authSession.user?.id).then((freshOrders) => {
               if (freshOrders && freshOrders.length > 0) setOrders(freshOrders);
             });
-          } else {
-            console.warn('[Payment Verification Failed]', data.error);
-            showToast(`❌ Payment not verified: ${data.error || 'Payment was not marked as paid by Stripe'}`);
-            // Note: Cart is NOT cleared so the user does not lose their items!
+            return;
           }
-        })
-        .catch((err) => {
+
+          if (res.status === 202 && data.status === 'pending' && !isFinalAttempt) {
+            // ⏳ Stripe received payment but webhook hasn't processed order yet — poll again
+            showToast(`⏳ Verifying with webhook... (attempt ${attempt}/${MAX_ATTEMPTS})`);
+            setPaymentResult({
+              status: 'processing',
+              orderId: orderId || undefined,
+              error: `Stripe received your payment. Verifying order confirmation with webhook... (attempt ${attempt}/${MAX_ATTEMPTS})`,
+            });
+            await new Promise(resolve => setTimeout(resolve, POLL_DELAY_MS));
+            return pollConfirmSession(attempt + 1);
+          }
+
+          // ❌ Webhook did not confirm the payment after retries or payment was rejected.
+          console.warn('[Payment Webhook Verification Failed]', data.error, data.status);
+          showToast(`❌ Payment Rejected: ${data.error || 'Webhook did not confirm payment'}`);
+          setPaymentResult({
+            status: 'failed',
+            orderId: orderId || undefined,
+            error: data.error || 'Stripe has not confirmed this order through the payment webhook. No order has been placed; please contact support before trying another payment.',
+          });
+        } catch (err: any) {
           console.error('[Payment Verification Network Error]', err);
           showToast('⚠️ Could not verify payment with server. Please check your connection.');
-        });
+          setPaymentResult({
+            status: 'failed',
+            orderId: orderId || undefined,
+            error: 'Network connection issue while verifying with payment gateway.',
+          });
+        }
+      };
+
+      pollConfirmSession();
     } else if (payment === 'cancel') {
+      const checkoutId = params.get('checkoutId');
       const cleanPath = window.location.pathname === '/' ? '/orders' : window.location.pathname;
       window.history.replaceState({}, document.title, cleanPath);
-      showToast('❌ Payment process cancelled. Your cart has been preserved.');
+      setShowSplash(false);
+      try {
+        localStorage.setItem('laundelle_splash_shown', 'true');
+      } catch { }
+
+      // Notify backend to mark the order as payment_failed in orders collection
+      apiFetch('/api/stripe/cancel-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ sessionId, orderId, checkoutId, reason: 'Payment was cancelled or card was declined.' }),
+      }).then(() => {
+        dbFetchOrders(authSession.user?.id).then((freshOrders) => {
+          if (freshOrders && freshOrders.length > 0) setOrders(freshOrders);
+        });
+      }).catch((e) => console.error('[AppClient] Failed to register cancelled session:', e));
+
+      showToast('❌ Payment was cancelled or card was declined.');
+      setActiveTab('orders');
+      setPaymentResult({
+        status: 'failed',
+        orderId: orderId || undefined,
+        error: 'Payment was cancelled or your card was declined. Your order has been marked as Payment Failed. You can retry payment anytime from your orders.',
+      });
     }
   }, []);
 
@@ -664,6 +744,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
               setServiceToCustomize(service);
             }}
             onOpenSchedulePickup={() => handleStartBookingWithService()}
+            onBookService={(serviceName) => handleStartBookingWithService(serviceName)}
             services={services}
           />
         )}
@@ -678,6 +759,8 @@ export default function App({ initialTab }: { initialTab?: string }) {
             onOpenCart={() => setCartDrawerOpen(true)}
             onCustomizeService={(service) => setServiceToCustomize(service)}
             onNavigate={handleNavigate}
+            targetServiceQuery={targetServiceQuery}
+            onClearTargetService={() => setTargetServiceQuery(null)}
           />
         )}
 
@@ -844,6 +927,13 @@ export default function App({ initialTab }: { initialTab?: string }) {
         onClearCart={handleClearCart}
         addresses={profile?.addresses || []}
         onOrderPlaced={handleOrderPlaced}
+        onPaymentFailed={(errorMessage) => {
+          setCartDrawerOpen(false);
+          setPaymentResult({
+            status: 'failed',
+            error: errorMessage,
+          });
+        }}
         isLoggedIn={authSession.isAuthenticated && authSession.role === 'customer'}
         onRequireLogin={() => handleOpenCustomerAuth()}
         onAddressAdded={(newAddr) => {
@@ -936,8 +1026,8 @@ export default function App({ initialTab }: { initialTab?: string }) {
         order={rescheduleCancelOrder}
         mode={rescheduleCancelMode}
         onClose={() => setRescheduleCancelOrder(null)}
-        onConfirmReschedule={(orderId, date, slot) => {
-          handleOrderRescheduled(orderId, date, slot);
+        onConfirmReschedule={(orderId, date, slot, mode) => {
+          handleOrderRescheduled(orderId, date, slot, mode);
           setRescheduleCancelOrder(null);
         }}
         onConfirmCancel={(orderId, reason) => {
@@ -999,21 +1089,37 @@ export default function App({ initialTab }: { initialTab?: string }) {
         />
       )}
 
-      {/* Order Placed Delivery Truck Animation Modal */}
-      <OrderPlacedAnimationModal
-        isOpen={Boolean(animationModalOrder)}
-        order={animationModalOrder}
-        onClose={() => setAnimationModalOrder(null)}
-        onCancelOrder={(orderId, reason) => {
-          handleOrderCancelled(orderId, reason);
-          setAnimationModalOrder(null);
-        }}
-        onTrackOrder={(orderId) => {
-          setSelectedTrackingOrderId(orderId);
-          setActiveTab('orders');
-          setAnimationModalOrder(null);
-        }}
-      />
+      {/* Reusable Payment Status UI (Success with Confetti or Failed with Retry) */}
+      {paymentResult && (
+        <div className="fixed inset-0 z-[130] bg-[#f8fafc]/95 backdrop-blur-md overflow-y-auto flex items-center justify-center animate-in fade-in duration-300">
+          <PaymentStatus
+            status={paymentResult.status}
+            orderId={paymentResult.orderId}
+            amount={paymentResult.amount}
+            currency={paymentResult.currency || '£'}
+            errorMessage={paymentResult.error}
+            onViewOrder={() => {
+              if (paymentResult.orderId) {
+                setSelectedTrackingOrderId(paymentResult.orderId);
+              }
+              setActiveTab('orders');
+              setPaymentResult(null);
+            }}
+            onBack={() => {
+              setActiveTab('orders');
+              setPaymentResult(null);
+            }}
+            onRetryPayment={() => {
+              setPaymentResult(null);
+              setCartDrawerOpen(true);
+            }}
+            onContactSupport={() => {
+              setActiveTab('support');
+              setPaymentResult(null);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

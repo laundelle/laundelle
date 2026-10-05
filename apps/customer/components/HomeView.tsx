@@ -34,6 +34,7 @@ interface HomeViewProps {
   onNavigate: (tab: ActiveTab) => void;
   onSelectService: (service: ServiceItem) => void;
   onOpenSchedulePickup: () => void;
+  onBookService?: (serviceName: string) => void;
   services: ServiceItem[];
 }
 
@@ -41,6 +42,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onNavigate,
   onSelectService,
   onOpenSchedulePickup,
+  onBookService,
   services,
 }) => {
   const [copiedCoupon, setCopiedCoupon] = useState(false);
@@ -128,7 +130,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   ];
 
   return (
-    <div className="w-full space-y-12 sm:space-y-16 overflow-hidden">
+    <div className="w-full overflow-hidden">
       {/* =========================================
           HERO SECTION - LAUNDELLE BESPOKE HERO
       ========================================= */}
@@ -252,7 +254,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           POSTCODE AVAILABILITY CHECKER SECTION (RESPONSIVE IMAGE & NESTED BUTTON)
       ========================================================================= */}
       <ScrollReveal yOffset={32} className="w-full">
-      <section className="relative w-full min-h-[85vh] lg:min-h-screen flex flex-col justify-center items-center bg-gradient-to-r from-[#eef5ff] via-[#f7faff] to-[#e4f0ff] py-12 sm:py-16 lg:py-20 overflow-hidden">
+      <section className="relative w-full flex flex-col justify-center items-center bg-gradient-to-r from-[#eef5ff] via-[#f7faff] to-[#e4f0ff] py-12 sm:py-16 overflow-hidden">
         {/* Subtle ambient light shapes */}
         <div className="absolute -top-32 -left-32 w-96 h-96 bg-blue-200/40 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-blue-300/30 rounded-full blur-3xl pointer-events-none" />
@@ -553,7 +555,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           OUR POPULAR SERVICES SECTION
       ========================================= */}
       <ScrollReveal yOffset={28} className="w-full">
-      <section className="relative w-full pb-1">
+      <section className="relative w-full bg-white py-12 sm:py-16">
         {/* Content Wrapper */}
         <div className="relative z-10 w-full px-6 sm:px-12 md:px-20 lg:px-28">
           <div className="text-center space-y-2 mb-8 sm:mb-10">
@@ -639,12 +641,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
       </ScrollReveal>
 
       <ScrollReveal yOffset={28} className="w-full">
-        <BeforeAfterSlider onBookPickup={onOpenSchedulePickup} />
+        <BeforeAfterSlider
+          onBookPickup={onOpenSchedulePickup}
+          onBookService={onBookService}
+        />
       </ScrollReveal>
 
-      {/* Full-Width, Full-Height White Promotional Hero Section */}
+      {/* Full-Width White Promotional Hero Section */}
       <ScrollReveal yOffset={28} className="w-full">
-      <section className="w-full min-h-screen bg-white text-gray-900 flex items-center justify-center relative overflow-hidden py-8 sm:py-12 lg:py-16 border-y border-gray-100">
+      <section className="w-full bg-white text-gray-900 flex items-center justify-center relative overflow-hidden py-12 sm:py-16">
         {/* Subtle decorative background ambient glows for white theme */}
         <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-50/40 rounded-full blur-3xl pointer-events-none -z-0" />
         <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-sky-50/30 rounded-full blur-3xl pointer-events-none -z-0" />
@@ -818,13 +823,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
       </ScrollReveal>
 
       <ScrollReveal yOffset={24} className="w-full">
-        <div className="w-full mt-10 mb-10">
+        <section className="w-full bg-white py-8 sm:py-12 px-4 sm:px-8 md:px-12 lg:px-16 flex justify-center">
           <AppDownloadBanner />
-        </div>
+        </section>
       </ScrollReveal>
 
       <ScrollReveal yOffset={28} className="w-full">
-      <section className="w-full bg-[#f8fafc] py-14 px-6 sm:px-12 md:px-20 lg:px-28 border-y border-gray-100">
+      <section className="w-full bg-[#f8fafc] py-12 sm:py-16 px-6 sm:px-12 md:px-20 lg:px-28">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-10 items-center">
           <div className="space-y-6">
             <div>
@@ -933,7 +938,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
       </ScrollReveal>
 
       <ScrollReveal yOffset={28} className="w-full">
-      <section className="w-full px-6 sm:px-12 md:px-20 lg:px-28 my-10">
+      <section className="w-full bg-white py-12 sm:py-16 px-6 sm:px-12 md:px-20 lg:px-28">
         <style>{`
           @keyframes sweepOne {
             0% { transform: translateX(0) scaleY(1); }
@@ -1095,7 +1100,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           TESTIMONIALS - FULL WIDTH
       ========================================= */}
       <ScrollReveal yOffset={28} className="w-full">
-      <section className="w-full px-6 sm:px-12 md:px-20 lg:px-28">
+      <section className="w-full bg-[#f8fafc] py-12 sm:py-16 px-6 sm:px-12 md:px-20 lg:px-28">
         <div className="text-center space-y-2 mb-10">
           <span className="text-xs font-bold uppercase tracking-widest text-[#0077B6] block">
             Real Experiences, Real Trust
@@ -1176,7 +1181,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           FAQ ACCORDION SECTION - FULL WIDTH
       ========================================= */}
       <ScrollReveal yOffset={28} className="w-full">
-      <section className="w-full bg-[#f8fafc] py-14 px-6 sm:px-12 md:px-20 lg:px-28">
+      <section className="w-full bg-white py-12 sm:py-16 px-6 sm:px-12 md:px-20 lg:px-28">
         <div className="max-w-4xl mx-auto space-y-8">
           <div className="text-center space-y-2">
             <span className="text-xs font-bold uppercase tracking-widest text-[#0077B6] block">

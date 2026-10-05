@@ -60,40 +60,9 @@ export const ProcessorHistoryView: React.FC = () => {
     );
   }, [orders, searchQuery]);
 
-  const totalItems = orders.reduce((acc, o) => acc + o.itemCount, 0);
-  const totalRevenue = orders.reduce((acc, o) => acc + o.total, 0);
-
   return (
     <div className="w-full space-y-6">
 
-      {/* Summary KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white rounded-3xl p-5 border border-gray-200/80 shadow-2xs space-y-1">
-          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Sealed Orders</span>
-          <p className="text-2xl lg:text-3xl font-black text-[#03045E]">{orders.length}</p>
-          <span className="text-[11px] text-emerald-600 font-bold flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3" /> 100% Passed QC
-          </span>
-        </div>
-
-        <div className="bg-white rounded-3xl p-5 border border-gray-200/80 shadow-2xs space-y-1">
-          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total Garments</span>
-          <p className="text-2xl lg:text-3xl font-black text-[#0077B6]">{totalItems}</p>
-          <span className="text-[11px] text-gray-500 font-medium">Items washed & pressed</span>
-        </div>
-
-        <div className="bg-white rounded-3xl p-5 border border-gray-200/80 shadow-2xs space-y-1">
-          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Turnaround Time</span>
-          <p className="text-2xl lg:text-3xl font-black text-slate-800">42m</p>
-          <span className="text-[11px] text-emerald-600 font-bold">Within plant SLA</span>
-        </div>
-
-        <div className="bg-emerald-50 rounded-3xl p-5 border border-emerald-200/60 shadow-2xs space-y-1">
-          <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Throughput Value</span>
-          <p className="text-2xl lg:text-3xl font-black text-emerald-800">£{totalRevenue.toFixed(2)}</p>
-          <span className="text-[11px] text-emerald-700 font-bold">Processed today</span>
-        </div>
-      </div>
 
       {/* Search & Filter Toolbar */}
       <div className="bg-white rounded-3xl p-4 border border-gray-200/80 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">

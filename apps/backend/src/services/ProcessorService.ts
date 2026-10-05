@@ -242,13 +242,13 @@ export class ProcessorService {
         return { success: true, availability };
     }
 
-    static async getOrderForIntake(code: string) {
+    static async getOrderForIntake(code: string, processorId?: string) {
         const db = await getDb();
         let clean = (code || '').trim();
         try {
             if (clean.startsWith('{') && clean.endsWith('}')) {
                 const parsed = JSON.parse(clean);
-                clean = parsed.orderId || parsed.id || parsed.order_id || clean;
+                clean = parsed.orderId || parsed.id || parsed.order_id || parsed.bagQr || clean;
             }
         } catch {}
         clean = clean.replace(/^["']|["']$/g, '').trim();
@@ -308,8 +308,80 @@ export class ProcessorService {
                     customerPhone = cust.phone || customerPhone;
                 }
             }
+
+            // Resolve plant information
+            let orderPlantName = order.plantName || order.plant_name || '';
+            if (!orderPlantName && order.plant_id) {
+                const plant = await db.collection('plants').findOne({
+                    _id: (ObjectId.isValid(order.plant_id) ? new ObjectId(order.plant_id) : order.plant_id) as any
+                });
+                if (plant) orderPlantName = plant.name;
+            }
+
+            let plantMismatch = false;
+            let processorPlantId: string | null = null;
+            let processorPlantName = '';
+
+            if (processorId) {
+                const processor = await db.collection('users').findOne({
+                    _id: (ObjectId.isValid(processorId) ? new ObjectId(processorId) : processorId) as any
+                });
+                if (processor) {
+                    processorPlantId = processor.plant_id ? String(processor.plant_id) : null;
+                    if (processor.plant_id) {
+                        const procPlant = await db.collection('plants').findOne({
+                            _id: (ObjectId.isValid(processor.plant_id) ? new ObjectId(processor.plant_id) : processor.plant_id) as any
+                        });
+                        if (procPlant) processorPlantName = procPlant.name;
+                    }
+
+                    // Check if order is assigned to a different plant
+                    if (processor.role === 'processor' && processorPlantId && order.plant_id) {
+                        if (String(order.plant_id).trim() !== String(processorPlantId).trim()) {
+                            plantMismatch = true;
+                        }
+                    }
+                }
+            }
+
+            // Rule 1: Check driver pickup & OTP verification
+            // The bag intake should only happen after the driver picks up the bag from the customer after verifying the OTP successfully
+            const isDriverCollected = order.status === 'laundry_collected' || 
+                Boolean(order.pickedUpAt) || 
+                Boolean(order.pickup_otp_verified_at) || 
+                Boolean(order.pickup_pin_verified_at) ||
+                Boolean(order.evidence?.pickupVerifiedAt) ||
+                Boolean(order.qr_tracking?.collectedAt);
+
+            // Rule 2: Check if already intaked
+            // One order cannot be intaked multiple times
+            const postIntakeStatuses = [
+                'received_at_facility',
+                'washing',
+                'sorting',
+                'drying',
+                'ironing',
+                'quality_check',
+                'ready_for_qc',
+                'qc_ready',
+                'ready_for_delivery',
+                'out_for_delivery',
+                'delivered',
+                'completed'
+            ];
+            const alreadyIntaked = Boolean(order.receivedAtFacilityAt) || 
+                Boolean(order.intake?.intakeAt) || 
+                postIntakeStatuses.includes(order.status);
+
             return {
                 found: true,
+                plantMismatch,
+                isDriverCollected,
+                alreadyIntaked,
+                orderPlantId: order.plant_id ? String(order.plant_id) : null,
+                orderPlantName: orderPlantName || order.plant_id || 'Other Plant Facility',
+                processorPlantId,
+                processorPlantName: processorPlantName || processorPlantId || 'Current Facility',
                 order: {
                     id: order.id || order._id?.toString(),
                     customerName: customerName || 'Valued Customer',
@@ -318,9 +390,14 @@ export class ProcessorService {
                     items: order.items || [],
                     weightKg: order.actualWeightKg || order.weightKg || 5.0,
                     status: order.status,
+                    statusLabel: order.statusLabel || order.status,
+                    isDriverCollected,
+                    alreadyIntaked,
                     total: order.total || order.total_price || 0,
                     address: order.address || '',
-                    bagQr: order.package?.qr_code || order.qr_code || order.qr_tracking?.qrTagId || order.id
+                    plant_id: order.plant_id ? String(order.plant_id) : null,
+                    plantName: orderPlantName || order.plant_id || '',
+                    bagQr: order.package?.qr_code || order.qr_code || order.qr_tracking?.qrTagId || (order.id ? `BAG-${order.id}` : clean)
                 }
             };
         }
@@ -400,10 +477,42 @@ export class ProcessorService {
             order = newOrderDoc;
         }
 
-        // Align plant to current processor if unset or test environment
-        if (order.plant_id && processor.plant_id && String(order.plant_id) !== String(processor.plant_id)) {
-            order.plant_id = processor.plant_id;
-        } else if (!order.plant_id && processor.plant_id) {
+        // Rule 1: Driver pickup and OTP verification check
+        const isDriverCollected = order.status === 'laundry_collected' || 
+            Boolean(order.pickedUpAt) || 
+            Boolean(order.pickup_otp_verified_at) || 
+            Boolean(order.pickup_pin_verified_at) ||
+            Boolean(order.evidence?.pickupVerifiedAt) ||
+            Boolean(order.qr_tracking?.collectedAt);
+
+        if (!isDriverCollected) {
+            throw new Error(`Order #${cleanOrderId} has not been collected by a driver yet. Driver OTP verification is required before plant intake.`);
+        }
+
+        // Rule 2: Cannot be intaked multiple times
+        const postIntakeStatuses = [
+            'received_at_facility',
+            'washing',
+            'sorting',
+            'drying',
+            'ironing',
+            'quality_check',
+            'ready_for_qc',
+            'qc_ready',
+            'ready_for_delivery',
+            'out_for_delivery',
+            'delivered',
+            'completed'
+        ];
+        if (order.receivedAtFacilityAt || order.intake?.intakeAt || postIntakeStatuses.includes(order.status)) {
+            throw new Error(`Order #${cleanOrderId} has already been intaked at the facility. An order cannot be intaked multiple times.`);
+        }
+
+        // Enforce plant assignment: Reject intake if order is assigned to a different plant
+        if (processor.role === 'processor' && order.plant_id && processor.plant_id && String(order.plant_id).trim() !== String(processor.plant_id).trim()) {
+            throw new Error(`Order #${cleanOrderId} is assigned to a different plant (${order.plantName || order.plant_id}). Cannot intake at this facility.`);
+        }
+        if (!order.plant_id && processor.plant_id) {
             order.plant_id = processor.plant_id;
         }
 

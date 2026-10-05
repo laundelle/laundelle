@@ -2,7 +2,7 @@ import React from 'react';
 
 export const AppDownloadBanner: React.FC = () => {
   return (
-    <div className="w-full max-w-7xl mx-auto overflow-hidden shadow-2xl bg-[#050A5C]">
+    <div className="w-full max-w-7xl mx-auto overflow-hidden shadow-2xl bg-[#050A5C] rounded-3xl">
       <style>{`
         /* ========================================
            LAUNDELLE APP DOWNLOAD SECTION

@@ -6,9 +6,9 @@ import { getAvailablePickupSlots, formatDateToYyyyMmDd } from '@laundelle/valida
 interface RescheduleCancelModalProps {
   isOpen: boolean;
   order: Order | null;
-  mode: 'reschedule' | 'cancel';
+  mode: 'reschedule' | 'cancel' | 'reschedule_pickup' | 'reschedule_delivery';
   onClose: () => void;
-  onConfirmReschedule: (orderId: string, newDate: string, newSlot: string) => void;
+  onConfirmReschedule: (orderId: string, newDate: string, newSlot: string, mode?: string) => void;
   onConfirmCancel: (orderId: string, reason: string) => void;
 }
 
@@ -25,11 +25,15 @@ export const RescheduleCancelModal: React.FC<RescheduleCancelModalProps> = ({
   const [cancelReason, setCancelReason] = useState('Schedule change / Not at home');
   const [customReason, setCustomReason] = useState('');
 
+  const isDeliveryReschedule = mode === 'reschedule_delivery';
+  const isPickupReschedule = mode === 'reschedule' || mode === 'reschedule_pickup';
+
   const targetDateIso = useMemo(() => {
     const d = new Date();
     if (selectedDate === 'Tomorrow') d.setDate(d.getDate() + 1);
     else if (selectedDate === 'In 2 Days') d.setDate(d.getDate() + 2);
     else if (selectedDate === 'In 3 Days') d.setDate(d.getDate() + 3);
+    else if (selectedDate === 'In 4 Days') d.setDate(d.getDate() + 4);
     return formatDateToYyyyMmDd(d);
   }, [selectedDate]);
 
@@ -40,8 +44,50 @@ export const RescheduleCancelModal: React.FC<RescheduleCancelModalProps> = ({
   if (!isOpen || !order) return null;
 
   const isEligibleToCancel = !['washing', 'drying', 'folding_steaming', 'qc_ready', 'ready_for_delivery', 'out_for_delivery', 'delivered', 'cancelled'].includes(order.status);
-  const isEligibleToReschedule = ['booking_confirmed', 'collection_scheduled', 'driver_assigned', 'pending_payment'].includes(order.status);
-  const isEligibleToModify = mode === 'cancel' ? isEligibleToCancel : isEligibleToReschedule;
+  
+  // Delivery can be rescheduled anytime before items are out for delivery
+  const isEligibleForDeliveryReschedule = !['out_for_delivery', 'delivery_in_progress', 'delivered', 'completed', 'cancelled'].includes(order.status) && !Boolean(order.delivered_at || order.delivery_pin_verified_at);
+
+  // Pickup can be rescheduled only up to 1 hour before scheduled pickup time
+  const isEligibleForPickupReschedule = (() => {
+    if (order.status === 'cancelled' || (order as any).isCancelled) return false;
+    const hasBeenCollected = [
+      'laundry_collected', 'received_at_facility', 'sorting', 'washing', 'in_wash', 'drying',
+      'ironing', 'folding', 'quality_check', 'qc_ready', 'ready_for_delivery', 'waiting_for_driver',
+      'delivery_driver_assigned', 'package_collected_for_delivery', 'out_for_delivery', 'delivered', 'completed'
+    ].includes(order.status) || Boolean(order.pickup_pin_verified_at || (order as any).pickup_otp_verified_at);
+    if (hasBeenCollected) return false;
+
+    try {
+      const now = new Date();
+      if (order.pickupDate) {
+        const slotStart = (order.pickupSlot || order.pickupTime || '10:00 AM').split(/[-–]/)[0].trim();
+        const dateObj = new Date(order.pickupDate);
+        if (!isNaN(dateObj.getTime())) {
+          const timeMatch = slotStart.match(/(\d+):?(\d*)\s*(AM|PM)?/i);
+          if (timeMatch) {
+            let hours = parseInt(timeMatch[1], 10);
+            const minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+            const meridian = timeMatch[3]?.toUpperCase();
+            if (meridian === 'PM' && hours < 12) hours += 12;
+            if (meridian === 'AM' && hours === 12) hours = 0;
+            dateObj.setHours(hours, minutes, 0, 0);
+
+            const diffMs = dateObj.getTime() - now.getTime();
+            if (diffMs > 0 && diffMs < 60 * 60 * 1000) return false; // Within 1 hour
+            if (diffMs <= 0 && dateObj.toDateString() === now.toDateString()) return false;
+          }
+        }
+      }
+    } catch {}
+    return true;
+  })();
+
+  const isEligibleToModify = mode === 'cancel'
+    ? isEligibleToCancel
+    : isDeliveryReschedule
+      ? isEligibleForDeliveryReschedule
+      : isEligibleForPickupReschedule;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs overflow-y-auto animate-in fade-in">
@@ -57,10 +103,20 @@ export const RescheduleCancelModal: React.FC<RescheduleCancelModalProps> = ({
 
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider mb-1 opacity-90">
             {mode === 'cancel' ? <AlertTriangle className="w-4 h-4" /> : <Calendar className="w-4 h-4" />}
-            <span>{mode === 'cancel' ? 'Cancel Booking' : 'Reschedule Collection Slot'}</span>
+            <span>
+              {mode === 'cancel'
+                ? 'Cancel Booking'
+                : isDeliveryReschedule
+                  ? 'Reschedule Delivery Window'
+                  : 'Reschedule Collection Slot'}
+            </span>
           </div>
           <h2 className="text-xl font-heading font-extrabold">Order #{order.id}</h2>
-          <p className="text-xs opacity-80 mt-0.5">Current Slot: {order.pickupDate} ({order.pickupSlot})</p>
+          <p className="text-xs opacity-80 mt-0.5">
+            {isDeliveryReschedule
+              ? `Current Window: ${order.deliveryDate || 'Scheduled Turnaround'} (${order.deliverySlot || 'Standard Delivery'})`
+              : `Current Slot: ${order.pickupDate} (${order.pickupSlot})`}
+          </p>
         </div>
 
         <div className="p-5 sm:p-6 space-y-5 overflow-y-auto flex-1 min-h-0">
@@ -74,19 +130,19 @@ export const RescheduleCancelModal: React.FC<RescheduleCancelModalProps> = ({
                 Please contact our 24/7 care hotline at <strong>+44 7700 900888</strong> for manual adjustments.
               </p>
             </div>
-          ) : mode === 'reschedule' ? (
+          ) : mode !== 'cancel' ? (
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">
-                  New Collection Date
+                  {isDeliveryReschedule ? 'New Delivery Date' : 'New Collection Date'}
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {['Tomorrow', 'In 2 Days', 'In 3 Days'].map((d) => (
+                <div className="grid grid-cols-4 gap-2">
+                  {['Tomorrow', 'In 2 Days', 'In 3 Days', 'In 4 Days'].map((d) => (
                     <button
                       key={d}
                       type="button"
                       onClick={() => setSelectedDate(d)}
-                      className={`p-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      className={`p-2.5 sm:p-3 rounded-xl text-[11px] sm:text-xs font-bold border transition-all cursor-pointer ${
                         selectedDate === d
                           ? 'border-[#03045E] bg-[#CAF0F8] text-[#03045E] shadow-xs'
                           : 'border-gray-200 bg-white hover:border-gray-300 text-gray-700'
@@ -100,7 +156,7 @@ export const RescheduleCancelModal: React.FC<RescheduleCancelModalProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">
-                  New Time Window
+                  {isDeliveryReschedule ? 'New Delivery Time Window' : 'New Time Window'}
                 </label>
                 <div className="space-y-2">
                   {availableSlots.map(({ slot, disabled, reason }) => (
@@ -126,10 +182,10 @@ export const RescheduleCancelModal: React.FC<RescheduleCancelModalProps> = ({
 
               <div className="pt-2">
                 <button
-                  onClick={() => onConfirmReschedule(order.id, selectedDate, selectedSlot)}
+                  onClick={() => onConfirmReschedule(order.id, selectedDate, selectedSlot, isDeliveryReschedule ? 'reschedule_delivery' : 'reschedule_pickup')}
                   className="w-full bg-[#03045E] hover:bg-[#023E8A] text-white py-3.5 rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer"
                 >
-                  Save New Collection Time
+                  {isDeliveryReschedule ? 'Save New Delivery Window' : 'Save New Collection Time'}
                 </button>
               </div>
             </div>

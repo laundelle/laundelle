@@ -9,6 +9,8 @@ interface ServicesViewProps {
   onOpenCart: () => void;
   onCustomizeService?: (service: ServiceItem) => void;
   onNavigate?: (tab: ActiveTab) => void;
+  targetServiceQuery?: string | null;
+  onClearTargetService?: () => void;
 }
 
 // Map service names to their corresponding images in public/Images
@@ -35,11 +37,62 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
   onOpenCart,
   onCustomizeService,
   onNavigate,
+  targetServiceQuery,
+  onClearTargetService,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showAiImage, setShowAiImage] = useState<boolean>(false);
   const [isAiMinimized, setIsAiMinimized] = useState<boolean>(false);
+  const [highlightedServiceId, setHighlightedServiceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!targetServiceQuery) return;
+
+    const q = targetServiceQuery.toLowerCase().trim();
+
+    // Match service by name, id, category, or keywords
+    const match = services.find((s) => {
+      const name = s.name.toLowerCase();
+      const id = s.id.toLowerCase();
+      const cat = s.category.toLowerCase();
+      if (name === q || id === q) return true;
+      if (name.includes(q) || q.includes(name)) return true;
+      if (q.includes('shirt') && (name.includes('wash') || cat === 'wash_fold')) return true;
+      if ((q.includes('shoe') || q.includes('sneaker')) && (name.includes('shoe') || name.includes('sneaker') || cat === 'shoes')) return true;
+      if (q.includes('silk') && name.includes('silk')) return true;
+      return false;
+    });
+
+    if (match) {
+      setSelectedCategory('all');
+      setSearchQuery('');
+      setHighlightedServiceId(match.id);
+
+      const scrollToMatch = () => {
+        const el =
+          document.querySelector(`[data-service-id="${match.id}"]`) ||
+          document.querySelector(`[data-service-name="${match.name.toLowerCase()}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      };
+
+      const t1 = setTimeout(scrollToMatch, 100);
+      const t2 = setTimeout(scrollToMatch, 350);
+
+      const clearTimer = setTimeout(() => {
+        setHighlightedServiceId(null);
+        if (onClearTargetService) onClearTargetService();
+      }, 4000);
+
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(clearTimer);
+      };
+    }
+  }, [targetServiceQuery, services, onClearTargetService]);
 
   const categories = [
     { id: 'all', label: 'All Categories' },
@@ -180,7 +233,13 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
               >
                 <div
                   id={`service-card-${index}`}
-                  className="bg-white rounded-3xl p-2.5 sm:p-3 pb-4 sm:pb-5 shadow-sm hover:shadow-xl transition-all duration-300 border border-slate-200/90 hover:border-[#1D4ED8]/40 group flex flex-col justify-between h-full"
+                  data-service-id={service.id}
+                  data-service-name={service.name.toLowerCase()}
+                  className={`bg-white rounded-3xl p-2.5 sm:p-3 pb-4 sm:pb-5 shadow-sm hover:shadow-xl transition-all duration-500 border group flex flex-col justify-between h-full relative ${
+                    highlightedServiceId === service.id
+                      ? 'ring-4 ring-[#1D4ED8] shadow-[0_0_40px_rgba(29,78,216,0.4)] border-[#1D4ED8] scale-[1.02]'
+                      : 'border-slate-200/90 hover:border-[#1D4ED8]/40'
+                  }`}
                 >
                   {/* TOP VISUAL SIDE (Reduced Margins for a Bigger Image) */}
                   <div className="w-full shrink-0 bg-white rounded-2xl relative overflow-hidden flex items-center justify-center p-0">
@@ -194,6 +253,14 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
                       }}
                       className="w-full h-52 sm:h-56 lg:h-60 object-cover rounded-2xl group-hover:scale-103 transition-transform duration-500"
                     />
+
+                    {/* Highlighted Selected Service Indicator Badge */}
+                    {highlightedServiceId === service.id && (
+                      <div className="absolute top-3 right-3 bg-[#1D4ED8] text-white text-[10px] sm:text-xs font-black px-3 py-1 rounded-full shadow-lg flex items-center gap-1.5 z-20 animate-bounce">
+                        <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                        <span>SELECTED SERVICE</span>
+                      </div>
+                    )}
 
                     {/* Bottom Popular / Category Pill Tag */}
                     {isPopular ? (

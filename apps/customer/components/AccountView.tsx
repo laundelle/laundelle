@@ -2,18 +2,15 @@ import React, { useState } from 'react';
 import {
   User,
   MapPin,
-  Gift,
   ShieldCheck,
   Plus,
   Trash2,
   Edit2,
   Check,
-  Repeat,
   Calendar,
   CreditCard,
   ChevronRight,
   ArrowRight,
-  Heart,
   Zap,
   FileText,
   Navigation,
@@ -24,7 +21,7 @@ import {
   Lock,
   X
 } from 'lucide-react';
-import { UserProfile, UserAddress, UserPreferences, RecurringSchedule, ActiveTab } from '@laundelle/types';
+import { UserProfile, UserAddress, ActiveTab } from '@laundelle/types';
 import { mongoSignOut, dbUpdateProfile, apiFetch } from '@laundelle/api-client';
 import { useAuth0 } from '@auth0/auth0-react';
 import { AddAddressModal } from './AddAddressModal';
@@ -41,7 +38,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
   onNavigate
 }) => {
   const { logout: auth0Logout, isAuthenticated: isAuth0Authenticated } = useAuth0();
-  const [activeTab, setActiveTab] = useState<'profile' | 'addresses' | 'preferences' | 'recurring' | 'privacy'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'addresses' | 'privacy'>('profile');
 
   // Edit Profile modal
   const parsePhone = (raw?: string) => {
@@ -53,25 +50,18 @@ export const AccountView: React.FC<AccountViewProps> = ({
 
   const initialParsed = parsePhone(profile.phone);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
-  const [editName, setEditName] = useState(profile.name || 'Mohammed Mehraj');
-  const [editEmail, setEditEmail] = useState(profile.email || 'mehraj@gmail.com');
+  const [editName, setEditName] = useState(profile.name || '');
+  const [editEmail, setEditEmail] = useState(profile.email || '');
   const [phoneCountryCode, setPhoneCountryCode] = useState(initialParsed.code || '+44');
-  const [editPhone, setEditPhone] = useState(initialParsed.num || (profile.phone ? profile.phone.replace(/^\+44/, '').trim() : '7700 900123'));
+  const [editPhone, setEditPhone] = useState(initialParsed.num || (profile.phone ? profile.phone.replace(/^\+44/, '').trim() : ''));
 
   // Address modal
   const [addressModalOpen, setAddressModalOpen] = useState(false);
   const [addressToEdit, setAddressToEdit] = useState<UserAddress | null>(null);
 
-  // Recurring Schedule State
-  const [isSettingUpRecurring, setIsSettingUpRecurring] = useState(false);
-  const [recFrequency, setRecFrequency] = useState<'Weekly' | 'Bi-Weekly' | 'Monthly'>('Weekly');
-  const [recDay, setRecDay] = useState('Every Monday');
-  const [recSlot, setRecSlot] = useState('10:00 AM - 12:00 PM');
-  const [recService, setRecService] = useState('Wash, Tumble Dry & Fold');
-
-  const displayName = profile.name || 'Mohammed Mehraj';
-  const displayEmail = profile.email || 'mehraj@gmail.com';
-  const displayPhone = profile.phone || '+44 7700 900123';
+  const displayName = profile.name || 'Valued Customer';
+  const displayEmail = profile.email || 'No email provided';
+  const displayPhone = profile.phone || 'No phone number provided';
 
   // Compute initials for the avatar badge (e.g. MM)
   const initials = displayName
@@ -79,7 +69,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
     .filter(Boolean)
     .slice(0, 2)
     .map((n) => n[0].toUpperCase())
-    .join('') || 'MM';
+    .join('') || 'VC';
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,51 +120,6 @@ export const AccountView: React.FC<AccountViewProps> = ({
         ...a,
         isDefault: a.id === id
       }))
-    });
-  };
-
-  const handlePrefChange = (field: keyof UserPreferences, value: any) => {
-    onUpdateProfile({
-      ...profile,
-      preferences: {
-        ...profile.preferences,
-        [field]: value
-      }
-    });
-  };
-
-  const handleSaveRecurring = () => {
-    const newSchedule: RecurringSchedule = {
-      id: `rec-${Date.now()}`,
-      serviceName: recService,
-      frequency: recFrequency,
-      dayOfWeek: recDay,
-      timeSlot: recSlot,
-      addressId: profile.addresses[0]?.id || 'addr-1',
-      active: true,
-      nextScheduledDate: 'Next Monday, 10:00 AM'
-    };
-
-    onUpdateProfile({
-      ...profile,
-      recurringSchedules: [...(profile.recurringSchedules || []), newSchedule]
-    });
-    setIsSettingUpRecurring(false);
-  };
-
-  const handleToggleRecurringActive = (schedId: string) => {
-    onUpdateProfile({
-      ...profile,
-      recurringSchedules: (profile.recurringSchedules || []).map((s) =>
-        s.id === schedId ? { ...s, active: !s.active } : s
-      )
-    });
-  };
-
-  const handleDeleteRecurring = (schedId: string) => {
-    onUpdateProfile({
-      ...profile,
-      recurringSchedules: (profile.recurringSchedules || []).filter((s) => s.id !== schedId)
     });
   };
 
@@ -235,7 +180,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
             </div>
           </div>
 
-          {/* Right: Quick Action Buttons & Points */}
+          {/* Right: Quick Action Buttons */}
           <div className="flex items-center gap-2.5 w-full md:w-auto relative z-10 flex-wrap sm:flex-nowrap">
             {/* Open Orders Button */}
             <button
@@ -266,25 +211,6 @@ export const AccountView: React.FC<AccountViewProps> = ({
                 <p className="text-xs font-black text-white leading-tight">24/7 Help</p>
               </div>
             </button>
-
-            {/* Reward Points */}
-            <div
-              onClick={() => alert(`You have ${profile.rewardPoints} Reward Points available to redeem on checkout!`)}
-              className="w-full sm:w-auto bg-white/10 hover:bg-white/15 border border-white/10 transition-all p-3 px-4 rounded-2xl flex items-center justify-between gap-3 cursor-pointer shadow-sm active:scale-98"
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center text-[#38bdf8] shrink-0">
-                  <Gift className="w-4 h-4" />
-                </div>
-                <div>
-                  <p className="text-[10px] text-white/70 font-medium">Reward Points</p>
-                  <p className="text-xs font-black text-white leading-tight">
-                    {profile.rewardPoints} pts
-                  </p>
-                </div>
-              </div>
-              <ChevronRight className="w-3.5 h-3.5 text-white/50" />
-            </div>
           </div>
         </div>
       </div>
@@ -368,31 +294,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
                 </span>
               </button>
 
-              {/* Care Preferences */}
-              <button
-                type="button"
-                onClick={() => setActiveTab('preferences')}
-                className={`w-full p-3.5 px-4 rounded-2xl text-xs font-bold flex items-center gap-3 transition-all cursor-pointer ${activeTab === 'preferences'
-                  ? 'bg-[#eff6ff] text-[#1d5bd8] shadow-2xs font-extrabold'
-                  : 'text-gray-700 hover:bg-gray-50'
-                  }`}
-              >
-                <Heart className={`w-4 h-4 ${activeTab === 'preferences' ? 'text-[#1d5bd8]' : 'text-gray-400'}`} />
-                <span>Care Preferences</span>
-              </button>
 
-              {/* Recurring Laundry */}
-              <button
-                type="button"
-                onClick={() => setActiveTab('recurring')}
-                className={`w-full p-3.5 px-4 rounded-2xl text-xs font-bold flex items-center gap-3 transition-all cursor-pointer ${activeTab === 'recurring'
-                  ? 'bg-[#eff6ff] text-[#1d5bd8] shadow-2xs font-extrabold'
-                  : 'text-gray-700 hover:bg-gray-50'
-                  }`}
-              >
-                <Repeat className={`w-4 h-4 ${activeTab === 'recurring' ? 'text-[#1d5bd8]' : 'text-gray-400'}`} />
-                <span>Recurring Laundry</span>
-              </button>
 
               {/* GDPR & Privacy Data Rights */}
               <button
@@ -813,276 +715,6 @@ export const AccountView: React.FC<AccountViewProps> = ({
                 </div>
               </div>
             )}
-
-            {/* =====================================================================
-                TAB 3: CARE PREFERENCES
-            ===================================================================== */}
-            {activeTab === 'preferences' && (
-              <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-xs border border-gray-100 space-y-6 max-w-3xl animate-in fade-in-50">
-                <div className="space-y-1">
-                  <h3 className="text-base font-extrabold text-navy">
-                    Default Garment Wash & Fold Preferences
-                  </h3>
-                  <p className="text-xs text-gray-500">
-                    These preferences will automatically pre-fill on every new doorstep collection you book.
-                  </p>
-                </div>
-
-                <div className="space-y-5 text-xs">
-                  {/* Detergent */}
-                  <div>
-                    <label className="block text-gray-700 font-bold uppercase tracking-wider mb-2">
-                      Preferred Detergent
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {['Standard', 'Premium Eco-Enzyme'].map((det) => (
-                        <button
-                          key={det}
-                          type="button"
-                          onClick={() => handlePrefChange('detergent', det)}
-                          className={`p-3 rounded-xl text-xs font-bold text-left border transition-all cursor-pointer flex items-center justify-between ${profile.preferences?.detergent === det
-                            ? 'border-[#082b78] bg-[#eff6ff] text-[#082b78] shadow-2xs'
-                            : 'border-gray-200 bg-white hover:border-gray-300 text-gray-700'
-                            }`}
-                        >
-                          <span>{det}</span>
-                          {profile.preferences?.detergent === det && <Check className="w-3.5 h-3.5" />}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Softener */}
-                  <div>
-                    <label className="block text-gray-700 font-bold uppercase tracking-wider mb-2">
-                      Fabric Softener
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {['Standard', 'Premium Silk Touch'].map((soft) => (
-                        <button
-                          key={soft}
-                          type="button"
-                          onClick={() => handlePrefChange('softener', soft)}
-                          className={`p-3 rounded-xl text-xs font-bold text-left border transition-all cursor-pointer flex items-center justify-between ${profile.preferences?.softener === soft
-                            ? 'border-[#082b78] bg-[#eff6ff] text-[#082b78] shadow-2xs'
-                            : 'border-gray-200 bg-white hover:border-gray-300 text-gray-700'
-                            }`}
-                        >
-                          <span>{soft}</span>
-                          {profile.preferences?.softener === soft && <Check className="w-3.5 h-3.5" />}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Folding Preference */}
-                  <div>
-                    <label className="block text-gray-700 font-bold uppercase tracking-wider mb-2">
-                      Folding & Presentation Preference
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {['Standard Flat Fold', 'Hanger Preferred'].map((fold) => (
-                        <button
-                          key={fold}
-                          type="button"
-                          onClick={() => handlePrefChange('foldingPreference', fold)}
-                          className={`p-3 rounded-xl text-xs font-bold text-left border transition-all cursor-pointer flex items-center justify-between ${profile.preferences?.foldingPreference === fold
-                            ? 'border-[#082b78] bg-[#eff6ff] text-[#082b78] shadow-2xs'
-                            : 'border-gray-200 bg-white hover:border-gray-300 text-gray-700'
-                            }`}
-                        >
-                          <span>{fold}</span>
-                          {profile.preferences?.foldingPreference === fold && <Check className="w-3.5 h-3.5" />}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* =====================================================================
-                TAB 4: RECURRING LAUNDRY SCHEDULES
-            ===================================================================== */}
-            {activeTab === 'recurring' && (
-              <div className="space-y-6 animate-in fade-in-50">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <h3 className="text-base font-extrabold text-navy">
-                      Recurring Laundry Schedules
-                    </h3>
-                    <p className="text-xs text-gray-500">
-                      Automate your weekly or bi-weekly doorstep laundry pickups.
-                    </p>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setIsSettingUpRecurring(true)}
-                    className="bg-[#082b78] text-white px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#072465] shadow-xs cursor-pointer shrink-0"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Create Recurring Schedule</span>
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  {(profile.recurringSchedules || []).length === 0 && !isSettingUpRecurring ? (
-                    <div className="bg-white rounded-3xl p-12 text-center border border-gray-100 space-y-3 shadow-xs">
-                      <Repeat className="w-12 h-12 text-gray-300 mx-auto" />
-                      <h4 className="font-bold text-base text-navy">No Recurring Schedules</h4>
-                      <p className="text-xs text-gray-500 max-w-md mx-auto">
-                        Set up an automated weekly collection slot and enjoy a 10% bonus discount on every recurring cycle.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setIsSettingUpRecurring(true)}
-                        className="bg-[#082b78] text-white px-5 py-2.5 rounded-xl text-xs font-bold hover:bg-[#072465] transition-all cursor-pointer"
-                      >
-                        Set Up Schedule Now
-                      </button>
-                    </div>
-                  ) : (
-                    (profile.recurringSchedules || []).map((schedule) => (
-                      <div
-                        key={schedule.id}
-                        className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
-                      >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-extrabold text-sm text-navy">{schedule.serviceName}</h4>
-                            <span
-                              className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider ${schedule.active ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'
-                                }`}
-                            >
-                              {schedule.active ? 'Active' : 'Paused'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-gray-500">
-                            {schedule.frequency} • {schedule.dayOfWeek} at {schedule.timeSlot}
-                          </p>
-                          <p className="text-[11px] text-[#1d5bd8] font-bold">
-                            Next pickup: {schedule.nextScheduledDate || 'Upcoming'}
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleRecurringActive(schedule.id)}
-                            className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${schedule.active
-                              ? 'bg-amber-50 text-amber-800 hover:bg-amber-100'
-                              : 'bg-blue-50 text-blue-800 hover:bg-blue-100'
-                              }`}
-                          >
-                            {schedule.active ? 'Pause' : 'Resume'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteRecurring(schedule.id)}
-                            className="p-2 text-red-500 hover:bg-red-50 rounded-xl cursor-pointer transition-colors"
-                            title="Delete Schedule"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-
-                  {/* Create recurring schedule drawer/form */}
-                  {isSettingUpRecurring && (
-                    <div className="bg-white rounded-3xl p-6 border border-blue-200 shadow-sm space-y-4 animate-in fade-in">
-                      <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-                        <h4 className="text-sm font-extrabold text-navy">New Recurring Schedule</h4>
-                        <button
-                          type="button"
-                          onClick={() => setIsSettingUpRecurring(false)}
-                          className="text-gray-400 hover:text-gray-600"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                        <div>
-                          <label className="block text-gray-600 font-bold mb-1">Service Type</label>
-                          <select
-                            value={recService}
-                            onChange={(e) => setRecService(e.target.value)}
-                            className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none"
-                          >
-                            <option>Wash, Tumble Dry & Fold</option>
-                            <option>Wash & Steam Iron</option>
-                            <option>Premium Dry Cleaning</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-gray-600 font-bold mb-1">Frequency</label>
-                          <select
-                            value={recFrequency}
-                            onChange={(e) => setRecFrequency(e.target.value as any)}
-                            className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none"
-                          >
-                            <option>Weekly</option>
-                            <option>Bi-Weekly</option>
-                            <option>Monthly</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-gray-600 font-bold mb-1">Preferred Day</label>
-                          <select
-                            value={recDay}
-                            onChange={(e) => setRecDay(e.target.value)}
-                            className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none"
-                          >
-                            <option>Every Monday</option>
-                            <option>Every Wednesday</option>
-                            <option>Every Friday</option>
-                            <option>Every Saturday</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-gray-600 font-bold mb-1">Collection Time Slot</label>
-                          <select
-                            value={recSlot}
-                            onChange={(e) => setRecSlot(e.target.value)}
-                            className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none"
-                          >
-                            <option>08:00 AM - 10:00 AM</option>
-                            <option>10:00 AM - 12:00 PM</option>
-                            <option>02:00 PM - 04:00 PM</option>
-                            <option>06:00 PM - 08:00 PM</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="flex justify-end gap-2 pt-2">
-                        <button
-                          type="button"
-                          onClick={() => setIsSettingUpRecurring(false)}
-                          className="px-4 py-2 rounded-xl border border-gray-200 text-gray-600 font-bold text-xs"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleSaveRecurring}
-                          className="px-5 py-2 rounded-xl bg-[#082b78] text-white font-bold text-xs hover:bg-[#072465]"
-                        >
-                          Save Schedule
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-
 
             {/* =====================================================================
                 TAB 6: GDPR & DATA PRIVACY RIGHTS

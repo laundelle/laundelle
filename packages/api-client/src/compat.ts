@@ -472,15 +472,13 @@ export async function dbDeleteAddress(_userId: string, addressId: string): Promi
 
 // ─── Orders ──────────────────────────────────────────────────────────────────
 
-export async function dbFetchOrders(_userId?: string, sessionIdParam?: string): Promise<Order[]> {
+export async function dbFetchOrders(_userId?: string): Promise<Order[]> {
     try {
-        let url = '/api/v1/orders';
-        const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
-        const sessionId = sessionIdParam || params.get('session_id') || params.get('stripe_session_id');
-        if (sessionId) {
-            url += `?session_id=${encodeURIComponent(sessionId)}`;
-        }
-        const res = await apiFetch(url, {
+        // SECURITY: Do NOT pass session_id here.
+        // Payment confirmation must only happen via POST /api/stripe/confirm-session (explicit)
+        // or via the Stripe webhook. Auto-injecting session_id to GET /orders was allowing
+        // orders to be confirmed without a running webhook (direct Stripe API call).
+        const res = await apiFetch('/api/v1/orders', {
             method: 'GET',
             headers: authHeaders(),
         });
@@ -502,12 +500,26 @@ export async function dbCreateOrder(userIdOrOrder: string | Order, maybeOrder?: 
         console.error('[db] dbCreateOrder called without an order object');
         return;
     }
-    const isPendingPayment = (order.paymentMethod !== 'Cash on Delivery' && order.paymentMethod !== 'Cash') || (order.status as string) === 'pending_payment';
-    if (!isPendingPayment) {
-        const local = getLocal<Order[]>(LOCAL_ORDERS_KEY, []);
-        local.unshift(order);
-        setLocal(LOCAL_ORDERS_KEY, local);
+
+    // SECURITY: Completely block online payment orders from being created via this function.
+    // All Stripe payment orders are created ONLY when the webhook fires (checkout.session.completed).
+    // dbCreateOrder must ONLY be used for Cash on Delivery orders.
+    const isCash = order.paymentMethod === 'Cash on Delivery' || order.paymentMethod === 'Cash';
+    if (!isCash) {
+        console.error(
+            '[db] dbCreateOrder blocked: online payment orders cannot be created client-side. ' +
+            'Orders are created by the Stripe webhook after payment is confirmed.'
+        );
+        throw new Error(
+            'Online payment orders cannot be submitted directly. ' +
+            'Your order will be confirmed automatically once payment is verified by Stripe.'
+        );
     }
+
+    const local = getLocal<Order[]>(LOCAL_ORDERS_KEY, []);
+    local.unshift(order);
+    setLocal(LOCAL_ORDERS_KEY, local);
+
     try {
         const res = await apiFetch('/api/v1/orders', {
             method: 'POST',

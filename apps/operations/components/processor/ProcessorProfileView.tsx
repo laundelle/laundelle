@@ -75,7 +75,7 @@ export const ProcessorProfileView: React.FC<ProcessorProfileViewProps> = ({ onEx
   ];
 
   const displayName = profile?.fullName || profile?.name || userName || 'Plant Operator';
-  const displayId = profile?.employeeNumber || 'L2U-PR-4091';
+  const displayId = profile?.employeeNumber || 'STF-PR-4091';
   const displayPlant = profile?.plantName || (profile?.plant_id ? `Plant Unit (${profile.plant_id})` : 'Central Operations Hub');
 
   return (

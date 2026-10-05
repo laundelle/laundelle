@@ -22,6 +22,7 @@ export interface BeforeAfterItem {
   imageUrl?: string;
   fallbackUrl?: string;
   iconType: 'shirt' | 'sneaker' | 'silk';
+  targetServiceName?: string;
 }
 
 const DEFAULT_CASES: BeforeAfterItem[] = [
@@ -37,6 +38,7 @@ const DEFAULT_CASES: BeforeAfterItem[] = [
     imageUrl: '/assets/gallery-shirt-after.jpg',
     fallbackUrl: 'https://images.unsplash.com/photo-1598033129183-c4f50c736f10?auto=format&fit=crop&w=1200&q=85',
     iconType: 'shirt',
+    targetServiceName: 'Wash + Dry + Fold',
   },
   {
     id: 'sneakers',
@@ -50,6 +52,7 @@ const DEFAULT_CASES: BeforeAfterItem[] = [
     imageUrl: '/assets/gallery-sneakers-after.jpg',
     fallbackUrl: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=1200&q=85',
     iconType: 'sneaker',
+    targetServiceName: 'Sneaker & Shoe Deep Clean',
   },
   {
     id: 'silk',
@@ -63,6 +66,7 @@ const DEFAULT_CASES: BeforeAfterItem[] = [
     imageUrl: '/assets/gallery-silk-after.jpg',
     fallbackUrl: 'https://images.unsplash.com/photo-1539533018447-63fcce2678e3?auto=format&fit=crop&w=1200&q=85',
     iconType: 'silk',
+    targetServiceName: 'Silk & Delicates Care',
   },
 ];
 
@@ -88,11 +92,12 @@ const SneakerIcon: React.FC<{ className?: string }> = ({ className = 'w-5 h-5' }
 interface BeforeAfterCardProps {
   item: BeforeAfterItem;
   onBookPickup?: () => void;
+  onBookService?: (serviceName: string) => void;
   className?: string;
 }
 
 // Individual Card with moveable before/after split slider
-const BeforeAfterCard: React.FC<BeforeAfterCardProps> = ({ item, onBookPickup, className = '' }) => {
+const BeforeAfterCard: React.FC<BeforeAfterCardProps> = ({ item, onBookPickup, onBookService, className = '' }) => {
   const [sliderPosition, setSliderPosition] = useState<number>(50);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -277,7 +282,13 @@ const BeforeAfterCard: React.FC<BeforeAfterCardProps> = ({ item, onBookPickup, c
         </span>
         <button
           type="button"
-          onClick={onBookPickup}
+          onClick={() => {
+            if (onBookService && item.targetServiceName) {
+              onBookService(item.targetServiceName);
+            } else if (onBookPickup) {
+              onBookPickup();
+            }
+          }}
           className="bg-[#0066f5] hover:bg-[#0052cc] active:scale-95 text-white px-5 py-2 rounded-xl text-xs font-bold transition-all shadow-sm hover:shadow-md cursor-pointer flex items-center gap-1.5 shrink-0"
         >
           <span>Book</span>
@@ -290,23 +301,25 @@ const BeforeAfterCard: React.FC<BeforeAfterCardProps> = ({ item, onBookPickup, c
 
 interface BeforeAfterSliderProps {
   onBookPickup?: () => void;
+  onBookService?: (serviceName: string) => void;
   items?: BeforeAfterItem[];
 }
 
 export const BeforeAfterSlider: React.FC<BeforeAfterSliderProps> = ({
   onBookPickup,
+  onBookService,
   items = DEFAULT_CASES,
 }) => {
   const displayItems = items.slice(0, 3);
 
   return (
-    <section className="w-full bg-gradient-to-b from-[#f3f8fe] via-[#f7fbfe] to-[#edf5ff] py-14 sm:py-20 px-4 sm:px-8 md:px-12 lg:px-16 overflow-hidden relative border-y border-blue-100/60">
+    <section className="w-full bg-gradient-to-b from-[#f3f8fe] via-[#f7fbfe] to-[#edf5ff] py-12 sm:py-16 px-4 sm:px-8 md:px-12 lg:px-16 overflow-hidden relative border-y border-blue-100/60">
       {/* Soft Ambient Light Glows */}
       <div className="absolute top-0 right-1/4 w-96 h-96 bg-blue-200/25 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 left-1/4 w-96 h-96 bg-sky-200/20 rounded-full blur-3xl pointer-events-none" />
 
       {/* Header Info Section */}
-      <div className="w-full max-w-7xl mx-auto mb-8 sm:mb-12">
+      <div className="w-full max-w-7xl mx-auto mb-8 sm:mb-10">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           {/* Left Column: Eyebrow, Headline & Subtitle */}
           <div className="max-w-2xl">
@@ -366,6 +379,7 @@ export const BeforeAfterSlider: React.FC<BeforeAfterSliderProps> = ({
               key={item.id}
               item={item}
               onBookPickup={onBookPickup}
+              onBookService={onBookService}
             />
           ))}
         </div>

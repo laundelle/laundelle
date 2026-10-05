@@ -15,6 +15,9 @@ export async function ensureDatabaseIndexes() {
     await Promise.all([
       db.collection('orders').createIndex({ publicId: 1 }, { unique: true, sparse: true, background: true }),
       db.collection('orders').createIndex({ id: 1 }, { unique: true, background: true }),
+      // Stripe can retry and multiple servers can receive a delivery concurrently.
+      // The session ID must map to at most one official order.
+      db.collection('orders').createIndex({ stripe_session_id: 1 }, { unique: true, sparse: true, background: true }),
       db.collection('orders').createIndex({ customer_id: 1, status: 1 }, { background: true }),
       db.collection('orders').createIndex({ customerId: 1, status: 1 }, { background: true }),
       db.collection('orders').createIndex({ plant_id: 1, status: 1 }, { background: true }),

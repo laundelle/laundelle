@@ -28,6 +28,7 @@ import {
   Lock
 } from 'lucide-react';
 import { CartItem, UserAddress, Order } from '@laundelle/types';
+import { generateOrderId } from '@laundelle/ids';
 import { dbCreateOrder, dbCreateAddress, dbFetchSlots, getStoredSession, apiFetch, authHeaders } from '@laundelle/api-client';
 import { AddAddressModal } from './AddAddressModal';
 import {
@@ -56,6 +57,7 @@ interface CartDrawerProps {
   onClearCart: () => void;
   addresses: UserAddress[];
   onOrderPlaced: (order: Order) => void;
+  onPaymentFailed?: (errorMessage: string) => void;
   isLoggedIn?: boolean;
   onRequireLogin?: () => void;
   onAddAddress?: () => void;
@@ -71,6 +73,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onClearCart,
   addresses,
   onOrderPlaced,
+  onPaymentFailed,
   isLoggedIn,
   onRequireLogin,
   onAddAddress: _onAddAddress,
@@ -468,7 +471,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     setCurrentStep('review');
   };
 
-  // Final Payment & Stripe Session Initialization (COD Removed!)
+  // Create a Stripe-hosted Checkout Session and redirect the browser to Stripe's page.
+  // Card entry happens entirely on Stripe's own HTTPS domain — no card data ever touches
+  // our server, and no browser insecure-connection warning can appear.
   const handleCompletePayment = async () => {
     if (!effectiveIsLoggedIn) {
       setSubmitError('You must be logged in to place an order. Please log in or create an account.');
@@ -485,7 +490,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         }`
         : 'Doorstep Delivery Address';
 
-      const newOrderId = `L2U-${Math.floor(10000 + Math.random() * 90000)}`;
+      const newOrderId = generateOrderId();
 
       const newOrder: Order = {
         id: newOrderId,
@@ -539,7 +544,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         ]
       };
 
-      // Request Stripe Checkout Session (order will be created ONLY when payment succeeds)
       const stripeRes = await apiFetch('/api/stripe/create-checkout-session', {
         method: 'POST',
         headers: {
@@ -549,8 +553,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         body: JSON.stringify({
           amount: estimatedTotal,
           customerEmail: email.trim() || session?.user?.email,
-          userId: session?.user?.id || 'guest',
           orderPayload: newOrder,
+          returnUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
           items: [
             ...cart.map((item) => ({
               name: item.name,
@@ -564,21 +568,30 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         }),
       });
 
-      const sessionData = await stripeRes.json();
-      if (!stripeRes.ok || !sessionData.url) {
-        throw new Error(sessionData.error || 'Failed to initialize Stripe checkout session');
+      const paymentData = await stripeRes.json();
+      if (!stripeRes.ok || !paymentData.url) {
+        throw new Error(paymentData.error || 'Failed to create Stripe checkout session');
       }
 
-      // 3. Close drawer and redirect directly to Stripe (cart preserved in storage until payment authorized)
+      // Redirect the entire browser to Stripe's hosted checkout page.
+      // Stripe handles card entry on their own HTTPS domain — fully secure.
       onClose();
-      window.location.href = sessionData.url;
+      window.location.href = paymentData.url;
     } catch (err: any) {
       console.error('Order checkout error:', err);
-      setSubmitError(err.message || 'Error processing payment. Please check your connection and try again.');
+      const msg = err.message || 'Error processing payment. Please check your connection and try again.';
+      if (onPaymentFailed) {
+        onClose();
+        onPaymentFailed(msg);
+      } else {
+        setSubmitError(msg);
+      }
     } finally {
       setIsSubmitting(false);
     }
   };
+
+
 
   if (!isOpen) return null;
 
@@ -1269,7 +1282,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <div className="p-3.5 rounded-2xl bg-[#eef4ff] border border-[#d6e5ff] flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 text-xs text-navy">
                       <User className="w-4 h-4 text-[#1d5bd8] shrink-0" />
-                      <span>Have a Laundelle account? Sign in for saved addresses and loyalty points.</span>
+                      <span>Have a Laundelle account? Sign in for saved addresses and quick checkout.</span>
                     </div>
                     <button
                       type="button"
@@ -1832,7 +1845,6 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   </div>
                 </div>
 
-                {/* Card Payment Card (Online Stripe Only - COD Removed!) */}
                 <div className="rounded-2xl border-2 border-[#1d5bd8] bg-[#f8fbff] p-5 sm:p-6 shadow-sm space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -1841,9 +1853,9 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <h4 className="text-sm font-bold text-navy">Online Card Payment</h4>
+                          <h4 className="text-sm font-bold text-navy">Stripe Secure Checkout</h4>
                           <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-[#1d5bd8] uppercase">
-                            Stripe Secure
+                            Hosted by Stripe
                           </span>
                         </div>
                         <p className="text-xs text-gray-500 mt-0.5">
@@ -1859,14 +1871,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
                   <div className="p-3 bg-white rounded-xl border border-blue-100 text-xs text-gray-600 space-y-1">
                     <div className="flex items-center justify-between font-semibold">
-                      <span>Estimated Total Authorization:</span>
+                      <span>Estimated Total:</span>
                       <span className="text-base font-extrabold text-[#1d5bd8]">~£{estimatedTotal.toFixed(2)}</span>
                     </div>
                     <p className="text-[11px] text-gray-400">
-                      Final amount adjusts based on bag weight, piece count, and active discount packs.
+                      You'll be redirected to Stripe's secure page to enter your card. Final amount adjusts based on bag weight and piece count.
                     </p>
                   </div>
                 </div>
+
+
+
 
                 {/* 256-Bit SSL Security Badge */}
                 <div className="flex items-center justify-center gap-2 text-xs text-gray-400 pt-1">
@@ -1881,7 +1896,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   </div>
                 )}
 
-                {/* Bottom Action Bar for Step 4 */}
+                {/* Bottom Action Bar */}
                 <div className="pt-2 flex items-center justify-between gap-4">
                   <button
                     type="button"
@@ -1904,11 +1919,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         <span>Log In to Authorise & Book Order</span>
                       </>
                     ) : isSubmitting ? (
-                      <span>Redirecting to Secure Gateway...</span>
+                      <span>Redirecting to Stripe…</span>
                     ) : (
                       <>
                         <CreditCard className="w-4 h-4" />
-                        <span>Authorise Card & Book Order (~£{estimatedTotal.toFixed(2)})</span>
+                        <span>Pay with Stripe (~£{estimatedTotal.toFixed(2)})</span>
                         <ArrowRight className="w-4 h-4" />
                       </>
                     )}
