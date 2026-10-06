@@ -19,7 +19,13 @@ export const getApiBase = (): string => {
   // Server-side context (SSR / node)
   if (typeof process !== 'undefined') {
     const internalUrl = process.env?.INTERNAL_API_URL || process.env?.NEXT_PUBLIC_API_URL;
-    if (internalUrl && !internalUrl.includes('devtunnels.ms') && !internalUrl.includes('ngrok')) {
+    if (internalUrl && !internalUrl.includes('devtunnels.ms') && !internalUrl.includes('ngrok') && !internalUrl.includes('localhost') && !internalUrl.includes('127.0.0.1')) {
+      return internalUrl.replace(/\/$/, '');
+    }
+    if (process.env?.NODE_ENV === 'production' || process.env?.VERCEL) {
+      return 'https://api.laundelle.co.uk';
+    }
+    if (internalUrl) {
       return internalUrl.replace(/\/$/, '');
     }
   }

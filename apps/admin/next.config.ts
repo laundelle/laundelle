@@ -1,5 +1,16 @@
 import type { NextConfig } from 'next';
 
+function getBackendUrl(): string {
+  const url = process.env.INTERNAL_API_URL || process.env.NEXT_PUBLIC_API_URL;
+  if (url && !url.includes('localhost') && !url.includes('127.0.0.1')) {
+    return url.replace(/\/$/, '');
+  }
+  if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+    return 'https://api.laundelle.co.uk';
+  }
+  return (url || 'http://127.0.0.1:4000').replace(/\/$/, '');
+}
+
 const nextConfig: NextConfig = {
   transpilePackages: [
     '@laundelle/ui',
@@ -12,7 +23,7 @@ const nextConfig: NextConfig = {
     '@laundelle/ids',
   ],
   async rewrites() {
-    const backendUrl = process.env.INTERNAL_API_URL || 'http://127.0.0.1:4000';
+    const backendUrl = getBackendUrl();
     return [
       {
         source: '/api/:path*',
