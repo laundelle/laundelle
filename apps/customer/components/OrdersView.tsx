@@ -1608,7 +1608,10 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                 )}
 
                 {/* Delivery Security PIN */}
-                {selectedOrder.deliveryInstructionType !== 'LEAVE_AT_DOOR' && Boolean(selectedOrder.delivery_pin || selectedOrder.delivery_otp) && ['ready_for_delivery', 'waiting_for_driver', 'delivery_driver_assigned', 'package_collected_for_delivery', 'out_for_delivery', 'delivery_in_progress'].includes(selectedOrder.status) && (
+                {selectedOrder.deliveryInstructionType !== 'LEAVE_AT_DOOR' &&
+                  Boolean(selectedOrder.delivery_pin || selectedOrder.delivery_otp) &&
+                  !['delivered', 'completed', 'cancelled'].includes(selectedOrder.status) &&
+                  !selectedOrder.delivery_pin_verified_at && (
                   <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/80 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
                     <div className="flex items-start sm:items-center gap-3.5">
                       <div className="w-11 h-11 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md">
@@ -2011,7 +2014,16 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                           )}
 
                           {/* In-App Helper Card for Delivery PIN verification if active */}
-                          {selectedJourney.stages.find(s => s.id === 'delivered_at_doorstep')?.status === 'in_progress' && (selectedOrder.delivery_pin || selectedOrder.delivery_otp) && (
+                          {selectedOrder.deliveryInstructionType !== 'LEAVE_AT_DOOR' &&
+                            !['delivered', 'completed', 'cancelled'].includes(selectedOrder.status) &&
+                            !selectedOrder.delivery_pin_verified_at &&
+                            Boolean(selectedOrder.delivery_pin || selectedOrder.delivery_otp) &&
+                            (
+                              selectedJourney.stages.find(s => s.id === 'pickup_completed')?.status === 'completed' ||
+                              ['ready_for_delivery', 'waiting_for_driver', 'delivery_driver_assigned', 'package_collected_for_delivery', 'out_for_delivery', 'delivery_in_progress'].includes(selectedOrder.status) ||
+                              selectedJourney.stages.find(s => s.id === 'out_for_delivery')?.status === 'in_progress' ||
+                              selectedJourney.stages.find(s => s.id === 'delivered_at_doorstep')?.status === 'in_progress'
+                            ) && (
                             <div className="mt-4 p-3 bg-white border border-emerald-200 rounded-xl flex items-center justify-between shadow-2xs">
                               <div className="flex items-center gap-2">
                                 <Key className="w-4 h-4 text-emerald-700" />

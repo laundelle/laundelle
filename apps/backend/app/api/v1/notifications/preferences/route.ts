@@ -1,11 +1,9 @@
 import { NextRequest } from 'next/server';
-import { withErrorHandler, successResponse, requireAuth } from '@/lib/api';
+import { withErrorHandler, successResponse, requireAuthWithUser } from '@/lib/api';
 import { getDb } from '@/lib/mongodb';
 
 export const GET = withErrorHandler(async (req: NextRequest) => {
-  const user = requireAuth(req);
-  const db = await getDb();
-  const dbUser = await db.collection('users').findOne({ _id: user.sub } as any);
+  const { dbUser } = await requireAuthWithUser(req);
 
   const preferences = dbUser?.preferences || {
     smsNotifications: true,
@@ -28,7 +26,7 @@ export const GET = withErrorHandler(async (req: NextRequest) => {
 });
 
 export const PUT = withErrorHandler(async (req: NextRequest) => {
-  const user = requireAuth(req);
+  const { dbUser } = await requireAuthWithUser(req);
   const body = await req.json();
   const db = await getDb();
 
@@ -42,7 +40,7 @@ export const PUT = withErrorHandler(async (req: NextRequest) => {
   };
 
   await db.collection('users').updateOne(
-    { _id: user.sub } as any,
+    { _id: dbUser._id },
     { $set: safeUpdates }
   );
 

@@ -24,8 +24,10 @@ import {
     isDeliveryTimeSlotValid,
     formatDateToYyyyMmDd
 } from '@/lib/scheduleValidation';
+import { OrderCustomerEnrichmentService } from './OrderCustomerEnrichmentService';
 import { ObjectId } from 'mongodb';
 import { generateOrderId, generateOrderItemId, generatePaymentId, buildEntityLookupQuery } from '@laundelle/ids';
+import { PricingChargeService } from '@/services/PricingChargeService';
 
 function generateOrderNumber(): string {
     return generateOrderId();
@@ -214,19 +216,26 @@ export class OrderService {
 
     public static async getCustomerMatchFilter(customerIdOrSub: string) {
         const db = await getDb();
-        const possibleIds = new Set<string>([customerIdOrSub]);
+        const cleanId = (customerIdOrSub || '').trim();
+        const possibleIds = new Set<string>([cleanId]);
         
         let userDoc: any = null;
         try {
-            userDoc = await db.collection('users').findOne({
-                $or: [
-                    { _id: customerIdOrSub },
-                    { id: customerIdOrSub },
-                    { customerId: customerIdOrSub },
-                    { publicId: customerIdOrSub },
-                    { email: customerIdOrSub.toLowerCase() }
-                ]
-            } as any);
+            const queryConditions: any[] = [
+                { _id: cleanId },
+                { id: cleanId },
+                { customerId: cleanId },
+                { publicId: cleanId },
+                { auth0UserId: cleanId },
+                { auth0_sub: cleanId },
+                { email: cleanId.toLowerCase() }
+            ];
+            if (ObjectId.isValid(cleanId) && cleanId.length === 24) {
+                try {
+                    queryConditions.push({ _id: new ObjectId(cleanId) });
+                } catch {}
+            }
+            userDoc = await db.collection('users').findOne({ $or: queryConditions } as any);
         } catch {}
 
         if (userDoc) {
@@ -234,6 +243,8 @@ export class OrderService {
             if (userDoc.customerId) possibleIds.add(String(userDoc.customerId));
             if (userDoc.publicId) possibleIds.add(String(userDoc.publicId));
             if (userDoc.id) possibleIds.add(String(userDoc.id));
+            if (userDoc.auth0UserId) possibleIds.add(String(userDoc.auth0UserId));
+            if (userDoc.auth0_sub) possibleIds.add(String(userDoc.auth0_sub));
         }
 
         const idsArray = Array.from(possibleIds);
@@ -241,10 +252,22 @@ export class OrderService {
             { customer_id: { $in: idsArray } },
             { customerId: { $in: idsArray } },
             { userId: { $in: idsArray } },
-            { user_id: { $in: idsArray } }
+            { user_id: { $in: idsArray } },
+            { 'customer.id': { $in: idsArray } }
         ];
+
+        for (const id of idsArray) {
+            if (ObjectId.isValid(id) && id.length === 24) {
+                try {
+                    orConditions.push({ customer_id: new ObjectId(id) });
+                    orConditions.push({ customerId: new ObjectId(id) });
+                } catch {}
+            }
+        }
+
         if (userDoc?.email) {
             orConditions.push({ customerEmail: userDoc.email });
+            orConditions.push({ customer_email: userDoc.email });
         }
         return { filter: { $or: orConditions }, userDoc, possibleIds: idsArray };
     }
@@ -288,6 +311,38 @@ export class OrderService {
                 o.driver_name = o.driver.name || o.driver_name;
                 o.driver_phone = o.driver.phone || o.driver_phone;
             }
+
+            if (!o.delivery_pin && !o.delivery_otp && !o.delivery_pin_enc && !o.delivery_pin_verified_at && !['delivered', 'completed', 'cancelled'].includes(o.status)) {
+                const custIdent = String(o.customer_id || o.customerId || customerId || '');
+                const newDeliveryPin = generateSecureNumericPin(4);
+                const newDeliverySalt = generatePinSalt();
+                const newDeliveryHash = hashOrderPin(newDeliveryPin, newDeliverySalt, o.id, custIdent);
+                const newDeliveryEnc = encryptOrderPin(newDeliveryPin, o.id, custIdent);
+
+                o.delivery_pin = newDeliveryPin;
+                o.delivery_otp = newDeliveryPin;
+                o.delivery_pin_hash = newDeliveryHash;
+                o.delivery_pin_salt = newDeliverySalt;
+                o.delivery_pin_enc = newDeliveryEnc;
+                o.delivery_pin_attempts = 0;
+                o.delivery_pin_locked = false;
+
+                db.collection('orders').updateOne(
+                    { _id: o._id },
+                    {
+                        $set: {
+                            delivery_pin: newDeliveryPin,
+                            delivery_otp: newDeliveryPin,
+                            delivery_pin_hash: newDeliveryHash,
+                            delivery_pin_salt: newDeliverySalt,
+                            delivery_pin_enc: newDeliveryEnc,
+                            delivery_pin_attempts: 0,
+                            delivery_pin_locked: false,
+                        }
+                    }
+                ).catch((err: any) => console.error('[OrderService] Lazy delivery PIN creation error:', err));
+            }
+
             return this.sanitizeOrderForCustomer(o);
         });
     }
@@ -321,26 +376,79 @@ export class OrderService {
             }
         }
 
+        if (!order.delivery_pin && !order.delivery_otp && !order.delivery_pin_enc && !order.delivery_pin_verified_at && !['delivered', 'completed', 'cancelled'].includes(order.status)) {
+            const custIdent = String(order.customer_id || order.customerId || customerId || '');
+            const newDeliveryPin = generateSecureNumericPin(4);
+            const newDeliverySalt = generatePinSalt();
+            const newDeliveryHash = hashOrderPin(newDeliveryPin, newDeliverySalt, order.id, custIdent);
+            const newDeliveryEnc = encryptOrderPin(newDeliveryPin, order.id, custIdent);
+
+            order.delivery_pin = newDeliveryPin;
+            order.delivery_otp = newDeliveryPin;
+            order.delivery_pin_hash = newDeliveryHash;
+            order.delivery_pin_salt = newDeliverySalt;
+            order.delivery_pin_enc = newDeliveryEnc;
+            order.delivery_pin_attempts = 0;
+            order.delivery_pin_locked = false;
+
+            await db.collection('orders').updateOne(
+                { _id: order._id },
+                {
+                    $set: {
+                        delivery_pin: newDeliveryPin,
+                        delivery_otp: newDeliveryPin,
+                        delivery_pin_hash: newDeliveryHash,
+                        delivery_pin_salt: newDeliverySalt,
+                        delivery_pin_enc: newDeliveryEnc,
+                        delivery_pin_attempts: 0,
+                        delivery_pin_locked: false,
+                    }
+                }
+            );
+        }
+
         return this.sanitizeOrderForCustomer(order);
     }
 
     public static sanitizeOrderForCustomer(order: any) {
+        if (!order) return order;
         const safeOrder = { ...order };
         const custId = String(safeOrder.customer_id || safeOrder.customerId || safeOrder.userId || '');
 
         // Expose in-app Collection PIN only during active pickup phases
-        const pickupPhases = ['booking_confirmed', 'collection_scheduled', 'driver_assigned', 'pickup_in_progress', 'collection_pending', 'waiting_for_driver'];
+        const pickupPhases = [
+            'booking_confirmed',
+            'collection_scheduled',
+            'driver_assigned',
+            'pickup_in_progress',
+            'collection_pending',
+            'waiting_for_driver',
+            'pending_payment',
+            'received_at_facility'
+        ];
         if (pickupPhases.includes(safeOrder.status) && !safeOrder.pickup_pin_verified_at && !safeOrder.pickup_pin_locked) {
             let pin: string | undefined = undefined;
-            if (safeOrder.pickup_pin_enc) {
-                pin = decryptOrderPin(safeOrder.pickup_pin_enc, safeOrder.id, custId) || undefined;
-            }
-            if (!pin && safeOrder.pickup_pin) {
-                pin = safeOrder.pickup_pin;
+            if (safeOrder.pickup_pin) {
+                pin = String(safeOrder.pickup_pin);
             }
             if (!pin && safeOrder.pickup_otp) {
-                pin = safeOrder.pickup_otp;
+                pin = String(safeOrder.pickup_otp);
             }
+            if (!pin && safeOrder.pickup_pin_enc) {
+                const orderIdCandidates = [safeOrder.id, safeOrder.publicId, safeOrder.orderNumber, safeOrder.orderId, String(safeOrder._id || '')].filter(Boolean);
+                const custIdCandidates = [custId, safeOrder.customer_id, safeOrder.customerId, safeOrder.userId, safeOrder.user_id].filter(Boolean);
+                for (const oId of orderIdCandidates) {
+                    for (const cId of custIdCandidates) {
+                        const decrypted = decryptOrderPin(safeOrder.pickup_pin_enc, String(oId), String(cId));
+                        if (decrypted) {
+                            pin = decrypted;
+                            break;
+                        }
+                    }
+                    if (pin) break;
+                }
+            }
+            // Never generate ephemeral unpersisted random PINs during read-only response sanitization
             safeOrder.pickup_pin = pin || undefined;
             safeOrder.pickup_otp = pin || undefined; // Backwards compatibility alias
         } else {
@@ -348,19 +456,31 @@ export class OrderService {
             safeOrder.pickup_otp = null;
         }
 
-        // Expose in-app Delivery PIN only during active delivery phases
-        const deliveryPhases = ['ready_for_delivery', 'waiting_for_driver', 'delivery_driver_assigned', 'delivery_driver_accepted', 'package_collected_for_delivery', 'out_for_delivery', 'delivery_in_progress'];
-        if (deliveryPhases.includes(safeOrder.status) && !safeOrder.delivery_pin_verified_at && !safeOrder.delivery_pin_locked) {
+        // Expose in-app Delivery PIN for active orders until delivery is verified
+        const isDeliveredOrCancelled = ['delivered', 'completed', 'cancelled'].includes(safeOrder.status) || Boolean(safeOrder.delivery_pin_verified_at);
+        if (!isDeliveredOrCancelled && !safeOrder.delivery_pin_locked) {
             let pin: string | undefined = undefined;
-            if (safeOrder.delivery_pin_enc) {
-                pin = decryptOrderPin(safeOrder.delivery_pin_enc, safeOrder.id, custId) || undefined;
-            }
-            if (!pin && safeOrder.delivery_pin) {
-                pin = safeOrder.delivery_pin;
+            if (safeOrder.delivery_pin) {
+                pin = String(safeOrder.delivery_pin);
             }
             if (!pin && safeOrder.delivery_otp) {
-                pin = safeOrder.delivery_otp;
+                pin = String(safeOrder.delivery_otp);
             }
+            if (!pin && safeOrder.delivery_pin_enc) {
+                const orderIdCandidates = [safeOrder.id, safeOrder.publicId, safeOrder.orderNumber, safeOrder.orderId, String(safeOrder._id || '')].filter(Boolean);
+                const custIdCandidates = [custId, safeOrder.customer_id, safeOrder.customerId, safeOrder.userId, safeOrder.user_id].filter(Boolean);
+                for (const oId of orderIdCandidates) {
+                    for (const cId of custIdCandidates) {
+                        const decrypted = decryptOrderPin(safeOrder.delivery_pin_enc, String(oId), String(cId));
+                        if (decrypted) {
+                            pin = decrypted;
+                            break;
+                        }
+                    }
+                    if (pin) break;
+                }
+            }
+            // Never generate ephemeral unpersisted random PINs during read-only response sanitization
             safeOrder.delivery_pin = pin || undefined;
             safeOrder.delivery_otp = pin || undefined; // Backwards compatibility alias
         } else {
@@ -409,7 +529,14 @@ export class OrderService {
         }
 
         const requestedOrderId = orderData.id || orderData.publicId || orderData.orderNumber || checkoutData?.orderId || '';
-        const orderId = (requestedOrderId && typeof requestedOrderId === 'string' && requestedOrderId.startsWith('ORD-')) ? requestedOrderId : generateOrderNumber();
+        let orderId = (requestedOrderId && typeof requestedOrderId === 'string' && requestedOrderId.startsWith('ORD-')) ? requestedOrderId : generateOrderNumber();
+        const existingOrderWithId = await db.collection('orders').findOne(buildEntityLookupQuery(orderId, 'order'));
+        if (existingOrderWithId) {
+            if (existingOrderWithId.stripe_session_id === stripeSessionId) {
+                return existingOrderWithId;
+            }
+            orderId = generateOrderNumber();
+        }
 
         // Resolve canonical customerId and internal userId from users collection
         let canonicalCustomerId = customerId;
@@ -471,7 +598,7 @@ export class OrderService {
             driver: routing.driver ? {
                 id: routing.driverId,
                 name: routing.driver.full_name,
-                phone: routing.driver.phone || '+44 7700 900301',
+                phone: routing.driver.phone || '',
                 vehicle: routing.driver.vehicle || 'Van'
             } : null,
             status: initialStatus,
@@ -486,8 +613,12 @@ export class OrderService {
             address: orderData.address || 'Customer Address',
             postcode: routing.normalizedPostcode || rawPostcode,
             customerName,
+            customer_name: customerName,
             customerEmail,
+            customer_email: customerEmail,
             customerPhone,
+            customer_phone: customerPhone,
+            contactDetails: orderData.contactDetails || undefined,
             pickupDate: orderData.pickupDate,
             pickupSlot: orderData.pickupSlot,
             pickupTime: orderData.pickupTime || orderData.pickupSlot,
@@ -521,11 +652,15 @@ export class OrderService {
             }),
             createdAt: now,
             updated_at: now,
+            pickup_pin: pickupPin,
+            pickup_otp: pickupPin,
             pickup_pin_hash: pickupPinHash,
             pickup_pin_salt: pickupPinSalt,
             pickup_pin_enc: pickupPinEnc,
             pickup_pin_attempts: 0,
             pickup_pin_locked: false,
+            delivery_pin: deliveryPin,
+            delivery_otp: deliveryPin,
             delivery_pin_hash: deliveryPinHash,
             delivery_pin_salt: deliveryPinSalt,
             delivery_pin_enc: deliveryPinEnc,
@@ -562,8 +697,24 @@ export class OrderService {
             });
         }
 
+        // Enrich customer details before persisting
+        await OrderCustomerEnrichmentService.enrichOrder(newOrder, db);
+
         // Insert into MongoDB orders collection
         await db.collection('orders').insertOne(newOrder);
+
+        // Redeem coupon atomically if one was attached to the order
+        const couponCodeToRedeem = orderData.couponCode || orderData.coupon_code || orderData.coupon?.code;
+        if (couponCodeToRedeem) {
+            await PricingChargeService.redeemCoupon(
+                couponCodeToRedeem,
+                orderId,
+                String(customerId),
+                stripeSessionId
+            ).catch((err) => {
+                console.error(`[OrderService] Coupon redemption error for ${couponCodeToRedeem} on order ${orderId}:`, err);
+            });
+        }
 
         // Record Financial Payment
         const paymentPublicId = generatePaymentId();
@@ -587,9 +738,8 @@ export class OrderService {
 
         // Notify Driver
         if (routing.driverId) {
-            const driverQueryId = ObjectId.isValid(routing.driverId) ? new ObjectId(routing.driverId) : routing.driverId;
             await db.collection('users').updateOne(
-                { _id: driverQueryId as any },
+                buildEntityLookupQuery(routing.driverId, 'user') as any,
                 { $set: { last_assigned_at: now, availability: 'busy' } }
             );
 
@@ -623,9 +773,8 @@ export class OrderService {
                 orderId,
             });
 
-            const userQueryId = ObjectId.isValid(customerId) ? new ObjectId(customerId) : customerId;
             await db.collection('users').updateOne(
-                { _id: userQueryId as any },
+                buildEntityLookupQuery(customerId, 'user') as any,
                 {
                     $inc: { total_orders: 1, lifetime_spend: amountGBP },
                     $set: { last_order_at: now, updated_at: now }
@@ -643,7 +792,64 @@ export class OrderService {
             metadata: { amount: amountGBP, stripeSessionId }
         });
 
-        return newOrder;
+        return this.sanitizeOrderForCustomer(newOrder);
+    }
+
+    /**
+     * Links guest orders to a registered or authenticated customer profile by email.
+     */
+    static async linkGuestOrdersToCustomer(email: string, canonicalCustomerId: string, internalUserId: string): Promise<number> {
+        if (!email || !email.trim()) return 0;
+        const db = await getDb();
+        const formatted = email.toLowerCase().trim();
+        const now = new Date().toISOString();
+
+        const filter = {
+            $and: [
+                {
+                    $or: [
+                        { customerEmail: formatted },
+                        { customer_email: formatted },
+                        { 'contactDetails.email': formatted }
+                    ]
+                },
+                {
+                    $or: [
+                        { customerId: { $in: ['guest', null, '', undefined] } },
+                        { customer_id: { $in: ['guest', null, '', undefined] } },
+                        { userId: { $in: ['guest', null, '', undefined] } },
+                        { user_id: { $in: ['guest', null, '', undefined] } }
+                    ]
+                }
+            ]
+        };
+
+        const result = await db.collection('orders').updateMany(filter as any, {
+            $set: {
+                customerId: canonicalCustomerId,
+                customer_id: canonicalCustomerId,
+                userId: internalUserId,
+                user_id: internalUserId,
+                updated_at: now
+            }
+        });
+
+        if (result.matchedCount > 0) {
+            const guestOrders = await db.collection('orders').find({
+                customerId: canonicalCustomerId,
+                $or: [{ customerEmail: formatted }, { customer_email: formatted }]
+            }).project({ id: 1, publicId: 1 }).toArray();
+
+            const orderIds = guestOrders.flatMap((o: any) => [o.id, o.publicId].filter(Boolean));
+            if (orderIds.length > 0) {
+                await db.collection('payments').updateMany(
+                    { orderId: { $in: orderIds }, customerId: { $in: ['guest', null, ''] } },
+                    { $set: { customerId: canonicalCustomerId, customer_id: canonicalCustomerId, updated_at: now } }
+                );
+            }
+        }
+
+        return result.modifiedCount;
     }
 
     static async createOrder(customerId: string, orderData: any) {
@@ -684,13 +890,16 @@ export class OrderService {
 
         // 2. Status & Payment Security Check
         const isCash = orderData.paymentMethod === 'Cash on Delivery' || orderData.paymentMethod === 'Cash';
-        if (!isCash && (orderData.paymentStatus === 'Paid' || orderData.paymentStatus === 'paid' || orderData.isPaid)) {
+        if (isCash) {
+            throw new BadRequestError('Cash on Delivery is not supported. All orders must be placed and paid securely online via Stripe checkout.');
+        }
+        if (orderData.paymentStatus === 'Paid' || orderData.paymentStatus === 'paid' || orderData.isPaid) {
             throw new BadRequestError('Online orders cannot be directly created as Paid. All online payments must be verified via Stripe Checkout.');
         }
 
-        const isPendingOnlinePayment = !isCash;
-        const initialStatus = isPendingOnlinePayment ? 'pending_payment' : (routing.driver ? 'collection_scheduled' : 'booking_confirmed');
-        const initialStatusLabel = isPendingOnlinePayment ? 'Pending Payment Authorization' : (routing.driver ? 'Collection Scheduled' : 'Booking Confirmed');
+        const initialStatus = 'pending_payment';
+        const initialStatusLabel = 'Pending Payment Authorization';
+        const isPendingOnlinePayment = initialStatus === 'pending_payment';
 
         // 3. Cryptographically Secure In-App Order PINs (6 digits pickup, 4 digits delivery)
         const pickupPin = generateSecureNumericPin(6);
@@ -711,6 +920,8 @@ export class OrderService {
             orderNumber: orderId,
             customerId: customerId,
             customer_id: customerId,
+            userId: customerId,
+            user_id: customerId,
             plantId: routing.plantId,
             plant_id: routing.plantId,
             staffId: routing.driverId,
@@ -721,7 +932,7 @@ export class OrderService {
             driver: routing.driver ? {
                 id: routing.driverId,
                 name: routing.driver.full_name,
-                phone: routing.driver.phone || '+44 7700 900301',
+                phone: routing.driver.phone || '',
                 vehicle: routing.driver.vehicle || 'Van'
             } : null,
             status: initialStatus,
@@ -732,8 +943,12 @@ export class OrderService {
             address: orderData.address,
             postcode: routing.normalizedPostcode,
             customerName: orderData.customerName,
+            customer_name: orderData.customerName || orderData.customer_name,
             customerEmail: orderData.customerEmail,
+            customer_email: orderData.customerEmail || orderData.customer_email,
             customerPhone: orderData.customerPhone,
+            customer_phone: orderData.customerPhone || orderData.customer_phone,
+            contactDetails: orderData.contactDetails || undefined,
             pickupDate: orderData.pickupDate,
             pickupSlot: orderData.pickupSlot,
             pickupTime: orderData.pickupTime || orderData.pickupSlot,
@@ -769,12 +984,16 @@ export class OrderService {
             }),
             createdAt: orderData.createdAt || now,
             updated_at: now,
+            pickup_pin: pickupPin,
+            pickup_otp: pickupPin,
             pickup_pin_hash: pickupPinHash,
             pickup_pin_salt: pickupPinSalt,
             pickup_pin_enc: pickupPinEnc,
             pickup_pin_attempts: 0,
             pickup_pin_locked: false,
             pickup_pin_expires_at: null,
+            delivery_pin: deliveryPin,
+            delivery_otp: deliveryPin,
             delivery_pin_hash: deliveryPinHash,
             delivery_pin_salt: deliveryPinSalt,
             delivery_pin_enc: deliveryPinEnc,
@@ -811,6 +1030,9 @@ export class OrderService {
 
         // Compute initial SLA
         newOrder.sla = SlaService.calculateOrderSla(newOrder);
+
+        // Enrich customer details before persisting
+        await OrderCustomerEnrichmentService.enrichOrder(newOrder, db);
 
         // 5. Insert order
         await db.collection('orders').insertOne(newOrder);
@@ -902,7 +1124,7 @@ export class OrderService {
                         driver: {
                             id: routing.driverId,
                             name: routing.driver.full_name,
-                            phone: routing.driver.phone || '+44 7700 900301',
+                            phone: routing.driver.phone || '',
                             vehicle: routing.driver.vehicle || 'Van'
                         },
                         status: 'collection_scheduled', 

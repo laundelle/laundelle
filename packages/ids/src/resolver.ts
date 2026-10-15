@@ -16,13 +16,48 @@ export function sanitizeIdInput(input: unknown): string {
   return str.replace(/^["']|["']$/g, '').trim();
 }
 
+declare const require: any;
+declare const process: any;
+
+function tryGetObjectId(id: string, customConverter?: (val: string) => any): any {
+  if (customConverter) {
+    try { return customConverter(id); } catch {}
+  }
+  if (typeof id === 'string' && id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id)) {
+    try {
+      if (typeof require !== 'undefined') {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const mongodb = require('mongodb');
+        const OId = mongodb.ObjectId || mongodb.default?.ObjectId;
+        if (OId) return new OId(id);
+      }
+    } catch {}
+    try {
+      if (typeof require !== 'undefined') {
+        const path = require('path');
+        const resolved = require(path.resolve(process.cwd(), 'apps/backend/node_modules/mongodb'));
+        const OId = resolved.ObjectId || resolved.default?.ObjectId;
+        if (OId) return new OId(id);
+      }
+    } catch {}
+  }
+  return null;
+}
+
 /**
  * Builds a backward-compatible MongoDB query for resolving entities by canonical publicId,
- * legacy id, or internal database ID.
+ * legacy id, or internal database ID. Safely converts 24-character hexadecimal identifiers
+ * to BSON ObjectId in server environments to bridge native and string storage.
  */
-export function buildEntityLookupQuery(identifier: string, entityType: 'order' | 'user' | 'plant' | 'vehicle' | 'machine' | 'incident' | 'ticket' | 'general' = 'general'): Record<string, any> {
+export function buildEntityLookupQuery(
+  identifier: string,
+  entityType: 'order' | 'user' | 'plant' | 'vehicle' | 'machine' | 'incident' | 'ticket' | 'general' = 'general',
+  objectIdConverter?: (val: string) => any
+): Record<string, any> {
   const clean = sanitizeIdInput(identifier);
   if (!clean) return { _id: '__non_existent_empty_id__' };
+
+  const objectId = tryGetObjectId(clean, objectIdConverter);
 
   // If already canonical public ID, match on publicId first, with fallback to legacy id
   if (clean.includes('-')) {
@@ -34,7 +69,10 @@ export function buildEntityLookupQuery(identifier: string, entityType: 'order' |
             { publicId: clean },
             { id: clean },
             { orderNumber: clean },
-            { order_number: clean }
+            { order_number: clean },
+            { 'package.qr_code': clean },
+            { 'qr_tracking.qrTagId': clean },
+            { qr_code: clean }
           ]
         };
       }
@@ -56,6 +94,28 @@ export function buildEntityLookupQuery(identifier: string, entityType: 'order' |
           ]
         };
       }
+      if (entityType === 'plant') {
+        return {
+          $or: [
+            { publicId: clean },
+            { plantId: clean },
+            { id: clean },
+            { code: clean.toUpperCase() }
+          ]
+        };
+      }
+      if (entityType === 'user') {
+        return {
+          $or: [
+            { publicId: clean },
+            { customerId: clean },
+            { staffId: clean },
+            { id: clean },
+            { auth0UserId: clean },
+            { auth0_sub: clean }
+          ]
+        };
+      }
       return {
         $or: [
           { publicId: clean },
@@ -67,77 +127,95 @@ export function buildEntityLookupQuery(identifier: string, entityType: 'order' |
 
   // Handle Order specific lookups
   if (entityType === 'order') {
-    return {
-      $or: [
-        { publicId: clean },
-        { id: clean },
-        { orderNumber: clean },
-        { order_number: clean },
-        { 'package.qr_code': clean },
-        { 'qr_tracking.qrTagId': clean },
-        { qr_code: clean }
-      ]
-    };
+    const conditions: any[] = [
+      { publicId: clean },
+      { id: clean },
+      { orderNumber: clean },
+      { order_number: clean },
+      { _id: clean },
+      { 'package.qr_code': clean },
+      { 'qr_tracking.qrTagId': clean },
+      { qr_code: clean }
+    ];
+    if (objectId) {
+      conditions.push({ _id: objectId });
+    }
+    return { $or: conditions };
   }
 
   // Handle Incident specific lookups
   if (entityType === 'incident') {
-    return {
-      $or: [
-        { publicId: clean },
-        { id: clean },
-        { incidentNumber: clean },
-        { _id: clean }
-      ]
-    };
+    const conditions: any[] = [
+      { publicId: clean },
+      { id: clean },
+      { incidentNumber: clean },
+      { _id: clean }
+    ];
+    if (objectId) {
+      conditions.push({ _id: objectId });
+    }
+    return { $or: conditions };
   }
 
   // Handle Ticket specific lookups
   if (entityType === 'ticket') {
-    return {
-      $or: [
-        { publicId: clean },
-        { id: clean },
-        { ticketId: clean },
-        { _id: clean }
-      ]
-    };
+    const conditions: any[] = [
+      { publicId: clean },
+      { id: clean },
+      { ticketId: clean },
+      { _id: clean }
+    ];
+    if (objectId) {
+      conditions.push({ _id: objectId });
+    }
+    return { $or: conditions };
   }
 
   // Handle Plant specific lookups (supports code e.g. PR01 or PLT-...)
   if (entityType === 'plant') {
-    return {
-      $or: [
-        { publicId: clean },
-        { id: clean },
-        { code: clean.toUpperCase() },
-        { _id: clean }
-      ]
-    };
+    const conditions: any[] = [
+      { publicId: clean },
+      { plantId: clean },
+      { id: clean },
+      { code: clean.toUpperCase() },
+      { _id: clean }
+    ];
+    if (objectId) {
+      conditions.push({ _id: objectId });
+    }
+    return { $or: conditions };
   }
 
   // Handle User specific lookups
   if (entityType === 'user') {
-    return {
-      $or: [
-        { publicId: clean },
-        { customerId: clean },
-        { staffId: clean },
-        { id: clean },
-        { email: clean.toLowerCase() },
-        { _id: clean }
-      ]
-    };
+    const conditions: any[] = [
+      { publicId: clean },
+      { customerId: clean },
+      { staffId: clean },
+      { id: clean },
+      { auth0UserId: clean },
+      { auth0_sub: clean },
+      { _id: clean }
+    ];
+    if (clean.includes('@')) {
+      conditions.push({ email: clean.toLowerCase().trim() });
+    }
+    if (objectId) {
+      conditions.push({ _id: objectId });
+    }
+    return { $or: conditions };
   }
 
   // General lookup query
-  return {
-    $or: [
-      { publicId: clean },
-      { id: clean },
-      { _id: clean }
-    ]
-  };
+  const conditions: any[] = [
+    { publicId: clean },
+    { id: clean },
+    { _id: clean }
+  ];
+  if (objectId) {
+    conditions.push({ _id: objectId });
+  }
+  return { $or: conditions };
 }
 
 /**

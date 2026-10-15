@@ -3,7 +3,7 @@ import { DataRetentionPolicy, PrivacyRequest, PrivacyRequestType, PrivacyRequest
 import { BadRequestError, NotFoundError, ForbiddenError } from '@/lib/api';
 import { AuditService } from './AuditService';
 import crypto from 'crypto';
-import { generatePrivacyRequestId } from '@laundelle/ids';
+import { generatePrivacyRequestId, buildEntityLookupQuery } from '@laundelle/ids';
 
 export const DEFAULT_RETENTION_POLICIES: Record<string, DataRetentionPolicy> = {
   customer_data: {
@@ -208,13 +208,38 @@ export class PrivacyService {
    */
   static async generateDataExport(userId: string): Promise<Record<string, any>> {
     const db = await getDb();
-    const user = await db.collection('users').findOne({ $or: [{ id: userId }, { _id: userId }] } as any);
+    const query = buildEntityLookupQuery(userId, 'user');
+    const user = await db.collection('users').findOne(query as any);
     if (!user) throw new NotFoundError('User not found.');
 
+    const userDbId = String(user._id);
+    const userPublicId = user.publicId;
+    const userCustomerId = user.customerId;
+    const userLegacyId = user.id;
+    const userAuth0Id = user.auth0UserId || user.auth0_sub;
+    const userEmail = user.email ? user.email.toLowerCase().trim() : null;
+
+    const userIdentifiers = [userDbId, userPublicId, userCustomerId, userLegacyId, userAuth0Id, userId].filter(Boolean);
+    const orderCustomerConditions: any[] = [
+      { customer_id: { $in: userIdentifiers } },
+      { customerId: { $in: userIdentifiers } },
+      { userId: { $in: userIdentifiers } },
+      { user_id: { $in: userIdentifiers } }
+    ];
+    if (userEmail) {
+      orderCustomerConditions.push({ customerEmail: userEmail });
+      orderCustomerConditions.push({ email: userEmail });
+    }
+
     const [orders, notifications, subscriptions] = await Promise.all([
-      db.collection('orders').find({ $or: [{ customer_id: userId }, { userId }] }).sort({ createdAt: -1 }).toArray(),
-      db.collection('notifications').find({ userId }).sort({ createdAt: -1 }).toArray(),
-      db.collection('subscriptions').find({ $or: [{ customerId: userId }, { userId }] }).toArray()
+      db.collection('orders').find({ $or: orderCustomerConditions }).sort({ createdAt: -1 }).toArray(),
+      db.collection('notifications').find({ userId: { $in: userIdentifiers } }).sort({ createdAt: -1 }).toArray(),
+      db.collection('subscriptions').find({
+        $or: [
+          { customerId: { $in: userIdentifiers } },
+          { userId: { $in: userIdentifiers } }
+        ]
+      }).toArray()
     ]);
 
     const sanitizedUser = { ...user };
@@ -225,7 +250,7 @@ export class PrivacyService {
       exportVersion: '1.0',
       generatedAt: new Date().toISOString(),
       exportedAt: new Date().toISOString(),
-      subjectId: userId,
+      subjectId: userPublicId || userCustomerId || userDbId,
       user: sanitizedUser,
       profile: sanitizedUser,
       orders,

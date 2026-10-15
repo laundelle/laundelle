@@ -8,8 +8,8 @@ interface Auth0ProviderWrapperProps {
 }
 
 export function Auth0ProviderWrapper({ children }: Auth0ProviderWrapperProps) {
-  const domain = process.env.NEXT_PUBLIC_AUTH0_DOMAIN || 'dev-vos48ex46zdohk7b.us.auth0.com';
-  const clientId = process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID || '5ULknQDln3717Y7ALahVo9beuoCEiiM0';
+  const domain = process.env.NEXT_PUBLIC_AUTH0_DOMAIN || '';
+  const clientId = process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID || '';
 
   // Safe redirectUri check for SSR compatibility (avoids server-side `window` reference)
   const redirectUri = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
@@ -31,6 +31,8 @@ export function Auth0ProviderWrapper({ children }: Auth0ProviderWrapperProps) {
       authorizationParams={{
         redirect_uri: redirectUri,
       }}
+      useRefreshTokens={true}
+      cacheLocation="localstorage"
       onRedirectCallback={onRedirectCallback}
     >
       {children}

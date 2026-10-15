@@ -1,11 +1,12 @@
 import { getDb } from '@/lib/mongodb';
 import { ObjectId } from 'mongodb';
-import { hashPassword, signJwt, verifyPassword, isLegacyHash, revokeToken } from '@/lib/auth';
+import { hashPassword, signJwt, verifyPassword, isLegacyHash, revokeToken, JwtPayload } from '@/lib/auth';
 import { BadRequestError, UnauthorizedError, ForbiddenError } from '@/lib/api';
 import { AuditService } from '@/services/AuditService';
 import crypto from 'crypto';
 
-import { generateCustomerId } from '@laundelle/ids';
+import { generateCustomerId, generateStaffId } from '@laundelle/ids';
+import { OrderService } from '@/services/OrderService';
 
 export class AuthService {
     
@@ -67,6 +68,11 @@ export class AuthService {
 
         await db.collection('users').insertOne(newUser);
 
+        // Link any prior guest orders to the newly registered customer
+        await OrderService.linkGuestOrdersToCustomer(formatted, customerId, internalDbId).catch(err => {
+            console.error('[AuthService] Error linking guest orders on signup:', err);
+        });
+
         // Write an audit event
         await AuditService.recordEvent({
             entityType: 'user',
@@ -105,32 +111,13 @@ export class AuthService {
         const formatted = email.toLowerCase().trim();
         let user = await db.collection('users').findOne({ email: formatted });
 
-        const envAdminEmail = (process.env.ADMIN_EMAIL || 'admin@laundelle.co.uk').toLowerCase().trim();
-        const envAdminPassword = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? undefined : 'AdminPassword123!');
+        const envAdminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase().trim();
+        if (envAdminEmail && formatted === envAdminEmail) {
+            throw new ForbiddenError('System Administrator accounts must authenticate via Auth0 Universal Login.');
+        }
 
-        // Check if login matches .env Admin Credentials
-        if (envAdminPassword && formatted === envAdminEmail && password === envAdminPassword) {
-            if (!user) {
-                const adminId = 'usr_admin_default';
-                const now = new Date().toISOString();
-                const adminUser = {
-                    _id: adminId as any,
-                    email: envAdminEmail,
-                    password: hashPassword(envAdminPassword),
-                    full_name: 'System Administrator',
-                    phone: '+447000000000',
-                    role: 'super_admin',
-                    avatar_url: `https://ui-avatars.com/api/?name=Admin&background=03045E&color=48CAE4&size=128`,
-                    created_at: now,
-                    updated_at: now
-                };
-                await db.collection('users').updateOne(
-                    { email: envAdminEmail },
-                    { $setOnInsert: adminUser },
-                    { upsert: true }
-                );
-                user = await db.collection('users').findOne({ email: envAdminEmail });
-            }
+        if (user && ['super_admin', 'admin', 'plant_manager', 'driver', 'processor'].includes(user.role)) {
+            throw new ForbiddenError('Staff accounts must authenticate via Auth0 Universal Login.');
         }
 
         if (user) {
@@ -186,7 +173,7 @@ export class AuthService {
 
         // Admin MFA validation
         if (['admin', 'super_admin'].includes(user.role) && user.mfaEnabled) {
-            if (!mfaCode || String(mfaCode).trim() !== String(user.mfaSecret || '123456')) {
+            if (!mfaCode || !user.mfaSecret || String(mfaCode).trim() !== String(user.mfaSecret).trim()) {
                 throw new UnauthorizedError('Two-factor authentication code is required or invalid.');
             }
         }
@@ -286,7 +273,8 @@ export class AuthService {
      */
     static verifyAdminMfa(user: any, mfaCode: string): boolean {
         if (!user.mfaEnabled) return true;
-        const expected = String(user.mfaSecret || '123456').trim();
+        if (!user.mfaSecret || !mfaCode) return false;
+        const expected = String(user.mfaSecret).trim();
         return String(mfaCode).trim() === expected;
     }
 
@@ -302,43 +290,129 @@ export class AuthService {
     /**
      * Synchronizes an Auth0 authenticated user into MongoDB and returns a valid Laundelle backend JWT token.
      */
-    static async syncAuth0User(body: any, clientIp: string = 'unknown') {
-        const { email, name, sub, picture } = body || {};
-        if (!email) {
+    /**
+     * Synchronizes an Auth0 authenticated user into MongoDB.
+     * Prevents unauthenticated privilege escalation:
+     * - Only verified Auth0 tokens with designated super_admin claims can provision/sync super_admin profiles.
+     * - Unauthenticated requests with ADMIN_EMAIL or targeting staff accounts are strictly rejected.
+     * - Unauthenticated requests can only register ordinary 'customer' accounts.
+     */
+    static async syncAuth0User(body: any, clientIp: string = 'unknown', verifiedToken?: JwtPayload | null) {
+        if (!verifiedToken) {
+            throw new UnauthorizedError('Valid Auth0 identity token required for synchronization.');
+        }
+
+        if (verifiedToken.isLegacyToken) {
+            throw new UnauthorizedError('Auth0 synchronization requires an authentic Auth0 identity token, not a legacy token.');
+        }
+
+        const tokenEmail = verifiedToken.email ? String(verifiedToken.email).toLowerCase().trim() : '';
+        const bodyEmail = body?.email ? String(body.email).toLowerCase().trim() : '';
+        if (bodyEmail && tokenEmail && bodyEmail !== tokenEmail) {
+            throw new BadRequestError('Supplied email does not match verified identity token.');
+        }
+
+        const formatted = tokenEmail || bodyEmail;
+        if (!formatted) {
             throw new BadRequestError('Email is required for Auth0 synchronization.');
         }
 
-        const db = await getDb();
-        const formatted = String(email).toLowerCase().trim();
-
-        // Check if user already exists by auth0_sub or email
-        const queryConditions: any[] = [{ email: formatted }];
-        if (sub) {
-            queryConditions.unshift({ auth0_sub: sub });
+        const sub = verifiedToken.sub;
+        if (!sub) {
+            throw new UnauthorizedError('Subject claim missing from verified token.');
         }
 
-        let user = await db.collection('users').findOne({ $or: queryConditions });
+        const db = await getDb();
         const now = new Date().toISOString();
+        const name = verifiedToken.name || body?.name;
+        const picture = body?.picture;
+
+        const envAdminEmails = [
+            process.env.ADMIN_EMAIL,
+            ...(process.env.ADDITIONAL_ADMIN_EMAILS || '').split(','),
+        ].filter(Boolean).map(e => String(e).trim().toLowerCase());
+        const isAdminEmail = envAdminEmails.length > 0 && envAdminEmails.includes(formatted);
+
+        // Administrative accounts require authentic RS256 Auth0 token
+        if (isAdminEmail) {
+            const isVerifiedRs256 = Boolean(verifiedToken && !verifiedToken.isLegacyToken);
+            if (!isVerifiedRs256) {
+                throw new ForbiddenError('Super Admin accounts require verified Auth0 authentication with designated administrative credentials.');
+            }
+        }
+
+        // Primary user lookup: match immutable Auth0 subject
+        let user = await db.collection('users').findOne({
+            $or: [
+                { auth0UserId: sub },
+                { auth0_sub: sub }
+            ]
+        });
+
+        // If no user found by subject, link with existing account by email only with verified binding
+        if (!user) {
+            const existingByEmail = await db.collection('users').findOne({ email: formatted });
+            if (existingByEmail) {
+                const isStaff = ['super_admin', 'admin', 'plant_manager', 'driver', 'processor'].includes(existingByEmail.role);
+                if (isStaff) {
+                    const isLinked = existingByEmail.auth0UserId || existingByEmail.auth0_sub;
+                    if (isLinked && existingByEmail.auth0UserId !== sub && existingByEmail.auth0_sub !== sub) {
+                        const isPrevSocial = String(existingByEmail.auth0UserId || '').startsWith('google-oauth2|') ||
+                                             String(existingByEmail.auth0UserId || '').startsWith('apple|') ||
+                                             String(existingByEmail.auth0UserId || '').startsWith('windowslive|');
+                        if (isAdminEmail || isPrevSocial) {
+                            await db.collection('users').updateOne(
+                                { _id: existingByEmail._id },
+                                { $set: { auth0UserId: sub, auth0_sub: sub, updated_at: now } }
+                            );
+                            existingByEmail.auth0UserId = sub;
+                            existingByEmail.auth0_sub = sub;
+                        } else {
+                            throw new ForbiddenError('Staff identity mismatch: Account is bound to a different identity provider subject.');
+                        }
+                    } else if (!isLinked) {
+                        await db.collection('users').updateOne(
+                            { _id: existingByEmail._id },
+                            { $set: { auth0UserId: sub, auth0_sub: sub, updated_at: now } }
+                        );
+                        existingByEmail.auth0UserId = sub;
+                        existingByEmail.auth0_sub = sub;
+                    }
+                }
+                user = existingByEmail;
+            }
+        }
+
+        if (user && (user.is_blocked || user.status === 'blocked' || user.status === 'suspended')) {
+            throw new ForbiddenError('This account has been suspended or blocked. Please contact support.');
+        }
 
         if (!user) {
             const internalDbId = new ObjectId().toHexString();
             const customerId = generateCustomerId();
-            const fullName = (name || formatted.split('@')[0] || 'Customer').trim();
+            const staffId = generateStaffId();
+            const isSuperAdmin = isAdminEmail;
+            const role = isSuperAdmin ? 'super_admin' : 'customer';
+            const fullName = (name || formatted.split('@')[0] || (isSuperAdmin ? 'System Administrator' : 'Customer')).trim();
 
-            const newUser = {
+            const newUser: any = {
                 _id: internalDbId as any,
-                publicId: customerId,
-                customerId: customerId,
-                id: customerId,
+                publicId: isSuperAdmin ? staffId : customerId,
+                customerId: isSuperAdmin ? undefined : customerId,
+                staffId: isSuperAdmin ? staffId : undefined,
+                id: isSuperAdmin ? staffId : customerId,
                 email: formatted,
-                auth0_sub: sub || null,
+                auth0UserId: sub,
+                auth0_sub: sub,
                 full_name: fullName,
-                phone: '',
-                role: 'customer',
+                phone: isSuperAdmin ? (process.env.ADMIN_PHONE || '') : '',
+                role: role,
                 avatar_url: picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=03045E&color=CAF0F8&size=128`,
                 wallet_balance: 0,
                 reward_points: 0,
-                customer_status: 'new',
+                customer_status: 'active',
+                status: 'active',
+                email_verified: true,
                 addresses: [],
                 preferences: {
                     detergent: 'Standard',
@@ -359,22 +433,42 @@ export class AuthService {
             await db.collection('users').insertOne(newUser);
             user = newUser;
 
+            if (!isSuperAdmin) {
+                await OrderService.linkGuestOrdersToCustomer(formatted, customerId, String(internalDbId)).catch(err => {
+                    console.error('[AuthService] Error linking guest orders on Auth0 registration:', err);
+                });
+            }
+
             await AuditService.recordEvent({
                 entityType: 'user',
-                entityId: customerId,
-                action: 'user_registered_auth0',
-                actorId: customerId,
-                actorRole: 'customer',
+                entityId: isSuperAdmin ? String(internalDbId) : customerId,
+                action: isSuperAdmin ? 'super_admin_registered_auth0' : 'user_registered_auth0',
+                actorId: sub || customerId,
+                actorRole: role,
                 ipAddress: clientIp
             });
         } else {
-            const updateDoc: any = { updated_at: now };
-            if (sub && !user.auth0_sub) updateDoc.auth0_sub = sub;
+            const updateDoc: any = { updated_at: now, last_login_at: now };
+            if (!['super_admin', 'admin', 'plant_manager', 'driver', 'processor'].includes(user.role)) {
+                await OrderService.linkGuestOrdersToCustomer(
+                    formatted,
+                    user.customerId || user.publicId || String(user._id),
+                    String(user._id)
+                ).catch(err => {
+                    console.error('[AuthService] Error linking guest orders on Auth0 login:', err);
+                });
+            }
+            if (sub && user.auth0UserId !== sub) updateDoc.auth0UserId = sub;
+            if (sub && user.auth0_sub !== sub) updateDoc.auth0_sub = sub;
             if (picture && (!user.avatar_url || String(user.avatar_url).includes('ui-avatars.com'))) {
                 updateDoc.avatar_url = picture;
             }
             if (name && (!user.full_name || user.full_name === formatted.split('@')[0])) {
                 updateDoc.full_name = name;
+            }
+            if (isAdminEmail && user.role !== 'admin' && user.role !== 'super_admin') {
+                updateDoc.role = 'super_admin';
+                user.role = 'super_admin';
             }
             if (Object.keys(updateDoc).length > 1) {
                 await db.collection('users').updateOne(
@@ -384,10 +478,27 @@ export class AuthService {
             }
         }
 
+        // Enforce portal-level role restrictions: Restrict unauthorized logins
+        if (body?.portal === 'admin' && user.role !== 'admin' && user.role !== 'super_admin') {
+            throw new ForbiddenError(`Access Restricted: Account "${formatted}" has role "${user.role || 'customer'}" and is not authorized to access the Administrator Portal.`);
+        }
+        if (body?.portal === 'operations' && !['driver', 'processor', 'manager', 'plant_manager', 'admin', 'super_admin'].includes(user.role)) {
+            throw new ForbiddenError(`Access Restricted: Account "${formatted}" has role "${user.role || 'customer'}". This portal is restricted to authorized Operations Staff only.`);
+        }
+        if (body?.portal === 'customer' && ['driver', 'processor', 'manager', 'plant_manager'].includes(user.role)) {
+            throw new ForbiddenError(`Access Restricted: Account "${formatted}" is registered as operational staff (${user.role}). Please use the Operations Portal or sign in with a Customer account.`);
+        }
+
         const internalId = String(user._id);
         const publicId = user.publicId || user.customerId || user.id || internalId;
         const role = user.role || 'customer';
-        const token = signJwt({ sub: internalId, email: formatted, role });
+        const token = signJwt({ 
+            sub: internalId, 
+            auth0UserId: user.auth0UserId || sub,
+            email: formatted, 
+            role,
+            emailVerified: user.email_verified ?? true 
+        });
 
         const phone = user.phone || '';
         const needsProfileCompletion = !phone || phone.trim() === '';

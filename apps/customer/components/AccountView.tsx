@@ -59,7 +59,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
   const [addressModalOpen, setAddressModalOpen] = useState(false);
   const [addressToEdit, setAddressToEdit] = useState<UserAddress | null>(null);
 
-  const displayName = profile.name || 'Valued Customer';
+  const displayName = profile.name || (profile.email ? profile.email.split('@')[0] : 'Customer');
   const displayEmail = profile.email || 'No email provided';
   const displayPhone = profile.phone || 'No phone number provided';
 

@@ -1,29 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, requireRole } from '@/lib/api';
+import { requireAuthAsync, resolveLaundelleUser, UnauthorizedError, ForbiddenError } from '@/lib/api';
+import { StaffProvisioningService } from '@/services/StaffProvisioningService';
 import { AdminService } from '@/services/AdminService';
+import { normalizeRole } from '@laundelle/auth';
 
 export async function GET(req: NextRequest, context: any) {
     try {
-        await requireAuth(req);
-        requireRole(req, ['admin', 'super_admin']);
+        const token = await requireAuthAsync(req);
+        const dbUser = await resolveLaundelleUser(token);
+        if (!dbUser) throw new UnauthorizedError();
+        const role = normalizeRole(dbUser.role);
+        if (role !== 'super_admin') {
+            throw new ForbiddenError('Super Admin authorization required.');
+        }
+
         const params = await context.params;
         const data = await AdminService.getStaffMemberWithPlant(params.id);
-        return NextResponse.json(data);
+        return NextResponse.json({ success: true, ...data });
     } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 400 });
+        return NextResponse.json(
+            { success: false, error: e.message, code: e.code || 'BAD_REQUEST' },
+            { status: e.status || 400 }
+        );
     }
 }
 
 export async function PATCH(req: NextRequest, context: any) {
     try {
-        const session = await requireAuth(req);
-        requireRole(req, ['admin', 'super_admin']);
+        const token = await requireAuthAsync(req);
+        const dbUser = await resolveLaundelleUser(token);
+        if (!dbUser) throw new UnauthorizedError();
+        const role = normalizeRole(dbUser.role);
+        if (role !== 'super_admin') {
+            throw new ForbiddenError('Super Admin authorization required.');
+        }
+
         const body = await req.json();
         const params = await context.params;
         const staffPayload = body.staffData || body;
-        const data = await AdminService.updateStaffMember(session.sub, params.id, staffPayload);
-        return NextResponse.json(data);
+
+        const data = await StaffProvisioningService.updateUser(
+            { token, dbUser },
+            params.id,
+            staffPayload
+        );
+        return NextResponse.json({ success: true, ...data });
     } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 400 });
+        return NextResponse.json(
+            { success: false, error: e.message, code: e.code || 'BAD_REQUEST' },
+            { status: e.status || 400 }
+        );
     }
 }

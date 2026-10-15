@@ -7,3 +7,9 @@ allowBuilds:
   browser-tabs-lock: true
   protobufjs: true
   unrs-resolver: true
+
+overrides:
+  postcss: ^8.5.28
+  braces: ^3.0.3
+  source-map-js: ^1.2.2
+  sharp: ^0.35.5

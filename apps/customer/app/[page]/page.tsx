@@ -1,23 +1,12 @@
-'use client';
-
-import React, { use } from 'react';
-import dynamic from 'next/dynamic';
-
-const AppClient = dynamic<{ initialTab?: string }>(() => import('../AppClient'), {
-  ssr: false,
-  loading: () => (
-    <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#03045E]"></div>
-    </div>
-  ),
-});
+import React from 'react';
+import AppClient from '../AppClient';
 
 interface PageProps {
   params: Promise<{ page: string }>;
 }
 
-export default function DynamicPage({ params }: PageProps) {
-  const resolvedParams = use(params);
+export default async function DynamicPage({ params }: PageProps) {
+  const resolvedParams = await params;
   const rawPage = resolvedParams.page;
 
   let tabName = 'home';

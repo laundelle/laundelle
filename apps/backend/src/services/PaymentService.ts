@@ -6,6 +6,13 @@ import Stripe from 'stripe';
 import { ObjectId } from 'mongodb';
 import { OrderService, locatePlantAndDriverForOrder } from '@/services/OrderService';
 import { generatePaymentId, buildEntityLookupQuery } from '@laundelle/ids';
+import {
+  generateSecureNumericPin,
+  generatePinSalt,
+  hashOrderPin,
+  encryptOrderPin,
+} from '@/lib/orderPin';
+import { PricingChargeService } from '@/services/PricingChargeService';
 
 export class PaymentService {
     private static getStripe(): Stripe {
@@ -62,8 +69,57 @@ export class PaymentService {
 
             if (existingOrder) {
                 console.log(`[PaymentService] verifySessionPayment: Order found for session ${sessionId} (webhook processed).`);
-                return { status: 'paid', order: existingOrder };
+                let orderToReturn = existingOrder;
+                if (!orderToReturn.pickup_pin && !orderToReturn.pickup_otp && !orderToReturn.pickup_pin_enc) {
+                    const custIdent = String(orderToReturn.customer_id || orderToReturn.customerId || authenticatedUserId || '');
+                    const newPickupPin = generateSecureNumericPin(6);
+                    const newSalt = generatePinSalt();
+                    const newHash = hashOrderPin(newPickupPin, newSalt, orderToReturn.id, custIdent);
+                    const newEnc = encryptOrderPin(newPickupPin, orderToReturn.id, custIdent);
+
+                    await db.collection('orders').updateOne(
+                        { _id: orderToReturn._id },
+                        {
+                            $set: {
+                                pickup_pin: newPickupPin,
+                                pickup_otp: newPickupPin,
+                                pickup_pin_hash: newHash,
+                                pickup_pin_salt: newSalt,
+                                pickup_pin_enc: newEnc,
+                                pickup_pin_attempts: 0,
+                                pickup_pin_locked: false,
+                            }
+                        }
+                    );
+                    orderToReturn = await db.collection('orders').findOne({ _id: orderToReturn._id });
+                }
+
+                if (!orderToReturn.delivery_pin && !orderToReturn.delivery_otp && !orderToReturn.delivery_pin_enc) {
+                    const custIdent = String(orderToReturn.customer_id || orderToReturn.customerId || authenticatedUserId || '');
+                    const newDeliveryPin = generateSecureNumericPin(4);
+                    const newDeliverySalt = generatePinSalt();
+                    const newDeliveryHash = hashOrderPin(newDeliveryPin, newDeliverySalt, orderToReturn.id, custIdent);
+                    const newDeliveryEnc = encryptOrderPin(newDeliveryPin, orderToReturn.id, custIdent);
+
+                    await db.collection('orders').updateOne(
+                        { _id: orderToReturn._id },
+                        {
+                            $set: {
+                                delivery_pin: newDeliveryPin,
+                                delivery_otp: newDeliveryPin,
+                                delivery_pin_hash: newDeliveryHash,
+                                delivery_pin_salt: newDeliverySalt,
+                                delivery_pin_enc: newDeliveryEnc,
+                                delivery_pin_attempts: 0,
+                                delivery_pin_locked: false,
+                            }
+                        }
+                    );
+                    orderToReturn = await db.collection('orders').findOne({ _id: orderToReturn._id });
+                }
+                return { status: 'paid', order: OrderService.sanitizeOrderForCustomer(orderToReturn) };
             }
+
 
             // Stripe says paid, but webhook hasn't processed it yet (or webhook is not running).
             // We NEVER create the order here. Do not auto-refund after an arbitrary
@@ -389,6 +445,10 @@ export class PaymentService {
         const status = assignedDriverId ? 'collection_scheduled' : 'booking_confirmed';
         const statusLabel = assignedDriverId ? 'Collection Scheduled' : 'Booking Confirmed';
 
+        let pickupPin = order.pickup_pin || order.pickup_otp;
+        let deliveryPin = order.delivery_pin || order.delivery_otp;
+        const customerIdentifier = String(order.customer_id || order.customerId || userId || '');
+
         const updateOps: any = {
             $set: {
                 payment_status: 'Paid',
@@ -401,22 +461,55 @@ export class PaymentService {
                 statusLabel: statusLabel,
                 updated_at: now
             },
-            $push: {
-                timeline_events: {
-                    $each: [
-                        {
-                            event: 'payment_confirmed',
-                            label: 'Payment Confirmed via Stripe',
-                            stripeSessionId,
-                            paymentIntentId: typeof paymentIntentId === 'string' ? paymentIntentId : undefined,
-                            amount: amountGBP,
-                            currency: session.currency?.toUpperCase() || 'GBP',
-                            timestamp: now
-                        }
-                    ]
-                }
+        };
+
+        if (!pickupPin) {
+            pickupPin = generateSecureNumericPin(6);
+            const pickupPinSalt = generatePinSalt();
+            const pickupPinHash = hashOrderPin(pickupPin, pickupPinSalt, orderId, customerIdentifier);
+            const pickupPinEnc = encryptOrderPin(pickupPin, orderId, customerIdentifier);
+
+            updateOps.$set.pickup_pin = pickupPin;
+            updateOps.$set.pickup_otp = pickupPin;
+            updateOps.$set.pickup_pin_hash = pickupPinHash;
+            updateOps.$set.pickup_pin_salt = pickupPinSalt;
+            updateOps.$set.pickup_pin_enc = pickupPinEnc;
+            updateOps.$set.pickup_pin_attempts = 0;
+            updateOps.$set.pickup_pin_locked = false;
+        }
+
+        if (!deliveryPin) {
+            deliveryPin = generateSecureNumericPin(4);
+            const deliveryPinSalt = generatePinSalt();
+            const deliveryPinHash = hashOrderPin(deliveryPin, deliveryPinSalt, orderId, customerIdentifier);
+            const deliveryPinEnc = encryptOrderPin(deliveryPin, orderId, customerIdentifier);
+
+            updateOps.$set.delivery_pin = deliveryPin;
+            updateOps.$set.delivery_otp = deliveryPin;
+            updateOps.$set.delivery_pin_hash = deliveryPinHash;
+            updateOps.$set.delivery_pin_salt = deliveryPinSalt;
+            updateOps.$set.delivery_pin_enc = deliveryPinEnc;
+            updateOps.$set.delivery_pin_attempts = 0;
+            updateOps.$set.delivery_pin_locked = false;
+        }
+
+        updateOps.$push = {
+
+            timeline_events: {
+                $each: [
+                    {
+                        event: 'payment_confirmed',
+                        label: 'Payment Confirmed via Stripe',
+                        stripeSessionId,
+                        paymentIntentId: typeof paymentIntentId === 'string' ? paymentIntentId : undefined,
+                        amount: amountGBP,
+                        currency: session.currency?.toUpperCase() || 'GBP',
+                        timestamp: now
+                    }
+                ]
             }
         };
+
 
         if (plantId && plantId !== order.plant_id) {
             updateOps.$set.plant_id = plantId;
@@ -451,15 +544,14 @@ export class PaymentService {
 
         // 1. Update Order Status in Database
         await db.collection('orders').updateOne(
-            { $or: [{ id: orderId }, { _id: order._id || orderId }] },
+            { _id: order._id },
             updateOps
         );
 
         // Notify assigned driver and manager
         if (assignedDriverId) {
-            const driverQueryId = ObjectId.isValid(assignedDriverId) ? new ObjectId(assignedDriverId) : assignedDriverId;
             await db.collection('users').updateOne(
-                { _id: driverQueryId as any },
+                buildEntityLookupQuery(assignedDriverId, 'user') as any,
                 { $set: { last_assigned_at: now, availability: 'busy' } }
             );
 
@@ -502,6 +594,19 @@ export class PaymentService {
             created_at: now
         });
 
+        // 2b. Redeem coupon atomically if one was attached to the order
+        const couponCodeToRedeem = order.couponCode || order.coupon_code || order.coupon?.code;
+        if (couponCodeToRedeem) {
+            await PricingChargeService.redeemCoupon(
+                couponCodeToRedeem,
+                orderId,
+                String(userId),
+                stripeSessionId
+            ).catch((err) => {
+                console.error(`[PaymentService] Coupon redemption error for ${couponCodeToRedeem} on order ${orderId}:`, err);
+            });
+        }
+
         // 3. Notify Customer
         if (userId && userId !== 'guest') {
             await NotificationService.createNotification({
@@ -526,9 +631,8 @@ export class PaymentService {
 
         // 5. Update user stats
         if (userId && userId !== 'guest') {
-            const userQueryId = ObjectId.isValid(userId) ? new ObjectId(userId) : userId;
             await db.collection('users').updateOne(
-                { _id: userQueryId as any },
+                buildEntityLookupQuery(userId, 'user') as any,
                 {
                     $inc: { total_orders: 1, lifetime_spend: order.total || amountGBP },
                     $set: { last_order_at: now, updated_at: now }
@@ -547,7 +651,8 @@ export class PaymentService {
             ]
         }).catch(() => {});
 
-        return await db.collection('orders').findOne({ $or: [{ id: orderId }, { _id: order._id || orderId }] });
+        const finalDoc = await db.collection('orders').findOne({ _id: order._id });
+        return OrderService.sanitizeOrderForCustomer(finalDoc);
     }
 
     private static async processPaymentFailed(db: any, intent: Stripe.PaymentIntent, now: string) {
@@ -580,7 +685,7 @@ export class PaymentService {
         if (!existingOrder) return;
 
         await db.collection('orders').updateOne(
-            { id: orderId },
+            { _id: existingOrder._id },
             {
                 $set: {
                     payment_status: 'Failed',

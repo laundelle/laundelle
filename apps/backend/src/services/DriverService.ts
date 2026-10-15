@@ -10,7 +10,8 @@ import { SlaService } from '@/services/SlaService';
 import { EvidenceService } from '@/services/EvidenceService';
 import { CodService } from '@/services/CodService';
 import { PickupFailureReason, DeliveryFailureReason, PickupAttemptRecord, DeliveryAttemptRecord } from '@laundelle/types';
-import { generatePickupAttemptId, generateDeliveryAttemptId } from '@laundelle/ids';
+import { generatePickupAttemptId, generateDeliveryAttemptId, generateBagId } from '@laundelle/ids';
+import { OrderCustomerEnrichmentService } from './OrderCustomerEnrichmentService';
 
 export class DriverService {
     
@@ -79,6 +80,7 @@ export class DriverService {
             'driver_assigned',
             'pickup_in_progress',
             'pickup_failed',
+            'laundry_collected',
             'ready_for_delivery',
             'qc_passed',
             'waiting_for_driver',
@@ -170,29 +172,20 @@ export class DriverService {
             }
         }
 
-        assigned = await Promise.all(assigned.map(async (order: any) => {
+        assigned = await OrderCustomerEnrichmentService.enrichOrders(assigned, db);
+        assigned = assigned.map((order: any) => {
             order.id = order.id || order.publicId || String(order._id);
-            if (order.customer_id) {
-                const _cid = ObjectId.isValid(order.customer_id) ? new ObjectId(order.customer_id) : order.customer_id;
-                const cust = await db.collection('users').findOne({ $or: [{ _id: String(order.customer_id) }, { _id: _cid }, { id: String(order.customer_id) }] });
-                if (cust) { 
-                    order.customer_name = cust.full_name || order.customer_name || order.customerName; 
-                    order.customer_phone = cust.phone || order.customer_phone || order.customerPhone; 
-                }
-            }
-            if (!order.customer_name && order.customerName) order.customer_name = order.customerName;
-            if (!order.customer_phone && order.customerPhone) order.customer_phone = order.customerPhone;
             return this.sanitizeOrder(order);
-        }));
+        });
 
         const completedQuery = {
             $or: [
-                { 'qr_tracking.collectedByDriverId': { $in: driverIds } },
+                { 'qr_tracking.collectedByDriverId': { $in: driverIds }, status: { $ne: 'laundry_collected' } },
                 { 'qr_tracking.deliveredByDriverId': { $in: driverIds } },
                 {
                     $and: [
                         driverQuery,
-                        { status: { $in: ['laundry_collected', 'delivered', 'completed'] } }
+                        { status: { $in: ['delivered', 'completed'] } }
                     ]
                 }
             ]
@@ -204,23 +197,12 @@ export class DriverService {
             .limit(200)
             .toArray();
 
+        completedOrdersRaw = await OrderCustomerEnrichmentService.enrichOrders(completedOrdersRaw, db);
+
         let completed: any[] = [];
         for (const order of completedOrdersRaw) {
             order.id = order.id || order.publicId || String(order._id);
-            let customerInfo = { 
-                customer_name: order.customer_name || order.customerName, 
-                customer_phone: order.customer_phone || order.customerPhone 
-            };
-            if (order.customer_id) {
-                const _cid = ObjectId.isValid(order.customer_id) ? new ObjectId(order.customer_id) : order.customer_id;
-                const cust = await db.collection('users').findOne({ $or: [{ _id: String(order.customer_id) }, { _id: _cid }, { id: String(order.customer_id) }] });
-                if (cust) {
-                    customerInfo.customer_name = cust.full_name || customerInfo.customer_name;
-                    customerInfo.customer_phone = cust.phone || customerInfo.customer_phone;
-                }
-            }
-
-            const sanitized = this.sanitizeOrder({ ...order, ...customerInfo });
+            const sanitized = this.sanitizeOrder(order);
             const didCollect = driverIds.includes(String(order.qr_tracking?.collectedByDriverId));
             const didDeliver = driverIds.includes(String(order.qr_tracking?.deliveredByDriverId)) ||
                 ((order.status === 'delivered' || order.status === 'completed') &&
@@ -744,7 +726,8 @@ export class DriverService {
                     pickup_pin_enc: null,
                     pickup_pin_verified_at: now,
                     pickup_otp_verified_at: now,
-                    'qr_tracking.qrTagId': qrTagId || order.bagQrCode || ('BAG-' + (order.publicId || orderId)),
+                    bag_id: qrTagId || order.bag_id || order.qr_tracking?.qrTagId || generateBagId(),
+                    'qr_tracking.qrTagId': qrTagId || order.qr_tracking?.qrTagId || order.bag_id || generateBagId(),
                     'qr_tracking.collectedByDriverId': driverId,
                     'qr_tracking.collectedAt': now,
                     'qr_tracking.bagCount': bagCount || 1,
@@ -754,7 +737,7 @@ export class DriverService {
                     'evidence.pickupPhotoUrl': (photoUrls && photoUrls.length > 0) ? photoUrls[0] : null,
                     'evidence.pickupDriverName': driverName,
                     'evidence.pickupVerifiedAt': now,
-                    'evidence.bagQrCode': qrTagId || order.qr_tracking?.qrTagId || order.bagQrCode || ('BAG-' + (order.publicId || orderId)),
+                    'evidence.bagQrCode': qrTagId || order.qr_tracking?.qrTagId || order.bag_id || order.bagQrCode || generateBagId(),
                     'evidence.declaredPieceCount': declaredPieceCount || order.declaredItemCount || order.itemCount || 0
                 },
                 $push: {

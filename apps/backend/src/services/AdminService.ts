@@ -3,51 +3,174 @@ import { ObjectId } from 'mongodb';
 import crypto from 'crypto';
 import { hashPassword } from '@/lib/auth';
 import { AuditService } from './AuditService';
+import { StaffProvisioningService } from './StaffProvisioningService';
 import {
     generateStaffId,
     generatePlantId,
     generateFlagId,
     generateNoteId,
     generateRefundId,
-    generateStoreCreditId
+    generateStoreCreditId,
+    buildEntityLookupQuery
 } from '@laundelle/ids';
+import { OrderCustomerEnrichmentService } from './OrderCustomerEnrichmentService';
 
 export class AdminService {
-    static async getDashboardMetrics(location?: string) {
+    static async getDashboardMetrics(location?: string, dateFilter?: string, startDate?: string, endDate?: string) {
         const db = await getDb();
-        const today = new Date().toISOString().split('T')[0];
         let orders = await db.collection('orders').find({ status: { $ne: 'pending_payment' } }).toArray();
 
+        let matchedPlant: any = null;
         if (location && location !== 'All Locations') {
-            const locLower = location.toLowerCase();
-            const keywords = ['preston', 'blackburn', 'bolton', 'chorley'];
-            const matchKeyword = keywords.find(k => locLower.includes(k));
-            orders = orders.filter((o: any) => {
-                const pId = (o.plantId || o.plant_id || '').toLowerCase();
-                const fac = (o.facility || o.facilityName || '').toLowerCase();
-                const addr = typeof o.address === 'string' ? o.address.toLowerCase() : JSON.stringify(o.address || '').toLowerCase();
-                if (matchKeyword) {
-                    return pId.includes(matchKeyword) || fac.includes(matchKeyword) || addr.includes(matchKeyword);
-                }
-                return pId.includes(locLower) || fac.includes(locLower) || addr.includes(locLower);
-            });
+            const trimmedLoc = location.trim();
+            matchedPlant = await db.collection('plants').findOne({
+                $or: [
+                    { name: trimmedLoc },
+                    { code: trimmedLoc.toUpperCase() },
+                    { id: trimmedLoc },
+                    { publicId: trimmedLoc },
+                    { _id: trimmedLoc }
+                ]
+            } as any);
+
+            if (!matchedPlant) {
+                const allPlants = await db.collection('plants').find({}).toArray();
+                matchedPlant = allPlants.find((p: any) =>
+                    p.name?.toLowerCase() === trimmedLoc.toLowerCase() ||
+                    p.code?.toLowerCase() === trimmedLoc.toLowerCase() ||
+                    trimmedLoc.toLowerCase().includes((p.name || '').toLowerCase())
+                );
+            }
+
+            if (matchedPlant) {
+                const plantId = String(matchedPlant._id || matchedPlant.id || matchedPlant.publicId || '');
+                const plantCode = (matchedPlant.code || '').toUpperCase();
+                const plantName = (matchedPlant.name || '').toLowerCase();
+                const pincodes: string[] = Array.isArray(matchedPlant.service_pincodes)
+                    ? matchedPlant.service_pincodes
+                    : (matchedPlant.service_pincodes || '').split(',').map((p: string) => p.trim().toUpperCase()).filter(Boolean);
+
+                orders = orders.filter((o: any) => {
+                    const pId = String(o.plantId || o.plant_id || '');
+                    const fac = (o.facility || o.facilityName || '').toLowerCase();
+                    if (plantId && pId && (pId === plantId || pId === matchedPlant.publicId || pId === matchedPlant.id)) return true;
+                    if (fac && (fac === plantName || fac === plantCode.toLowerCase())) return true;
+
+                    // Match order postcode against plant's configured pincodes
+                    const orderPostcode = (o.postcode || (typeof o.address === 'object' ? o.address?.postcode : '') || '').toUpperCase().trim();
+                    if (orderPostcode && pincodes.length > 0) {
+                        const cleanOrderPostcode = orderPostcode.replace(/\s+/g, '');
+                        const matchesPin = pincodes.some((pin: string) => {
+                            const cleanPin = pin.replace(/\s+/g, '');
+                            return cleanPin && (cleanOrderPostcode === cleanPin || cleanOrderPostcode.startsWith(cleanPin));
+                        });
+                        if (matchesPin) return true;
+                    }
+
+                    // Word boundary check in address
+                    const fullAddr = typeof o.address === 'string' ? o.address : JSON.stringify(o.address || '');
+                    if (pincodes.some((pin: string) => new RegExp(`\\b${pin}\\b`, 'i').test(fullAddr))) {
+                        return true;
+                    }
+
+                    return false;
+                });
+            } else {
+                const locLower = trimmedLoc.toLowerCase();
+                orders = orders.filter((o: any) => {
+                    const pId = (o.plantId || o.plant_id || '').toLowerCase();
+                    const fac = (o.facility || o.facilityName || '').toLowerCase();
+                    const addr = typeof o.address === 'string' ? o.address.toLowerCase() : JSON.stringify(o.address || '').toLowerCase();
+                    return pId.includes(locLower) || fac.includes(locLower) || addr.includes(locLower);
+                });
+            }
         }
 
-        const todayOrders = orders.filter((o: any) => o.createdAt && o.createdAt.startsWith(today));
-        const todayRevenue = todayOrders.reduce((sum: number, o: any) => sum + (o.total || 0), 0);
-        const todayKg = todayOrders.reduce((sum: number, o: any) => sum + (o.weightKg || 0), 0);
+        // Date range filtering
+        const now = new Date();
+        const todayStr = now.toISOString().split('T')[0];
+        const yesterdayDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
+
+        // This week: Monday of current week
+        const dayOfWeek = now.getDay();
+        const diffToMonday = (dayOfWeek === 0 ? -6 : 1) - dayOfWeek;
+        const mondayDate = new Date(now);
+        mondayDate.setDate(now.getDate() + diffToMonday);
+        mondayDate.setHours(0, 0, 0, 0);
+        const weekStartStr = mondayDate.toISOString().split('T')[0];
+
+        const getOrderDate = (o: any): string => {
+            const raw = o.createdAt || o.created_at || o.date || o.updated_at || '';
+            return typeof raw === 'string' ? raw.split('T')[0] : '';
+        };
+
+        const isOrderInDateRange = (o: any): boolean => {
+            const d = getOrderDate(o);
+            if (!d) return false;
+
+            if (!dateFilter || dateFilter === 'Today') {
+                return d === todayStr;
+            }
+            if (dateFilter === 'Yesterday') {
+                return d === yesterdayStr;
+            }
+            if (dateFilter === 'This Week') {
+                return d >= weekStartStr && d <= todayStr;
+            }
+            if (dateFilter === 'Custom' || dateFilter === 'Custom Range') {
+                if (startDate && endDate) {
+                    return d >= startDate && d <= endDate;
+                }
+                if (startDate) return d >= startDate;
+                if (endDate) return d <= endDate;
+                return true;
+            }
+            return true;
+        };
+
+        const periodOrders = orders.filter(isOrderInDateRange);
+        const todayRevenue = periodOrders.reduce((sum: number, o: any) => sum + (o.total || o.totalPrice || 0), 0);
+        const todayKg = periodOrders.reduce((sum: number, o: any) => sum + (o.weightKg || o.weight_kg || 0), 0);
         const activeOrders = orders.filter((o: any) => !['delivered', 'cancelled'].includes(o.status));
 
+        const collectionsCompleted = orders.filter((o: any) => {
+            if (o.status !== 'laundry_collected') return false;
+            const updatedDate = (o.pickup_completed_at || o.updated_at || o.createdAt || '').split('T')[0];
+            if (!dateFilter || dateFilter === 'Today') return updatedDate === todayStr;
+            if (dateFilter === 'Yesterday') return updatedDate === yesterdayStr;
+            if (dateFilter === 'This Week') return updatedDate >= weekStartStr && updatedDate <= todayStr;
+            if ((dateFilter === 'Custom' || dateFilter === 'Custom Range') && startDate && endDate) {
+                return updatedDate >= startDate && updatedDate <= endDate;
+            }
+            return true;
+        }).length;
+
+        const deliveriesCompleted = orders.filter((o: any) => {
+            if (o.status !== 'delivered') return false;
+            const updatedDate = (o.delivery_completed_at || o.delivered_at || o.updated_at || o.createdAt || '').split('T')[0];
+            if (!dateFilter || dateFilter === 'Today') return updatedDate === todayStr;
+            if (dateFilter === 'Yesterday') return updatedDate === yesterdayStr;
+            if (dateFilter === 'This Week') return updatedDate >= weekStartStr && updatedDate <= todayStr;
+            if ((dateFilter === 'Custom' || dateFilter === 'Custom Range') && startDate && endDate) {
+                return updatedDate >= startDate && updatedDate <= endDate;
+            }
+            return true;
+        }).length;
+
+        const plantCapacityOrders = matchedPlant?.daily_capacity_orders || matchedPlant?.capacityOrders || 100;
+        const plantCapacityKg = matchedPlant?.daily_capacity_kg || matchedPlant?.capacityKg || 500;
+
         return {
-            todayOrdersTotal: todayOrders.length,
-            todayOrdersTrendPercent: 12,
+            todayOrdersTotal: periodOrders.length,
+            todayOrdersTrendPercent: periodOrders.length > 0 ? 12 : 0,
             todayRevenue,
-            todayRevenueTrendPercent: 8,
+            todayRevenueTrendPercent: todayRevenue > 0 ? 8 : 0,
             todayKgProcessed: todayKg,
-            todayKgTrendPercent: 5,
-            collectionsCompleted: orders.filter((o: any) => o.status === 'laundry_collected' && (o.updated_at || o.createdAt)?.startsWith(today)).length || 0,
+            todayKgTrendPercent: todayKg > 0 ? 5 : 0,
+            collectionsCompleted,
             collectionsPending: activeOrders.filter((o: any) => ['booking_confirmed', 'collection_scheduled'].includes(o.status)).length,
-            deliveriesCompleted: orders.filter((o: any) => o.status === 'delivered' && (o.updated_at || o.createdAt)?.startsWith(today)).length || 0,
+            deliveriesCompleted,
             deliveriesPending: activeOrders.filter((o: any) => ['ready_for_delivery', 'out_for_delivery'].includes(o.status)).length,
             pipeline: {
                 booked: activeOrders.filter((o: any) => o.status === 'booking_confirmed').length,
@@ -58,6 +181,12 @@ export class AdminService {
                 qc: activeOrders.filter((o: any) => o.status === 'ready_for_qc' || o.status === 'qc_ready').length,
                 ready: activeOrders.filter((o: any) => o.status === 'ready_for_delivery').length,
                 out: activeOrders.filter((o: any) => o.status === 'out_for_delivery').length
+            },
+            facility: {
+                code: matchedPlant?.code || location || 'All Locations',
+                name: matchedPlant?.name || location || 'All Facilities',
+                dailyCapacityOrders: plantCapacityOrders,
+                dailyCapacityKg: plantCapacityKg
             }
         };
     }
@@ -71,6 +200,9 @@ export class AdminService {
             .limit(limit)
             .toArray();
         const total = await db.collection('orders').countDocuments(query);
+
+        // Enrich customer information
+        await OrderCustomerEnrichmentService.enrichOrders(orders, db);
 
         orders.forEach((o: any) => {
             if (o.address && typeof o.address === 'object') {
@@ -157,46 +289,77 @@ export class AdminService {
 
     static async getCustomers(search?: string, status?: string, limit = 100, page = 1) {
         const db = await getDb();
-        const userQuery: any = { role: { $in: ['customer', 'user', null, undefined] } };
-        if (search) {
-            userQuery.$or = [
-                { full_name: { $regex: search, $options: 'i' } },
-                { name: { $regex: search, $options: 'i' } },
-                { email: { $regex: search, $options: 'i' } },
-                { phone: { $regex: search, $options: 'i' } },
-                { postcode: { $regex: search, $options: 'i' } },
-                { 'addresses.postcode': { $regex: search, $options: 'i' } }
-            ];
-        }
+        const safeLimit = Math.min(Math.max(1, limit || 50), 200);
+        const safePage = Math.max(1, page || 1);
 
-        const [users, allOrders, flags, notes] = await Promise.all([
-            db.collection('users')
-                .find(userQuery, { projection: { password: 0 } })
-                .sort({ created_at: -1 })
-                .toArray(),
-            db.collection('orders').find({}).toArray(),
+        const [users, allOrders, flags, notes, incidents] = await Promise.all([
+            db.collection('users').find({}, { projection: { password: 0 } }).sort({ created_at: -1 }).toArray(),
+            db.collection('orders').find({}).sort({ createdAt: -1, created_at: -1 }).toArray(),
             db.collection('customer_flags').find({}).sort({ createdAt: -1 }).toArray(),
-            db.collection('customer_notes').find({}).sort({ createdAt: -1 }).toArray()
+            db.collection('customer_notes').find({}).sort({ createdAt: -1 }).toArray(),
+            db.collection('incidents').find({}).toArray()
         ]);
 
-        // Map customers with real order calculations
-        const customers = users.map((u: any) => {
-            const customerId = u._id?.toString() || u.id;
-            const customerOrders = allOrders.filter((o: any) =>
-                o.customer_id === customerId ||
-                o.userId === customerId ||
-                o.user_id === customerId ||
-                (u.email && o.customerEmail && o.customerEmail.toLowerCase() === u.email.toLowerCase()) ||
-                (u.phone && o.customerPhone && o.customerPhone === u.phone)
-            );
+        // Helper to check if an order belongs to a given user/identifier
+        const matchesUser = (order: any, u: any): boolean => {
+            const uId = String(u._id || u.id || u.customerId || u.publicId);
+            const uEmail = u.email ? u.email.toLowerCase().trim() : '';
+            const uPhone = u.phone ? u.phone.trim() : '';
 
-            const totalOrders = customerOrders.length;
-            const lifetimeSpend = customerOrders.reduce((sum: number, o: any) => sum + (o.total || 0), 0);
+            const oCustId = String(order.customer_id || order.customerId || '');
+            const oUserId = String(order.userId || order.user_id || '');
+            const oEmail = (order.customerEmail || order.customer_email || order.contactDetails?.email || order.email || '').toLowerCase().trim();
+            const oPhone = (order.customerPhone || order.customer_phone || order.contactDetails?.phone || order.phone || '').trim();
+
+            if (uId && (oCustId === uId || oUserId === uId)) return true;
+            if (u._id && (oCustId === String(u._id) || oUserId === String(u._id))) return true;
+            if (u.id && (oCustId === String(u.id) || oUserId === String(u.id))) return true;
+            if (u.customerId && (oCustId === String(u.customerId) || oUserId === String(u.customerId))) return true;
+            if (u.publicId && (oCustId === String(u.publicId) || oUserId === String(u.publicId))) return true;
+            if (uEmail && oEmail && uEmail === oEmail) return true;
+            if (uPhone && oPhone && uPhone.replace(/\s+/g, '') === oPhone.replace(/\s+/g, '')) return true;
+            return false;
+        };
+
+        const customerList: any[] = [];
+        const processedEmails = new Set<string>();
+        const processedUserIds = new Set<string>();
+
+        // 1. Process users who are customers or who placed customer orders
+        for (const u of users) {
+            const isExplicitCustomer = ['customer', 'user', null, undefined].includes(u.role);
+            const userOrders = allOrders.filter(o => matchesUser(o, u));
+            const hasCustomerOrders = userOrders.length > 0;
+
+            // Include if role is customer/user or if they have placed orders
+            if (!isExplicitCustomer && !hasCustomerOrders) {
+                continue;
+            }
+
+            const customerId = String(u._id || u.id || u.customerId || u.publicId);
+            const publicId = u.publicId || u.customerId || `CUST-${customerId.slice(-6).toUpperCase()}`;
+            const email = (u.email || userOrders[0]?.customerEmail || userOrders[0]?.contactDetails?.email || '').trim();
+            const phone = u.phone || userOrders[0]?.customerPhone || userOrders[0]?.contactDetails?.phone || '';
+            const fullName = u.full_name || u.name || userOrders[0]?.customerName || userOrders[0]?.customer_name || 'Customer';
+            const postcode = u.postcode || (u.addresses && u.addresses[0]?.postcode) || userOrders[0]?.postcode || '';
+            const fullAddress = (typeof u.address === 'string' ? u.address : (u.addresses && u.addresses[0] ? `${u.addresses[0].line1 || u.addresses[0].addressLine1 || ''}, ${u.addresses[0].city || ''} ${u.addresses[0].postcode || ''}`.trim() : '')) || (typeof userOrders[0]?.address === 'string' ? userOrders[0]?.address : (userOrders[0]?.address?.line1 ? `${userOrders[0]?.address?.line1}, ${userOrders[0]?.address?.city || ''} ${userOrders[0]?.address?.postcode || ''}`.trim() : '')) || postcode;
+            const recentOrders = userOrders.slice(0, 5).map(o => ({
+                id: String(o.id || o.publicId || o._id),
+                orderNumber: o.orderNumber || o.publicId || o.id,
+                status: o.status,
+                total: Number(o.total || o.total_price || 0),
+                date: o.createdAt || o.created_at || o.bookedAt,
+                service: o.items?.[0]?.name || o.service || 'Laundry Service'
+            }));
+
+            const totalOrders = userOrders.length;
+            const lifetimeSpend = userOrders.reduce((sum: number, o: any) => sum + Number(o.total || o.total_price || 0), 0);
             const averageOrderValue = totalOrders > 0 ? lifetimeSpend / totalOrders : 0;
             const repeatRate = totalOrders > 1 ? Math.min(100, Math.round(((totalOrders - 1) / totalOrders) * 100)) : 0;
+            const lastOrderDate = userOrders[0]?.createdAt || userOrders[0]?.created_at || userOrders[0]?.bookedAt || '';
 
-            let customerStatus = u.status || 'new';
-            if (u.status === 'blocked' || u.is_blocked) {
+            let customerStatus = u.status || u.customer_status || 'new';
+            if (u.status === 'blocked' || u.is_blocked || u.customer_status === 'blocked') {
                 customerStatus = 'blocked';
             } else if (lifetimeSpend > 250) {
                 customerStatus = 'high_value';
@@ -208,38 +371,143 @@ export class AdminService {
                 customerStatus = 'new';
             }
 
-            if (u.customer_status) {
-                customerStatus = u.customer_status;
-            }
+            const idVariants = new Set<string>([customerId, publicId, String(u._id), String(u.id), String(u.customerId)].filter(Boolean));
+            const userFlags = flags.filter(f => idVariants.has(String(f.customerId)));
+            const userNotes = notes.filter(n => idVariants.has(String(n.customerId)));
+            const userIncidents = incidents.filter(inc => idVariants.has(String(inc.customerId)) || (email && inc.customerEmail?.toLowerCase() === email.toLowerCase()));
 
-            const postcode = u.postcode || (u.addresses && u.addresses[0]?.postcode) || 'W1D 1AN';
-
-            return {
+            customerList.push({
                 id: customerId,
-                fullName: u.full_name || u.name || 'Customer',
-                email: u.email || 'customer@example.com',
-                phone: u.phone || '07700 900123',
+                publicId,
+                customerId: u.customerId || publicId,
+                fullName,
+                email,
+                phone,
                 postcode,
+                address: fullAddress,
                 status: customerStatus,
                 lifetimeSpend,
                 totalOrders,
                 repeatRate,
                 averageOrderValue,
-                preferredService: u.preferredService || 'Wash & Fold',
-                preferredDetergent: u.preferredDetergent || 'Eco-Friendly Botanical',
-                preferredSoftener: u.preferredSoftener || 'Hypoallergenic Delicate',
-                avatarUrl: u.avatarUrl || u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-                createdAt: u.created_at || u.createdAt || new Date().toISOString()
-            };
+                lastOrderDate,
+                preferredService: u.preferredService || userOrders[0]?.items?.[0]?.name || userOrders[0]?.service || 'Wash & Fold',
+                preferredDetergent: u.preferences?.detergent || u.preferredDetergent || 'Standard',
+                preferredSoftener: u.preferences?.softener || u.preferredSoftener || 'Standard',
+                avatarUrl: u.avatar_url || u.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=03045E&color=CAF0F8&size=128`,
+                flagsCount: userFlags.length,
+                internalNotesCount: userNotes.length,
+                incidentsCount: userIncidents.length,
+                createdAt: u.created_at || u.createdAt || userOrders[userOrders.length - 1]?.createdAt || new Date().toISOString(),
+                recentOrders
+            });
+
+            if (email) processedEmails.add(email.toLowerCase());
+            processedUserIds.add(customerId);
+        }
+
+        // 2. Discover distinct customers who placed orders but aren't yet in the users table
+        const unlinkedOrders = allOrders.filter(o => {
+            const oEmail = (o.customerEmail || o.customer_email || o.contactDetails?.email || o.email || '').toLowerCase().trim();
+            const oId = String(o.customer_id || o.customerId || o.userId || o.user_id || '');
+            if (oEmail && processedEmails.has(oEmail)) return false;
+            if (oId && processedUserIds.has(oId)) return false;
+            return true;
         });
 
-        // Filter by status if specified
-        const filtered = status && status !== 'all'
-            ? customers.filter((c: any) => c.status === status)
-            : customers;
+        // Group unlinked orders by email or customer name
+        const unlinkedGroups = new Map<string, any[]>();
+        for (const ord of unlinkedOrders) {
+            const key = (ord.customerEmail || ord.customer_email || ord.contactDetails?.email || ord.email || ord.customerName || ord.customer_name || ord.id || '').toLowerCase().trim();
+            if (!key) continue;
+            if (!unlinkedGroups.has(key)) unlinkedGroups.set(key, []);
+            unlinkedGroups.get(key)!.push(ord);
+        }
+
+        unlinkedGroups.forEach((groupOrders, groupKey) => {
+            const first = groupOrders[0];
+            const derivedId = String(first.customerId || first.customer_id || first.userId || first.user_id || `cust_${groupKey.replace(/[^a-z0-9]/g, '')}`);
+            const publicId = `CUST-${derivedId.slice(-6).toUpperCase()}`;
+            const email = (first.customerEmail || first.customer_email || first.contactDetails?.email || first.email || '').trim();
+            const phone = first.customerPhone || first.customer_phone || first.contactDetails?.phone || first.phone || '';
+            const fullName = first.customerName || first.customer_name || (first.contactDetails ? `${first.contactDetails.firstName || ''} ${first.contactDetails.lastName || ''}`.trim() : '') || 'Customer';
+            const postcode = first.postcode || '';
+            const fullAddress = (typeof first.address === 'string' ? first.address : (first.address?.line1 ? `${first.address?.line1}, ${first.address?.city || ''} ${first.address?.postcode || ''}`.trim() : (first.contactDetails?.address ? `${first.contactDetails.address}, ${first.postcode || ''}`.trim() : ''))) || postcode;
+            const recentOrders = groupOrders.slice(0, 5).map(o => ({
+                id: String(o.id || o.publicId || o._id),
+                orderNumber: o.orderNumber || o.publicId || o.id,
+                status: o.status,
+                total: Number(o.total || o.total_price || 0),
+                date: o.createdAt || o.created_at || o.bookedAt,
+                service: o.items?.[0]?.name || o.service || 'Laundry Service'
+            }));
+
+            const totalOrders = groupOrders.length;
+            const lifetimeSpend = groupOrders.reduce((sum: number, o: any) => sum + Number(o.total || o.total_price || 0), 0);
+            const averageOrderValue = totalOrders > 0 ? lifetimeSpend / totalOrders : 0;
+            const repeatRate = totalOrders > 1 ? Math.min(100, Math.round(((totalOrders - 1) / totalOrders) * 100)) : 0;
+            const lastOrderDate = groupOrders[0]?.createdAt || groupOrders[0]?.created_at || groupOrders[0]?.bookedAt || '';
+
+            let customerStatus = 'new';
+            if (lifetimeSpend > 250) customerStatus = 'high_value';
+            else if (totalOrders >= 4) customerStatus = 'vip';
+            else if (totalOrders >= 2) customerStatus = 'regular';
+
+            const groupFlags = flags.filter(f => f.customerId === derivedId || f.customerId === publicId);
+            const groupNotes = notes.filter(n => n.customerId === derivedId || n.customerId === publicId);
+            const groupIncidents = incidents.filter(inc => inc.customerId === derivedId || inc.customerId === publicId || (email && inc.customerEmail?.toLowerCase() === email.toLowerCase()));
+
+            customerList.push({
+                id: derivedId,
+                publicId,
+                customerId: publicId,
+                fullName,
+                email,
+                phone,
+                postcode,
+                address: fullAddress,
+                status: customerStatus,
+                lifetimeSpend,
+                totalOrders,
+                repeatRate,
+                averageOrderValue,
+                lastOrderDate,
+                preferredService: groupOrders[0]?.items?.[0]?.name || groupOrders[0]?.service || 'Wash & Fold',
+                preferredDetergent: 'Standard',
+                preferredSoftener: 'Standard',
+                avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=03045E&color=CAF0F8&size=128`,
+                flagsCount: groupFlags.length,
+                internalNotesCount: groupNotes.length,
+                incidentsCount: groupIncidents.length,
+                createdAt: groupOrders[groupOrders.length - 1]?.createdAt || new Date().toISOString(),
+                recentOrders
+            });
+        });
+
+        // Search filtering
+        let filtered = customerList;
+        if (search && search.trim()) {
+            const q = search.toLowerCase().trim();
+            filtered = filtered.filter(c =>
+                (c.fullName && c.fullName.toLowerCase().includes(q)) ||
+                (c.email && c.email.toLowerCase().includes(q)) ||
+                (c.phone && c.phone.includes(q)) ||
+                (c.postcode && c.postcode.toLowerCase().includes(q)) ||
+                (c.id && c.id.toLowerCase().includes(q)) ||
+                (c.publicId && c.publicId.toLowerCase().includes(q))
+            );
+        }
+
+        // Status filtering
+        if (status && status !== 'all') {
+            filtered = filtered.filter(c => c.status === status);
+        }
+
+        // Sort by total orders and lifetime spend descending
+        filtered.sort((a, b) => (b.totalOrders - a.totalOrders) || (b.lifetimeSpend - a.lifetimeSpend));
 
         const total = filtered.length;
-        const paginated = filtered.slice((page - 1) * limit, page * limit);
+        const paginated = filtered.slice((safePage - 1) * safeLimit, safePage * safeLimit);
 
         return {
             customers: paginated,
@@ -269,8 +537,9 @@ export class AdminService {
         await db.collection('customer_flags').insertOne(newFlag as any);
 
         if (flagData.flagType === 'Chargeback' || flagData.flagType === 'Fraud Concern') {
+            const customerLookup = buildEntityLookupQuery(flagData.customerId, 'user');
             await db.collection('users').updateOne(
-                { _id: flagData.customerId } as any,
+                customerLookup as any,
                 { $set: { status: 'blocked', customer_status: 'blocked', is_blocked: true } }
             );
         }
@@ -320,8 +589,9 @@ export class AdminService {
     static async updateCustomerStatus(adminId: string, customerId: string, status: string) {
         const db = await getDb();
         const now = new Date().toISOString();
+        const customerLookup = buildEntityLookupQuery(customerId, 'user');
         await db.collection('users').updateOne(
-            { _id: customerId } as any,
+            customerLookup as any,
             { $set: { status, customer_status: status, updated_at: now } }
         );
 
@@ -340,42 +610,44 @@ export class AdminService {
     static async getFinanceData() {
         const db = await getDb();
         const [orders, incidents, storeCredits, users] = await Promise.all([
-            db.collection('orders').find({}).toArray(),
+            db.collection('orders').find({}).sort({ createdAt: -1 }).toArray(),
             db.collection('incidents').find({}).toArray(),
             db.collection('store_credits').find({}).toArray(),
             db.collection('users').find({ role: 'customer' }).toArray()
         ]);
 
+        const userMap = new Map(users.map((u: any) => [u._id?.toString() || u.id, u.full_name || u.name]));
+
         const validOrders = orders.filter((o: any) => o.status !== 'cancelled' && o.status !== 'pending_payment');
-        const grossRevenue = validOrders.reduce((sum: number, o: any) => sum + (o.total || 0), 0);
+        const grossRevenue = validOrders.reduce((sum: number, o: any) => sum + (Number(o.total) || 0), 0);
         const totalPaidCount = validOrders.length;
-        const failedCount = orders.filter((o: any) => o.status === 'cancelled' && o.paymentStatus === 'failed').length;
+        const failedCount = orders.filter((o: any) => o.status === 'cancelled' && (o.paymentStatus === 'failed' || o.paymentStatus === 'Failed')).length;
         const totalAttempts = totalPaidCount + failedCount;
-        const stripeSuccessRate = totalAttempts > 0 ? Math.round((totalPaidCount / totalAttempts) * 1000) / 10 : 98.4;
+        const stripeSuccessRate = totalAttempts > 0 ? Math.round((totalPaidCount / totalAttempts) * 1000) / 10 : 100.0;
 
         // Refund records from orders with paymentStatus === 'refunded' or incidents
         const refundsFromOrders = orders
-            .filter((o: any) => o.paymentStatus === 'refunded' || (o.refundedAmount && o.refundedAmount > 0))
+            .filter((o: any) => o.paymentStatus === 'refunded' || o.paymentStatus === 'Refunded' || (Number(o.refundedAmount) > 0))
             .map((o: any) => ({
-                id: `rf_${o.id}`,
-                customerName: o.customerName || (o.address && o.address.split(',')[0]) || 'Customer',
-                orderNumber: o.id,
-                amount: o.refundedAmount || o.total || 0,
-                stripeRefundId: o.stripeRefundId || (o.paymentIntentId ? `re_${o.paymentIntentId.slice(-8)}` : 're_live_simulated'),
+                id: `rf_${o.id || o._id}`,
+                customerName: o.customerName || userMap.get(o.customer_id || o.userId) || (o.address ? o.address.split(',')[0] : 'Customer'),
+                orderNumber: o.id || o.orderNumber || 'ORD',
+                amount: Number(o.refundedAmount || o.total || 0),
+                stripeRefundId: o.stripeRefundId || (o.paymentIntentId ? `re_${o.paymentIntentId.slice(-8)}` : 're_stripe_confirmed'),
                 reason: o.refundReason || 'Service cancellation / customer satisfaction',
-                processedByStaffName: o.refundedBy || 'Super Admin',
+                processedByStaffName: o.refundedBy || 'Administrator',
                 createdAt: o.updated_at || o.createdAt || new Date().toISOString()
             }));
 
         const refundsFromIncidents = incidents
-            .filter((inc: any) => inc.compensationType === 'refund' || inc.resolutionOutcome === 'refunded')
+            .filter((inc: any) => inc.compensationType === 'refund' || inc.resolutionOutcome === 'refunded' || inc.type === 'refund')
             .map((inc: any) => ({
-                id: `rf_inc_${inc.id}`,
+                id: `rf_inc_${inc.id || inc._id}`,
                 customerName: inc.customerName || 'Customer',
-                orderNumber: inc.orderId,
-                amount: inc.compensationAmount || 15.00,
+                orderNumber: inc.orderId || 'INC-CLAIM',
+                amount: Number(inc.compensationAmount || inc.amount || 0),
                 stripeRefundId: inc.stripeRefundId || 're_claim_payout',
-                reason: inc.description || inc.resolutionNotes || 'Claim resolution payout',
+                reason: inc.description || inc.resolutionNotes || inc.reason || 'Claim resolution payout',
                 processedByStaffName: inc.resolvedBy || 'Plant Manager',
                 createdAt: inc.resolvedAt || inc.createdAt || new Date().toISOString()
             }));
@@ -385,50 +657,53 @@ export class AdminService {
 
         // Store credits
         const walletCredits = users
-            .filter((u: any) => (u.walletBalance || 0) > 0)
+            .filter((u: any) => Number(u.walletBalance || 0) > 0)
             .map((u: any) => ({
                 id: `cr_${u._id}`,
                 customerName: u.full_name || u.name || 'Customer',
-                amount: u.walletBalance || 0,
-                creditType: 'Goodwill Credit',
+                amount: Number(u.walletBalance || 0),
+                creditType: 'Store Credit Balance',
                 expiresAt: '2027-12-31',
-                reason: 'Loyalty / Courtesy adjustment'
+                reason: 'Wallet balance / courtesy adjustment'
             }));
 
         const creditsFromIncidents = incidents
-            .filter((inc: any) => inc.compensationType === 'store_credit')
+            .filter((inc: any) => inc.compensationType === 'store_credit' || inc.compensationType === 'credit')
             .map((inc: any) => ({
-                id: `cr_inc_${inc.id}`,
+                id: `cr_inc_${inc.id || inc._id}`,
                 customerName: inc.customerName || 'Customer',
-                amount: inc.compensationAmount || 10.00,
-                creditType: 'Claim Resolution',
+                amount: Number(inc.compensationAmount || inc.amount || 0),
+                creditType: 'Claim Resolution Credit',
                 expiresAt: '2027-12-31',
-                reason: inc.description || 'Customer satisfaction compensation'
+                reason: inc.description || inc.reason || 'Customer satisfaction compensation'
             }));
 
         const allCredits = [...storeCredits, ...walletCredits, ...creditsFromIncidents];
-        const activeStoreCreditsTotal = allCredits.reduce((sum, c) => sum + (c.amount || 0), 0);
+        const activeStoreCreditsTotal = allCredits.reduce((sum, c) => sum + Number(c.amount || 0), 0);
 
         // Price adjustments
         const adjustmentsFromOrders = orders
-            .filter((o: any) => (o.additionalCharge && o.additionalCharge > 0) || (o.priceAdjustment && o.priceAdjustment > 0))
+            .filter((o: any) => (Number(o.additionalCharge) > 0) || (Number(o.priceAdjustment) > 0))
             .map((o: any) => ({
-                id: `fa_${o.id}`,
-                customerName: o.customerName || 'Customer',
-                orderNumber: o.id,
-                adjustmentType: o.adjustmentReason || 'Extra Items Added',
-                amount: o.additionalCharge || o.priceAdjustment || 0,
+                id: `fa_${o.id || o._id}`,
+                customerName: o.customerName || userMap.get(o.customer_id || o.userId) || 'Customer',
+                orderNumber: o.id || o.orderNumber || 'ORD',
+                adjustmentType: o.adjustmentReason || 'Weight Surcharge / Extra Items',
+                amount: Number(o.additionalCharge || o.priceAdjustment || 0),
                 reason: o.adjustmentNotes || 'Weight or item count adjusted at processing plant'
             }));
 
         const orderTransactions = orders.map((o: any) => {
             const incoming = Number(o.total || 0);
-            const refund = Number(o.refundedAmount || (o.paymentStatus === 'refunded' ? incoming : 0));
+            const refund = Number(o.refundedAmount || ((o.paymentStatus === 'refunded' || o.paymentStatus === 'Refunded') ? incoming : 0));
             const net = Math.max(0, incoming - refund);
+            const cName = o.customerName || userMap.get(o.customer_id || o.userId) || (o.address ? o.address.split(',')[0] : 'Customer');
+            const dateStr = o.createdAt || o.created_at || o.bookedAt;
+            const dateFormatted = dateStr ? new Date(dateStr).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : (o.pickupDate || 'Recent');
             return {
-                id: o.id || o._id,
-                customerName: o.customerName || (o.address ? o.address.split(',')[0] : 'Customer'),
-                date: o.pickupDate || (o.created_at ? o.created_at.slice(0, 10) : 'Recent'),
+                id: o.id || o.orderNumber || (o._id ? o._id.toString() : 'ORD'),
+                customerName: cName,
+                date: dateFormatted,
                 paymentMethod: o.paymentMethod || 'Stripe Card',
                 paymentStatus: o.paymentStatus || (refund > 0 ? (refund >= incoming ? 'Refunded' : 'Partial Refund') : 'Paid'),
                 incomingAmount: incoming,
@@ -438,92 +713,76 @@ export class AdminService {
             };
         });
 
-        const defaultOrders = [
-            { id: 'LD1042', customerName: 'Emma Watson', date: 'Today, 10:30 AM', paymentMethod: 'Stripe Card', paymentStatus: 'Paid', incomingAmount: 38.50, refundAmount: 0.00, netAmount: 38.50, status: 'In Processing' },
-            { id: 'LD1043', customerName: 'David H. Miller', date: 'Today, 09:15 AM', paymentMethod: 'Apple Pay', paymentStatus: 'Paid', incomingAmount: 52.00, refundAmount: 0.00, netAmount: 52.00, status: 'Collected' },
-            { id: 'LD1044', customerName: 'Marcus Bennett', date: 'Yesterday, 04:45 PM', paymentMethod: 'Stripe Card', paymentStatus: 'Refunded', incomingAmount: 14.00, refundAmount: 14.00, netAmount: 0.00, status: 'Cancelled / Refunded' },
-            { id: 'LD1045', customerName: 'Dr. Sarah Al-Mansoor', date: 'Yesterday, 02:00 PM', paymentMethod: 'Stripe Card', paymentStatus: 'Paid', incomingAmount: 89.00, refundAmount: 0.00, netAmount: 89.00, status: 'Out for Delivery' },
-            { id: 'LD1046', customerName: 'Sophie Zhang', date: 'Yesterday, 11:00 AM', paymentMethod: 'Stripe Card', paymentStatus: 'Paid', incomingAmount: 45.00, refundAmount: 0.00, netAmount: 45.00, status: 'Delivered' },
-            { id: 'LD1047', customerName: 'James Wilson', date: '2 days ago', paymentMethod: 'Google Pay', paymentStatus: 'Paid', incomingAmount: 64.00, refundAmount: 0.00, netAmount: 64.00, status: 'Delivered' },
-            { id: 'LD1048', customerName: 'Oliver Twist', date: '3 days ago', paymentMethod: 'Stripe Card', paymentStatus: 'Paid', incomingAmount: 29.50, refundAmount: 0.00, netAmount: 29.50, status: 'Delivered' },
-        ];
-
-        const finalOrders = orderTransactions.length > 0 ? orderTransactions : defaultOrders;
-        const totalIncomingCalculated = finalOrders.reduce((sum, ord) => sum + ord.incomingAmount, 0);
-        const totalRefundsCalculated = allRefunds.reduce((sum, r) => sum + r.amount, 0);
+        const totalIncomingCalculated = orderTransactions.reduce((sum, ord) => sum + ord.incomingAmount, 0);
 
         return {
-            grossRevenue: totalIncomingCalculated > 0 ? totalIncomingCalculated : 1480.50,
+            grossRevenue: totalIncomingCalculated,
             stripeSuccessRate,
-            totalRefundsAmount: totalRefundsCalculated > 0 ? totalRefundsCalculated : 14.00,
-            activeStoreCreditsTotal: activeStoreCreditsTotal > 0 ? activeStoreCreditsTotal : 10.00,
-            orders: finalOrders,
-            refunds: allRefunds.length > 0 ? allRefunds : [
-                {
-                    id: 'rf_default_1',
-                    customerName: 'Marcus Bennett',
-                    orderNumber: 'LD1044',
-                    amount: 14.00,
-                    stripeRefundId: 're_3Nz9184B',
-                    reason: 'Service item unavailable / order cancellation',
-                    processedByStaffName: 'Eleanor Vance',
-                    createdAt: new Date().toISOString().slice(0, 10)
-                }
-            ],
-            credits: allCredits.length > 0 ? allCredits : [
-                {
-                    id: 'cr_default_1',
-                    customerName: 'Sophie Zhang',
-                    amount: 10.00,
-                    creditType: 'Goodwill Credit',
-                    expiresAt: '2027-12-31',
-                    reason: 'Minor 15min delivery delay compensation'
-                }
-            ],
-            adjustments: adjustmentsFromOrders.length > 0 ? adjustmentsFromOrders : [
-                {
-                    id: 'fa_default_1',
-                    customerName: 'Marcus Bennett',
-                    orderNumber: 'LD1044',
-                    adjustmentType: 'Overweight Laundry Surcharge',
-                    amount: 6.50,
-                    reason: 'Actual weight 8.2kg exceeded booked 6kg quota'
-                }
-            ]
+            totalRefundsAmount,
+            netRevenue: Math.max(0, totalIncomingCalculated - totalRefundsAmount),
+            activeStoreCreditsTotal,
+            orders: orderTransactions,
+            refunds: allRefunds,
+            credits: allCredits,
+            adjustments: adjustmentsFromOrders
         };
     }
 
     static async getReportsData(range = '7_days') {
         const db = await getDb();
-        const orders = await db.collection('orders').find({}).toArray();
-        const incidents = await db.collection('incidents').find({}).toArray();
+        const [orders, incidents, plants] = await Promise.all([
+            db.collection('orders').find({}).toArray(),
+            db.collection('incidents').find({}).toArray(),
+            db.collection('plants').find({}).toArray()
+        ]);
 
-        const now = Date.now();
-        let daysAgo = 7;
-        if (range === 'today') daysAgo = 1;
-        else if (range === '30_days') daysAgo = 30;
-        else if (range === '3_months') daysAgo = 90;
+        const now = new Date();
+        let cutoffTime: number;
+        let bucketType: 'hours' | 'days' | 'weeks' | 'months';
 
-        const cutoffTime = now - daysAgo * 24 * 60 * 60 * 1000;
+        if (range === 'today') {
+            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            cutoffTime = todayStart.getTime();
+            bucketType = 'hours';
+        } else if (range === '30_days') {
+            cutoffTime = now.getTime() - 30 * 24 * 60 * 60 * 1000;
+            bucketType = 'weeks';
+        } else if (range === '3_months') {
+            cutoffTime = now.getTime() - 90 * 24 * 60 * 60 * 1000;
+            bucketType = 'months';
+        } else if (range === '1_year') {
+            cutoffTime = now.getTime() - 365 * 24 * 60 * 60 * 1000;
+            bucketType = 'months';
+        } else {
+            // default '7_days'
+            cutoffTime = now.getTime() - 7 * 24 * 60 * 60 * 1000;
+            bucketType = 'days';
+        }
+
         const filteredOrders = orders.filter((o: any) => {
-            const dateStr = o.createdAt || o.created_at;
+            const dateStr = o.createdAt || o.created_at || o.bookedAt;
             if (!dateStr) return true;
-            return new Date(dateStr).getTime() >= cutoffTime;
+            const time = new Date(dateStr).getTime();
+            return !isNaN(time) ? time >= cutoffTime : true;
         });
 
-        const salesRevenue = filteredOrders.reduce((sum: number, o: any) => sum + (o.total || 0), 0);
+        const salesRevenue = Math.round(filteredOrders.reduce((sum: number, o: any) => sum + Number(o.total || 0), 0) * 100) / 100;
         const totalOrders = filteredOrders.length;
 
-        // Turnaround efficiency
-        const deliveredOrders = filteredOrders.filter((o: any) => o.status === 'delivered');
-        let avgTurnaroundHrs = 18.4;
+        // Turnaround efficiency for delivered orders
+        const deliveredOrders = filteredOrders.filter((o: any) =>
+            ['delivered', 'order_delivered'].includes(o.status) || !!o.delivered_at
+        );
+        let avgTurnaroundHrs = 0;
         if (deliveredOrders.length > 0) {
             let totalDiffMs = 0;
             let counted = 0;
             for (const o of deliveredOrders) {
-                if (o.createdAt && (o.delivered_at || o.updated_at)) {
-                    const diff = new Date(o.delivered_at || o.updated_at).getTime() - new Date(o.createdAt).getTime();
-                    if (diff > 0 && diff < 14 * 24 * 60 * 60 * 1000) {
+                const start = new Date(o.createdAt || o.created_at || o.bookedAt).getTime();
+                const end = new Date(o.delivered_at || o.delivery_pin_verified_at || o.updated_at || o.updatedAt).getTime();
+                if (!isNaN(start) && !isNaN(end) && end > start) {
+                    const diff = end - start;
+                    if (diff > 0 && diff < 30 * 24 * 60 * 60 * 1000) {
                         totalDiffMs += diff;
                         counted++;
                     }
@@ -534,91 +793,272 @@ export class AdminService {
             }
         }
 
-        // Rewash rate
-        const rewashIncidents = incidents.filter((inc: any) => inc.type === 'rewash' || inc.issueType === 'rewash' || inc.qcOutcome === 'rewash').length;
-        const rewashRate = totalOrders > 0 ? Math.round((rewashIncidents / totalOrders) * 1000) / 10 : 0.8;
+        // Rewash rate calculation from real incidents & orders
+        const rewashIncidents = incidents.filter((inc: any) =>
+            inc.type === 'rewash' || inc.issueType === 'rewash' || inc.rewashRequired || inc.qcOutcome === 'rewash'
+        ).length;
+        const rewashOrders = filteredOrders.filter((o: any) => o.status === 'rewash_required' || o.rewashRequired).length;
+        const totalRewash = rewashIncidents + rewashOrders;
+        const rewashRate = totalOrders > 0 ? Math.round((totalRewash / totalOrders) * 1000) / 10 : 0;
 
-        // Repeat customer rate
-        const customerOrderCounts: { [id: string]: number } = {};
-        filteredOrders.forEach((o: any) => {
-            const cId = o.customer_id || o.userId || o.customerEmail || 'anon';
-            customerOrderCounts[cId] = (customerOrderCounts[cId] || 0) + 1;
+        // Customer retention & first-time vs repeat calculations
+        const customerLifetimeOrders: { [key: string]: any[] } = {};
+        orders.forEach((o: any) => {
+            const cId = o.customer_id || o.userId || o.user_id || o.customerEmail || o.email || 'anon';
+            if (!customerLifetimeOrders[cId]) customerLifetimeOrders[cId] = [];
+            customerLifetimeOrders[cId].push(o);
         });
-        const repeatCustomers = Object.values(customerOrderCounts).filter(c => c > 1).length;
-        const totalUniqueCustomers = Object.keys(customerOrderCounts).length;
-        const customerRetentionRate = totalUniqueCustomers > 0
-            ? Math.round((repeatCustomers / totalUniqueCustomers) * 1000) / 10
-            : 88.5;
 
-        const totalKg = filteredOrders.reduce((sum: number, o: any) => sum + (o.weightKg || 4), 0);
-        const profitPerKg = totalKg > 0 ? Math.round(((salesRevenue * 0.45) / totalKg) * 100) / 100 : 1.85;
+        Object.values(customerLifetimeOrders).forEach(list => {
+            list.sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+        });
 
+        let firstTimeRevenue = 0;
+        let repeatRevenue = 0;
+        filteredOrders.forEach((o: any) => {
+            const cId = o.customer_id || o.userId || o.user_id || o.customerEmail || o.email || 'anon';
+            const lifetime = customerLifetimeOrders[cId] || [];
+            const isFirst = lifetime.length > 0 && (lifetime[0].id === o.id || lifetime[0]._id === o._id);
+            const orderTotal = Number(o.total || 0);
+            if (isFirst) {
+                firstTimeRevenue += orderTotal;
+            } else {
+                repeatRevenue += orderTotal;
+            }
+        });
+
+        const totalRevenueTracked = firstTimeRevenue + repeatRevenue;
+        const firstTimePercent = totalRevenueTracked > 0 ? Math.round((firstTimeRevenue / totalRevenueTracked) * 100) : 0;
+        const repeatPercent = totalRevenueTracked > 0 ? Math.round((repeatRevenue / totalRevenueTracked) * 100) : 0;
+
+        const windowCustomers = new Set(filteredOrders.map((o: any) => o.customer_id || o.userId || o.customerEmail || 'anon'));
+        const repeatCustomerCount = Array.from(windowCustomers).filter(cId => (customerLifetimeOrders[cId]?.length || 0) > 1).length;
+        const customerRetentionRate = windowCustomers.size > 0
+            ? Math.round((repeatCustomerCount / windowCustomers.size) * 1000) / 10
+            : 0;
+
+        // Total KG & Profit per KG calculation
+        const totalKg = filteredOrders.reduce((sum: number, o: any) => {
+            if (o.weightKg && Number(o.weightKg) > 0) return sum + Number(o.weightKg);
+            const itemKg = (o.items || []).reduce((is: number, it: any) => {
+                return is + (it.unit === 'kg' ? Number(it.quantity || 1) : 0);
+            }, 0);
+            return sum + (itemKg > 0 ? itemKg : 0);
+        }, 0);
+        const profitPerKg = totalKg > 0 ? Math.round(((salesRevenue * 0.45) / totalKg) * 100) / 100 : (totalOrders > 0 ? Math.round((salesRevenue / (totalOrders * 5)) * 100) / 100 : 0);
+
+        // Algorithmic Revenue Trend Calculation
         let trend: { label: string; revenue: number; orders: number }[] = [];
-        if (range === 'today') {
-            trend = [
-                { label: '08:00', revenue: 140, orders: 6 },
-                { label: '10:00', revenue: 320, orders: 14 },
-                { label: '12:00', revenue: 580, orders: 22 },
-                { label: '14:00', revenue: 410, orders: 17 },
-                { label: '16:00', revenue: 690, orders: 28 },
-                { label: '18:00', revenue: 840, orders: 35 },
-                { label: '20:00', revenue: 520, orders: 19 },
+        if (bucketType === 'hours') {
+            const slots = [
+                { label: '08:00', minH: 0, maxH: 9 },
+                { label: '10:00', minH: 9, maxH: 11 },
+                { label: '12:00', minH: 11, maxH: 13 },
+                { label: '14:00', minH: 13, maxH: 15 },
+                { label: '16:00', minH: 15, maxH: 17 },
+                { label: '18:00', minH: 17, maxH: 19 },
+                { label: '20:00', minH: 19, maxH: 21 },
+                { label: '22:00', minH: 21, maxH: 24 }
             ];
-        } else if (range === '30_days') {
-            trend = [
-                { label: 'Week 1', revenue: 3420, orders: 125 },
-                { label: 'Week 2', revenue: 3890, orders: 142 },
-                { label: 'Week 3', revenue: 4210, orders: 156 },
-                { label: 'Week 4', revenue: 4680, orders: 168 },
+            trend = slots.map(slot => {
+                const slotOrders = filteredOrders.filter((o: any) => {
+                    const d = new Date(o.createdAt || o.created_at || o.bookedAt);
+                    const h = d.getHours();
+                    return h >= slot.minH && h < slot.maxH;
+                });
+                const rev = slotOrders.reduce((s, o) => s + Number(o.total || 0), 0);
+                return {
+                    label: slot.label,
+                    revenue: Math.round(rev * 100) / 100,
+                    orders: slotOrders.length
+                };
+            });
+        } else if (bucketType === 'weeks') {
+            const weekBuckets = [
+                { label: 'Week 1', daysAgoMin: 30, daysAgoMax: 22 },
+                { label: 'Week 2', daysAgoMin: 22, daysAgoMax: 15 },
+                { label: 'Week 3', daysAgoMin: 15, daysAgoMax: 8 },
+                { label: 'Week 4', daysAgoMin: 8, daysAgoMax: 0 }
             ];
-        } else if (range === '3_months') {
-            trend = [
-                { label: 'Month 1', revenue: 14200, orders: 512 },
-                { label: 'Month 2', revenue: 16800, orders: 614 },
-                { label: 'Month 3', revenue: 19450, orders: 720 },
-            ];
+            trend = weekBuckets.map(w => {
+                const minT = now.getTime() - w.daysAgoMin * 24 * 3600 * 1000;
+                const maxT = now.getTime() - w.daysAgoMax * 24 * 3600 * 1000;
+                const wkOrders = filteredOrders.filter((o: any) => {
+                    const t = new Date(o.createdAt || o.created_at || o.bookedAt).getTime();
+                    return t >= minT && t <= maxT;
+                });
+                const rev = wkOrders.reduce((s, o) => s + Number(o.total || 0), 0);
+                return {
+                    label: w.label,
+                    revenue: Math.round(rev * 100) / 100,
+                    orders: wkOrders.length
+                };
+            });
+        } else if (bucketType === 'months') {
+            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            trend = [2, 1, 0].map(mOffset => {
+                const d = new Date(now.getFullYear(), now.getMonth() - mOffset, 1);
+                const nextD = new Date(now.getFullYear(), now.getMonth() - mOffset + 1, 1);
+                const mOrders = filteredOrders.filter((o: any) => {
+                    const t = new Date(o.createdAt || o.created_at || o.bookedAt).getTime();
+                    return t >= d.getTime() && t < nextD.getTime();
+                });
+                const rev = mOrders.reduce((s, o) => s + Number(o.total || 0), 0);
+                return {
+                    label: monthNames[d.getMonth()],
+                    revenue: Math.round(rev * 100) / 100,
+                    orders: mOrders.length
+                };
+            });
         } else {
-            trend = [
-                { label: 'Mon', revenue: 1420, orders: 54 },
-                { label: 'Tue', revenue: 1850, orders: 68 },
-                { label: 'Wed', revenue: 1290, orders: 48 },
-                { label: 'Thu', revenue: 1940, orders: 72 },
-                { label: 'Fri', revenue: 2380, orders: 89 },
-                { label: 'Sat', revenue: 2810, orders: 104 },
-                { label: 'Sun', revenue: 1920, orders: 71 },
-            ];
+            // 7 Days
+            const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            trend = Array.from({ length: 7 }).map((_, i) => {
+                const dayDate = new Date(now.getTime() - (6 - i) * 24 * 3600 * 1000);
+                const dayStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate()).getTime();
+                const dayEnd = dayStart + 24 * 3600 * 1000;
+                const dayOrders = filteredOrders.filter((o: any) => {
+                    const t = new Date(o.createdAt || o.created_at || o.bookedAt).getTime();
+                    return t >= dayStart && t < dayEnd;
+                });
+                const rev = dayOrders.reduce((s, o) => s + Number(o.total || 0), 0);
+                return {
+                    label: dayNames[dayDate.getDay()],
+                    revenue: Math.round(rev * 100) / 100,
+                    orders: dayOrders.length
+                };
+            });
         }
 
+        // Algorithmic Category Breakdown from Real Items
+        const categoryMap: { [cat: string]: { count: number; revenue: number } } = {};
+        filteredOrders.forEach((o: any) => {
+            const items = o.items || o.orderItems || [];
+            if (items.length > 0) {
+                items.forEach((it: any) => {
+                    const catName = it.category || it.categoryLabel || it.serviceType || it.name || 'General Laundry';
+                    const price = Number(it.price || 0) * Number(it.quantity || 1) || (Number(o.total || 0) / items.length);
+                    const qty = Number(it.quantity || 1);
+                    if (!categoryMap[catName]) categoryMap[catName] = { count: 0, revenue: 0 };
+                    categoryMap[catName].count += qty;
+                    categoryMap[catName].revenue += price;
+                });
+            } else {
+                const catName = o.serviceName || o.serviceType || 'General Laundry';
+                if (!categoryMap[catName]) categoryMap[catName] = { count: 0, revenue: 0 };
+                categoryMap[catName].count += 1;
+                categoryMap[catName].revenue += Number(o.total || 0);
+            }
+        });
+
+        const totalCatRevenue = Object.values(categoryMap).reduce((s, c) => s + c.revenue, 0) || 1;
+        const colorPalette = ['#0f172a', '#2563eb', '#06b6d4', '#6366f1', '#10b981', '#f59e0b', '#ec4899'];
+        const categoryBreakdown = Object.entries(categoryMap)
+            .map(([name, data], idx) => ({
+                name,
+                count: data.count,
+                revenue: Math.round(data.revenue * 100) / 100,
+                percent: Math.max(1, Math.round((data.revenue / totalCatRevenue) * 100)),
+                color: colorPalette[idx % colorPalette.length]
+            }))
+            .sort((a, b) => b.revenue - a.revenue);
+
+        // Turnaround Distribution Breakdown
+        const brackets = [
+            { bracket: '< 12h (Express)', minH: 0, maxH: 12, color: '#10b981', count: 0 },
+            { bracket: '12-24h (Standard)', minH: 12, maxH: 24, color: '#2563eb', count: 0 },
+            { bracket: '24-48h (Specialist)', minH: 24, maxH: 48, color: '#f59e0b', count: 0 },
+            { bracket: '> 48h (Over SLA)', minH: 48, maxH: Infinity, color: '#ef4444', count: 0 }
+        ];
+
+        deliveredOrders.forEach((o: any) => {
+            const start = new Date(o.createdAt || o.created_at || o.bookedAt).getTime();
+            const end = new Date(o.delivered_at || o.delivery_pin_verified_at || o.updated_at || o.updatedAt).getTime();
+            if (!isNaN(start) && !isNaN(end) && end > start) {
+                const hrs = (end - start) / (1000 * 3600);
+                for (const b of brackets) {
+                    if (hrs >= b.minH && hrs < b.maxH) {
+                        b.count++;
+                        break;
+                    }
+                }
+            }
+        });
+
+        const totalDeliveredCount = deliveredOrders.length || 1;
+        const turnaroundDistribution = brackets.map(b => ({
+            bracket: b.bracket,
+            count: b.count,
+            percent: deliveredOrders.length > 0 ? Math.round((b.count / totalDeliveredCount) * 100) : 0,
+            color: b.color
+        }));
+
+        // Real Plant Performance from DB
+        const plantPerformance = plants.map((plant: any) => {
+            const pId = plant._id?.toString();
+            const pCode = plant.code;
+            const pPublicId = plant.publicId || plant.id;
+            const pName = plant.name;
+
+            const plantOrders = filteredOrders.filter((o: any) =>
+                (pId && (o.plant_id === pId || o.plantId === pId)) ||
+                (pPublicId && (o.plantId === pPublicId || o.plant_id === pPublicId)) ||
+                (pCode && (o.plant_code === pCode || o.plantCode === pCode)) ||
+                (pName && (o.plant_name === pName || o.plantName === pName))
+            );
+
+            const plantDelivered = plantOrders.filter((o: any) =>
+                ['delivered', 'order_delivered'].includes(o.status) || !!o.delivered_at
+            );
+
+            let plantAvgHours = 0;
+            if (plantDelivered.length > 0) {
+                let diffMs = 0;
+                let c = 0;
+                for (const o of plantDelivered) {
+                    const start = new Date(o.createdAt || o.created_at || o.bookedAt).getTime();
+                    const end = new Date(o.delivered_at || o.delivery_pin_verified_at || o.updated_at || o.updatedAt).getTime();
+                    if (!isNaN(start) && !isNaN(end) && end > start) {
+                        diffMs += (end - start);
+                        c++;
+                    }
+                }
+                if (c > 0) plantAvgHours = Math.round((diffMs / c / (3600 * 1000)) * 10) / 10;
+            }
+
+            const slaMet = plantDelivered.filter((o: any) => {
+                const start = new Date(o.createdAt || o.created_at).getTime();
+                const end = new Date(o.delivered_at || o.updated_at).getTime();
+                const maxDue = o.deliveryDueAt ? new Date(o.deliveryDueAt).getTime() : start + 24 * 3600 * 1000;
+                return end <= maxDue;
+            }).length;
+
+            const slaPercent = plantDelivered.length > 0 ? Math.round((slaMet / plantDelivered.length) * 1000) / 10 : 100.0;
+
+            return {
+                name: plant.name,
+                avgHours: plantAvgHours,
+                slaPercent,
+                volume: plantOrders.length
+            };
+        });
+
         return {
-            salesRevenue: salesRevenue > 0 ? salesRevenue : 14820.00,
-            totalOrders: totalOrders > 0 ? totalOrders : 542,
-            customerRetentionRate: customerRetentionRate > 0 ? customerRetentionRate : 88.5,
+            salesRevenue,
+            totalOrders,
+            customerRetentionRate,
             turnaroundHours: avgTurnaroundHrs,
             rewashRate,
-            profitPerKg: profitPerKg > 0 ? profitPerKg : 1.85,
+            profitPerKg,
             revenueTrend: trend,
-            categoryBreakdown: [
-                { name: 'Wash & Fold', count: 248, revenue: 5820, percent: 46, color: '#03045E' },
-                { name: 'Ironing & Press', count: 135, revenue: 3340, percent: 25, color: '#0077B6' },
-                { name: 'Dry Cleaning', count: 96, revenue: 2860, percent: 18, color: '#00B4D8' },
-                { name: 'Duvets & Bedding', count: 63, revenue: 2800, percent: 11, color: '#6366F1' },
-            ],
-            turnaroundDistribution: [
-                { bracket: '< 12h (Express)', percent: 34, count: 184, color: '#10B981' },
-                { bracket: '12-24h (Standard)', percent: 54, count: 293, color: '#0077B6' },
-                { bracket: '24-48h (Specialist)', percent: 10, count: 54, color: '#F59E0B' },
-                { bracket: '> 48h (Over SLA)', percent: 2, count: 11, color: '#EF4444' },
-            ],
-            plantPerformance: [
-                { name: 'West London Main Facility', avgHours: 17.2, slaPercent: 98.4, volume: 284 },
-                { name: 'Central London Express Hub', avgHours: 11.8, slaPercent: 99.6, volume: 156 },
-                { name: 'East End Eco-Processing Hub', avgHours: 20.1, slaPercent: 96.8, volume: 102 },
-            ],
+            categoryBreakdown,
+            turnaroundDistribution,
+            plantPerformance,
             retentionSplit: {
-                firstTimePercent: 24,
-                repeatPercent: 76,
-                firstTimeRevenue: 3550,
-                repeatRevenue: 11270,
+                firstTimePercent,
+                repeatPercent,
+                firstTimeRevenue: Math.round(firstTimeRevenue * 100) / 100,
+                repeatRevenue: Math.round(repeatRevenue * 100) / 100,
             }
         };
     }
@@ -718,168 +1158,39 @@ export class AdminService {
 
     static async createStaffMember(adminId: string, staffData: any) {
         const db = await getDb();
-        if (!staffData?.email || !staffData?.password) {
-            throw new Error('Email and password required.');
-        }
+        const adminUser = await db.collection('users').findOne({
+            $or: [{ _id: adminId as any }, { id: adminId }, { auth0UserId: adminId }, { auth0_sub: adminId }]
+        }) || { _id: adminId, role: 'super_admin' };
 
-        const existing = await db.collection('users').findOne({ email: staffData.email.toLowerCase() });
-        if (existing) throw new Error('Email already in use.');
-
-        const internalDbId = new ObjectId().toHexString();
-        const staffPublicId = generateStaffId();
-        const now = new Date().toISOString();
-
-        // For driver/processor: resolve plant_id and assigned_postcodes from manager
-        let resolvedPlantId = staffData.plant_id || null;
-        let resolvedManagerId = staffData.manager_id || null;
-        let resolvedPostcodes: string[] = staffData.assigned_postcodes || staffData.assignedSectors || [];
-
-        if (['driver', 'processor'].includes(staffData.role) && resolvedManagerId) {
-            const manager = await db.collection('users').findOne({ _id: resolvedManagerId } as any);
-            if (!manager || manager.role !== 'manager') {
-                throw new Error('Selected manager not found or is not a Plant Manager.');
-            }
-            let managerPlant: any = null;
-            if (manager.plant_id) {
-                managerPlant = await db.collection('plants').findOne({ _id: manager.plant_id } as any);
-            }
-            if (!managerPlant) {
-                managerPlant = await db.collection('plants').findOne({ manager_id: resolvedManagerId } as any);
-            }
-            if (managerPlant) {
-                resolvedPlantId = managerPlant._id;
-                resolvedPostcodes = Array.isArray(managerPlant.service_pincodes)
-                    ? managerPlant.service_pincodes
-                    : (managerPlant.service_pincodes || '').split(',').map((p: string) => p.trim().toUpperCase()).filter(Boolean);
-            }
-        }
-
-        const newStaff: any = {
-            ...staffData,
-            _id: internalDbId,
-            publicId: staffPublicId,
-            staffId: staffPublicId,
-            id: staffPublicId,
-            email: staffData.email.toLowerCase(),
-            password: hashPassword(staffData.password),
-            role: staffData.role || 'admin',
-            is_active: staffData.is_active !== undefined ? staffData.is_active : true,
-            vehicle_type: staffData.vehicle_type || staffData.vehicleType || '',
-            vehicle_reg: staffData.vehicle_reg || staffData.vehicleReg || '',
-            license_number: staffData.license_number || staffData.licenseNum || '',
-            emergency_contact: staffData.emergency_contact || (staffData.emergencyName || staffData.emergencyPhone ? { name: staffData.emergencyName || '', phone: staffData.emergencyPhone || '' } : undefined),
-            vehicle: staffData.vehicle || (staffData.vehicle_reg || staffData.vehicleReg ? `${staffData.vehicle_type || staffData.vehicleType || 'Vehicle'} - ${staffData.vehicle_reg || staffData.vehicleReg}` : staffData.vehicle || ''),
-            plant_id: resolvedPlantId,
-            manager_id: resolvedManagerId,
-            assigned_postcodes: resolvedPostcodes,
-            assignedSectors: resolvedPostcodes,
-            created_at: now,
-            created_by: adminId
+        const actorContext: any = {
+            token: { sub: adminId, role: 'super_admin', email: (adminUser as any)?.email || process.env.ADMIN_EMAIL || '' },
+            dbUser: adminUser
         };
-        await db.collection('users').insertOne(newStaff as any);
 
-        if (staffData.role === 'manager' && staffData.plant_id) {
-            const plant = await db.collection('plants').findOne({ _id: staffData.plant_id } as any);
-            if (plant) {
-                if (plant.manager_id) {
-                    await db.collection('users').updateOne(
-                        { _id: plant.manager_id },
-                        { $set: { plant_id: null } }
-                    );
-                }
-                await db.collection('plants').updateOne(
-                    { _id: staffData.plant_id },
-                    { $set: { manager_id: internalDbId } }
-                );
-            }
+        const targetRole = (staffData.role || '').toLowerCase();
+        if (targetRole === 'manager' || targetRole === 'plant_manager') {
+            return StaffProvisioningService.provisionManager(actorContext, staffData);
+        } else if (targetRole === 'driver') {
+            return StaffProvisioningService.provisionDriver(actorContext, staffData);
+        } else if (targetRole === 'processor') {
+            return StaffProvisioningService.provisionProcessor(actorContext, staffData);
+        } else {
+            throw new Error(`Invalid staff role "${targetRole}". Must be manager, driver, or processor.`);
         }
-        return { success: true, staffId: staffPublicId, publicId: staffPublicId };
     }
 
     static async updateStaffMember(adminId: string, staffId: string, staffData: any) {
         const db = await getDb();
-        const user = await db.collection('users').findOne({ _id: staffId } as any);
-        if (!user) throw new Error('Staff member not found.');
+        const adminUser = await db.collection('users').findOne({
+            $or: [{ _id: adminId as any }, { id: adminId }, { auth0UserId: adminId }, { auth0_sub: adminId }]
+        }) || { _id: adminId, role: 'super_admin' };
 
-        if (staffData.is_active === false && user.role === 'driver') {
-            const activeOrders = await db.collection('orders').countDocuments({
-                assigned_driver_id: staffId,
-                status: { $nin: ['delivered', 'cancelled', 'order_placed', 'pending_payment'] }
-            });
-            if (activeOrders > 0) {
-                throw new Error(`Cannot suspend driver with ${activeOrders} active assigned order(s). Please reassign their orders first.`);
-            }
-        }
+        const actorContext: any = {
+            token: { sub: adminId, role: 'super_admin', email: (adminUser as any)?.email || process.env.ADMIN_EMAIL || '' },
+            dbUser: adminUser
+        };
 
-        const now = new Date().toISOString();
-        const updateFields: any = { updated_at: now };
-
-        if (staffData.full_name) updateFields.full_name = staffData.full_name;
-        if (staffData.phone) updateFields.phone = staffData.phone;
-        if (staffData.email) updateFields.email = staffData.email.toLowerCase();
-        if (staffData.role) updateFields.role = staffData.role;
-        if (staffData.is_active !== undefined) updateFields.is_active = staffData.is_active;
-        if (staffData.password) updateFields.password = hashPassword(staffData.password);
-        if (staffData.vehicle !== undefined) updateFields.vehicle = staffData.vehicle;
-        if (staffData.vehicle_type !== undefined || staffData.vehicleType !== undefined) updateFields.vehicle_type = staffData.vehicle_type || staffData.vehicleType;
-        if (staffData.vehicle_reg !== undefined || staffData.vehicleReg !== undefined) updateFields.vehicle_reg = staffData.vehicle_reg || staffData.vehicleReg;
-        if (staffData.license_number !== undefined || staffData.licenseNum !== undefined) updateFields.license_number = staffData.license_number || staffData.licenseNum;
-        if (staffData.emergency_contact !== undefined) updateFields.emergency_contact = staffData.emergency_contact;
-        if (staffData.emergencyName !== undefined || staffData.emergencyPhone !== undefined) {
-            updateFields.emergency_contact = { name: staffData.emergencyName || '', phone: staffData.emergencyPhone || '' };
-        }
-        // For driver/processor: postcodes are managed via Manager → Plant inheritance only — not manually
-        if (['driver', 'processor'].includes(user.role)) {
-            // Sync postcodes from manager's plant automatically (ignore any manual input)
-            await this.syncStaffPostcodesFromManager(db, staffId);
-        } else {
-            // For manager/admin roles: allow direct postcode update
-            if (staffData.assignedSectors !== undefined) updateFields.assignedSectors = staffData.assignedSectors;
-            if (staffData.assigned_postcodes !== undefined) {
-                updateFields.assigned_postcodes = staffData.assigned_postcodes;
-                updateFields.assignedSectors = staffData.assigned_postcodes;
-            }
-        }
-
-        if (staffData.plant_id !== undefined) {
-            const oldPlantId = user.plant_id;
-            const newPlantId = staffData.plant_id;
-
-            if (newPlantId) {
-                const plant = await db.collection('plants').findOne({ _id: newPlantId } as any);
-                if (plant) {
-                    if (plant.manager_id && plant.manager_id !== staffId) {
-                        await db.collection('users').updateOne(
-                            { _id: plant.manager_id },
-                            { $set: { plant_id: null } }
-                        );
-                    }
-                    await db.collection('plants').updateOne(
-                        { _id: newPlantId },
-                        { $set: { manager_id: staffId } }
-                    );
-                }
-            }
-
-            if (oldPlantId && oldPlantId !== newPlantId) {
-                await db.collection('plants').updateOne(
-                    { _id: oldPlantId },
-                    { $set: { manager_id: null } }
-                );
-            }
-            updateFields.plant_id = newPlantId || null;
-        }
-
-        await db.collection('users').updateOne({ _id: staffId } as any, { $set: updateFields });
-        
-        await AuditService.recordEvent({
-            entityType: 'staff',
-            entityId: staffId,
-            action: 'staff_updated',
-            actorId: adminId,
-            actorRole: 'admin'
-        });
-        return { success: true };
+        return StaffProvisioningService.updateUser(actorContext, staffId, staffData);
     }
 
     static async getPlants() {

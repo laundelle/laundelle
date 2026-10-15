@@ -95,9 +95,49 @@ export const managerIncidentSchema = z.object({
   description: z.string().min(5),
 });
 
+// Staff Provisioning (Auth0 M2M + MongoDB - No passwords)
+export const createManagerSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters'),
+  email: z.string().email('Please enter a valid email address'),
+  phone: z.string().optional(),
+  plant: z.string().min(1, 'Plant is required').optional(),
+  plant_id: z.string().optional(),
+  assigned_postcodes: z.array(z.string()).optional(),
+});
+
+export const createDriverSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters'),
+  email: z.string().email('Please enter a valid email address'),
+  phone: z.string().min(5, 'Phone number is required'),
+  vehicle: z.string().optional(),
+  vehicle_type: z.string().optional(),
+  vehicle_reg: z.string().optional(),
+  license_number: z.string().optional(),
+  emergency_contact: z.object({
+    name: z.string(),
+    phone: z.string(),
+  }).optional(),
+  manager_id: z.string().optional(),
+  plant_id: z.string().optional(),
+});
+
+export const createProcessorSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters'),
+  email: z.string().email('Please enter a valid email address'),
+  phone: z.string().optional(),
+  shift: z.string().optional(),
+  skills: z.array(z.string()).optional(),
+  station: z.string().optional(),
+  manager_id: z.string().optional(),
+  plant_id: z.string().optional(),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type AddressInput = z.infer<typeof addressSchema>;
+export type CreateManagerValidationInput = z.infer<typeof createManagerSchema>;
+export type CreateDriverValidationInput = z.infer<typeof createDriverSchema>;
+export type CreateProcessorValidationInput = z.infer<typeof createProcessorSchema>;
 
 export * from './scheduleValidation';

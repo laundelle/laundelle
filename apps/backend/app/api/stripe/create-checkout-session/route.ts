@@ -13,17 +13,20 @@ function getStripe(): Stripe {
     return stripeInstance;
 }
 
-import { getAuthenticatedUser } from '@/lib/api';
+import { getAuthenticatedUserAsync } from '@/lib/api';
 import { getDb } from '@/lib/mongodb';
 import { PaymentService } from '@/services/PaymentService';
+import { PricingChargeService } from '@/services/PricingChargeService';
 import { generateOrderId } from '@laundelle/ids';
+import { isOriginAllowed } from '@/lib/cors';
+import { generateSecureNumericPin, generatePinSalt, hashOrderPin, encryptOrderPin } from '@/lib/orderPin';
 
 const MAX_ORDER_AMOUNT_GBP = 9999;
 const MIN_ORDER_AMOUNT_GBP = 0.50;
 
 export async function POST(req: NextRequest) {
     try {
-        const authUser = getAuthenticatedUser(req);
+        const authUser = await getAuthenticatedUserAsync(req);
         const body = await req.json();
         const { orderId, customerEmail, items, orderPayload } = body;
         const clientAmount = Number(body.amount || 0);
@@ -33,7 +36,39 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Authentication required. You must be logged in to place an order.' }, { status: 401 });
         }
 
-        const serverAmount = Number((orderPayload as any)?.total ?? clientAmount);
+        const candidateCouponCode = String(
+            body.couponCode ||
+            (orderPayload as any)?.couponCode ||
+            (orderPayload as any)?.coupon_code ||
+            (orderPayload as any)?.coupon?.code ||
+            ''
+        ).trim().toUpperCase();
+
+        let serverDiscount = 0;
+
+        let calculatedItemsGross = 0;
+        if (items && Array.isArray(items) && items.length > 0) {
+            calculatedItemsGross = items.reduce((sum: number, it: any) => {
+                const price = Number(it.price) || 0;
+                const qty = Number(it.quantity) || 1;
+                return sum + price * qty;
+            }, 0);
+        }
+
+        if (candidateCouponCode) {
+            const rawSubtotal = Number((orderPayload as any)?.subtotal) || calculatedItemsGross || clientAmount;
+            const validation = await PricingChargeService.validateCoupon(candidateCouponCode, rawSubtotal);
+            if (!validation.valid) {
+                return NextResponse.json({ error: validation.message || 'Invalid or ineligible coupon code.' }, { status: 400 });
+            }
+            serverDiscount = validation.discountAmount || 0;
+        }
+
+        const authoritativeTotal = calculatedItemsGross > 0
+            ? Math.max(0, Math.round((calculatedItemsGross - serverDiscount) * 100) / 100)
+            : Number((orderPayload as any)?.total ?? clientAmount);
+
+        const serverAmount = authoritativeTotal;
 
         if (!serverAmount || isNaN(serverAmount) || serverAmount < MIN_ORDER_AMOUNT_GBP) {
             return NextResponse.json({ error: `Invalid order total. Minimum order amount is GBP${MIN_ORDER_AMOUNT_GBP.toFixed(2)}.` }, { status: 400 });
@@ -41,17 +76,44 @@ export async function POST(req: NextRequest) {
         if (serverAmount > MAX_ORDER_AMOUNT_GBP) {
             return NextResponse.json({ error: `Order total GBP${serverAmount.toFixed(2)} exceeds the maximum allowed amount of GBP${MAX_ORDER_AMOUNT_GBP}.` }, { status: 400 });
         }
-        if (clientAmount && Math.abs(clientAmount - serverAmount) > 0.01) {
-            return NextResponse.json({ error: 'Checkout total does not match the order total. Please refresh your cart and try again.' }, { status: 400 });
+        if (clientAmount && Math.abs(clientAmount - serverAmount) > 0.05) {
+            return NextResponse.json({ error: 'Checkout total does not match the authoritative order total. Please refresh your cart and try again.' }, { status: 400 });
         }
 
         await PaymentService.assertWebhookOperational();
 
-        const checkoutId = `chk_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-        const rawCandidateId = orderId || (orderPayload as any)?.id || (orderPayload as any)?._id || (orderPayload as any)?.publicId;
-        const targetOrderId = (rawCandidateId && typeof rawCandidateId === 'string' && rawCandidateId.startsWith('ORD-')) ? rawCandidateId : generateOrderId();
         const db = await getDb();
         const now = new Date().toISOString();
+
+        // Server-authoritative Order ID creation with ownership and duplicate verification
+        let targetOrderId: string;
+        const rawCandidateId = (orderId || (orderPayload as any)?.id || (orderPayload as any)?.publicId || '').toString().trim();
+
+        if (rawCandidateId && rawCandidateId.startsWith('ORD-')) {
+            const existingOrder = await db.collection('orders').findOne({
+                $or: [{ id: rawCandidateId }, { publicId: rawCandidateId }]
+            });
+            if (existingOrder) {
+                // Verify ownership: customer can only reuse their own unpaid pending_payment order
+                const isOwner = (existingOrder.userId === effectiveUserId ||
+                                 existingOrder.user_id === effectiveUserId ||
+                                 existingOrder.customerId === effectiveUserId ||
+                                 existingOrder.customer_id === effectiveUserId);
+                const isUnpaid = existingOrder.status === 'pending_payment' && !existingOrder.isPaid;
+                if (isOwner && isUnpaid) {
+                    targetOrderId = rawCandidateId;
+                } else {
+                    // Refuse hijacking or overwriting paid/other user's order; generate fresh authoritative ID
+                    targetOrderId = generateOrderId();
+                }
+            } else {
+                targetOrderId = rawCandidateId;
+            }
+        } else {
+            targetOrderId = generateOrderId();
+        }
+
+        const checkoutId = `chk_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
         await db.collection('pending_checkouts').insertOne({
             _id: checkoutId as any,
@@ -72,6 +134,17 @@ export async function POST(req: NextRequest) {
         // Register initial order in orders collection as pending_payment.
         // If the customer leaves mid-way or closes the gateway, the order is safely visible in their orders page.
         if (orderPayload) {
+            const customerIdent = String(effectiveUserId || '');
+            const initialPickupPin = orderPayload.pickup_pin || orderPayload.pickup_otp || generateSecureNumericPin(6);
+            const pickupSalt = generatePinSalt();
+            const pickupHash = hashOrderPin(initialPickupPin, pickupSalt, targetOrderId, customerIdent);
+            const pickupEnc = encryptOrderPin(initialPickupPin, targetOrderId, customerIdent);
+
+            const initialDeliveryPin = orderPayload.delivery_pin || orderPayload.delivery_otp || generateSecureNumericPin(4);
+            const deliverySalt = generatePinSalt();
+            const deliveryHash = hashOrderPin(initialDeliveryPin, deliverySalt, targetOrderId, customerIdent);
+            const deliveryEnc = encryptOrderPin(initialDeliveryPin, targetOrderId, customerIdent);
+
             const initialOrderDoc = {
                 ...orderPayload,
                 id: targetOrderId,
@@ -85,6 +158,20 @@ export async function POST(req: NextRequest) {
                 paymentStatus: 'Pending',
                 payment_status: 'Pending',
                 isPaid: false,
+                pickup_pin: initialPickupPin,
+                pickup_otp: initialPickupPin,
+                pickup_pin_hash: pickupHash,
+                pickup_pin_salt: pickupSalt,
+                pickup_pin_enc: pickupEnc,
+                pickup_pin_attempts: 0,
+                pickup_pin_locked: false,
+                delivery_pin: initialDeliveryPin,
+                delivery_otp: initialDeliveryPin,
+                delivery_pin_hash: deliveryHash,
+                delivery_pin_salt: deliverySalt,
+                delivery_pin_enc: deliveryEnc,
+                delivery_pin_attempts: 0,
+                delivery_pin_locked: false,
                 created_at: now,
                 updated_at: now,
                 timeline_events: [
@@ -93,37 +180,65 @@ export async function POST(req: NextRequest) {
                 ]
             };
             await db.collection('orders').updateOne(
-                { $or: [{ id: targetOrderId }, { _id: targetOrderId as any }] } as any,
+                { $or: [{ id: targetOrderId }, { publicId: targetOrderId }] } as any,
                 { $setOnInsert: initialOrderDoc },
                 { upsert: true }
             );
         }
 
-        // Dynamic origin resolution supporting mobile forwarded ports, tunnels, and proxies
-        let origin = (body.returnUrl || body.return_url || body.origin || '').toString().trim().replace(/\/+$/, '');
-        if (!origin) {
-            const forwardedHost = req.headers.get('x-forwarded-host');
-            const forwardedProto = req.headers.get('x-forwarded-proto') || 'https';
-            if (forwardedHost) {
-                origin = `${forwardedProto}://${forwardedHost}`;
+        // Strict return URL origin validation preventing open redirect vulnerabilities
+        let origin = '';
+        const clientReturnUrl = (body.returnUrl || body.return_url || body.origin || '').toString().trim();
+        if (clientReturnUrl) {
+            let parsedOrigin: string | null = null;
+            try {
+                parsedOrigin = new URL(clientReturnUrl).origin;
+            } catch {
+                return NextResponse.json({ error: 'Malformed return URL' }, { status: 400 });
+            }
+            if (!isOriginAllowed(parsedOrigin)) {
+                return NextResponse.json({ error: 'Untrusted return URL origin' }, { status: 400 });
+            }
+            origin = parsedOrigin;
+        } else {
+            const reqOrigin = req.headers.get('origin');
+            if (reqOrigin && isOriginAllowed(reqOrigin)) {
+                origin = reqOrigin;
             } else {
-                origin = req.headers.get('origin') || (req.headers.get('referer') ? new URL(req.headers.get('referer')!).origin : req.nextUrl.origin);
+                origin = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://customer.laundelle.co.uk').trim();
             }
         }
         origin = origin.replace(/\/+$/, '');
 
         const stripe = getStripe();
 
-        const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = items && items.length > 0
-            ? items.map((item: any) => ({
+        let lineItems: Stripe.Checkout.SessionCreateParams.LineItem[];
+        if (serverDiscount > 0) {
+            const promoDesc = candidateCouponCode ? ` (Promo: ${candidateCouponCode} - Saved £${serverDiscount.toFixed(2)})` : ` (Saved £${serverDiscount.toFixed(2)})`;
+            lineItems = [
+                {
+                    price_data: {
+                        currency: 'gbp',
+                        product_data: {
+                            name: `Laundelle Laundry Service${promoDesc}`,
+                            description: `${items?.length || 1} line item(s) reconciled`
+                        },
+                        unit_amount: Math.round(serverAmount * 100),
+                    },
+                    quantity: 1,
+                }
+            ];
+        } else if (items && Array.isArray(items) && items.length > 0) {
+            lineItems = items.map((item: any) => ({
                 price_data: {
                     currency: 'gbp',
                     product_data: { name: item.name || 'Laundelle Service' },
                     unit_amount: Math.round(Number(item.price) * 100),
                 },
                 quantity: Number(item.quantity) || 1,
-            }))
-            : [{
+            }));
+        } else {
+            lineItems = [{
                 price_data: {
                     currency: 'gbp',
                     product_data: { name: 'Laundelle Laundry Service' },
@@ -131,6 +246,7 @@ export async function POST(req: NextRequest) {
                 },
                 quantity: 1,
             }];
+        }
 
         // Create a Stripe-hosted Checkout Session.
         // Card entry happens on Stripe's own HTTPS domain (checkout.stripe.com),
@@ -146,6 +262,8 @@ export async function POST(req: NextRequest) {
                 checkoutId,
                 orderId: targetOrderId,
                 userId: effectiveUserId,
+                couponCode: candidateCouponCode || '',
+                discount: String(serverDiscount),
             },
         });
 
@@ -155,7 +273,7 @@ export async function POST(req: NextRequest) {
         );
 
         await db.collection('orders').updateOne(
-            { $or: [{ id: targetOrderId }, { _id: targetOrderId as any }] } as any,
+            { $or: [{ id: targetOrderId }, { publicId: targetOrderId }] } as any,
             { $set: { stripe_session_id: session.id, stripeSessionId: session.id } }
         );
 

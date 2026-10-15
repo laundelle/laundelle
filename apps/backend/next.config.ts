@@ -13,10 +13,6 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
   'http://127.0.0.1:3002',
-  'https://pqd8t2s4-3000.inc1.devtunnels.ms',
-  'https://pqd8t2s4-3001.inc1.devtunnels.ms',
-  'https://pqd8t2s4-3002.inc1.devtunnels.ms',
-  'https://pqd8t2s4-4000.inc1.devtunnels.ms',
 ];
 
 function getAllowedOrigins(): string[] {
@@ -75,8 +71,11 @@ const nextConfig: NextConfig = {
       ],
     };
 
+    const isProd = process.env.NODE_ENV === 'production';
+    const dynamicHeaders = isProd ? [] : [tunnelHeader];
+
     return [
-      tunnelHeader,
+      ...dynamicHeaders,
       {
         source: '/api/:path*',
         headers: [
@@ -84,6 +83,7 @@ const nextConfig: NextConfig = {
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains; preload' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
           { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' },
           { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-Requested-With, laundelle_token, l2u_token' },
           { key: 'Access-Control-Max-Age', value: '86400' },

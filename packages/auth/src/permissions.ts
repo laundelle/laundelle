@@ -7,13 +7,168 @@ export class ForbiddenError extends Error {
 }
 
 /**
- * LAUNDELLE Role-Based Override Permission Definitions
- *
- * Permission Model:
- * ADMIN (admin, super_admin) -> Inherits ALL manager permissions + ALL restricted operational & financial overrides
- * MANAGER (manager)          -> Basic day-to-day operational overrides only
+ * Laundelle Canonical Auth0 Roles
  */
+export const AUTH0_ROLES = [
+  'super_admin',
+  'plant_manager',
+  'driver',
+  'processor',
+  'customer'
+] as const;
 
+export type Auth0Role = typeof AUTH0_ROLES[number];
+
+/**
+ * Super Admin Permissions
+ */
+export const SUPER_ADMIN_PERMISSIONS = [
+  'users:create',
+  'users:read',
+  'users:update',
+  'users:disable',
+  'managers:create',
+  'managers:read',
+  'managers:update',
+  'drivers:create',
+  'drivers:read',
+  'drivers:update',
+  'drivers:disable',
+  'processors:create',
+  'processors:read',
+  'processors:update',
+  'processors:disable',
+  'orders:read',
+  'orders:update',
+  'orders:assign',
+  'plants:read',
+  'plant:read',
+  'plants:create',
+  'plants:update'
+] as const;
+
+/**
+ * Plant Manager Permissions
+ */
+export const PLANT_MANAGER_PERMISSIONS = [
+  'drivers:create',
+  'drivers:read',
+  'drivers:update',
+  'processors:create',
+  'processors:read',
+  'processors:update',
+  'orders:read',
+  'orders:update',
+  'orders:assign',
+  'plants:read',
+  'plant:read'
+] as const;
+
+/**
+ * Driver Permissions (Minimal scope)
+ */
+export const DRIVER_PERMISSIONS = [
+  'orders:read',
+  'orders:update',
+  'driver:jobs:read',
+  'driver:jobs:update'
+] as const;
+
+/**
+ * Processor Permissions (Minimal scope)
+ */
+export const PROCESSOR_PERMISSIONS = [
+  'orders:read',
+  'orders:update',
+  'processor:jobs:read',
+  'processor:jobs:update'
+] as const;
+
+/**
+ * Customer Permissions (Minimal scope)
+ */
+export const CUSTOMER_PERMISSIONS = [
+  'orders:read',
+  'orders:create',
+  'customer:profile:read',
+  'customer:profile:update'
+] as const;
+
+export type AppPermission =
+  | typeof SUPER_ADMIN_PERMISSIONS[number]
+  | typeof PLANT_MANAGER_PERMISSIONS[number]
+  | typeof DRIVER_PERMISSIONS[number]
+  | typeof PROCESSOR_PERMISSIONS[number]
+  | typeof CUSTOMER_PERMISSIONS[number];
+
+/**
+ * Normalizes legacy role names to canonical Auth0 roles.
+ * 'admin' -> 'super_admin'
+ * 'manager' -> 'plant_manager'
+ */
+export function normalizeRole(role?: string | null): Auth0Role | null {
+  if (!role) return null;
+  const r = role.toLowerCase().trim();
+  if (r === 'super_admin' || r === 'admin') return 'super_admin';
+  if (r === 'plant_manager' || r === 'manager') return 'plant_manager';
+  if (r === 'driver') return 'driver';
+  if (r === 'processor') return 'processor';
+  if (r === 'customer') return 'customer';
+  return null;
+}
+
+/**
+ * Retrieves the full permission set for a given role.
+ */
+export function getRolePermissions(role?: string | null): readonly string[] {
+  const norm = normalizeRole(role);
+  if (!norm) return [];
+  switch (norm) {
+    case 'super_admin':
+      return [
+        ...SUPER_ADMIN_PERMISSIONS,
+        ...ADMIN_ONLY_OVERRIDES,
+        ...MANAGER_ALLOWED_OVERRIDES
+      ];
+    case 'plant_manager':
+      return [
+        ...PLANT_MANAGER_PERMISSIONS,
+        ...MANAGER_ALLOWED_OVERRIDES
+      ];
+    case 'driver':
+      return DRIVER_PERMISSIONS;
+    case 'processor':
+      return PROCESSOR_PERMISSIONS;
+    case 'customer':
+      return CUSTOMER_PERMISSIONS;
+    default:
+      return [];
+  }
+}
+
+/**
+ * Evaluates whether an actor possesses the specified permission.
+ * Checks Auth0 token claims first, then falls back to canonical role inheritance.
+ */
+export function hasPermission(
+  role: string | null | undefined,
+  tokenPermissions: string[] | undefined,
+  requiredPermission: string
+): boolean {
+  const equivalentPermissions = (requiredPermission === 'plant:read' || requiredPermission === 'plants:read')
+    ? ['plants:read', 'plant:read']
+    : [requiredPermission];
+
+  if (Array.isArray(tokenPermissions) && tokenPermissions.some(p => equivalentPermissions.includes(p))) {
+    return true;
+  }
+  const rolePerms = getRolePermissions(role);
+  return rolePerms.some(p => equivalentPermissions.includes(p));
+}
+
+/**
+ * LAUNDELLE Role-Based Override Permission Definitions (Operational / Incidents)
+ */
 export const MANAGER_ALLOWED_OVERRIDES = [
   'reschedule_slot',
   'edit_order_details',
@@ -61,18 +216,11 @@ export type AdminOnlyResolveType = typeof ADMIN_ONLY_RESOLVE_TYPES[number];
  */
 export function canPerformOverride(role: string | null | undefined, action: string): boolean {
   if (!role) return false;
-  const normalizedRole = role.toLowerCase().trim();
-
-  // Admin & Super Admin have unrestricted override access
-  if (normalizedRole === 'admin' || normalizedRole === 'super_admin') {
-    return true;
-  }
-
-  // Manager is strictly restricted to basic operational overrides
-  if (normalizedRole === 'manager') {
+  const norm = normalizeRole(role);
+  if (norm === 'super_admin') return true;
+  if (norm === 'plant_manager') {
     return (MANAGER_ALLOWED_OVERRIDES as readonly string[]).includes(action);
   }
-
   return false;
 }
 
@@ -93,21 +241,14 @@ export function assertCanPerformOverride(role: string | null | undefined, action
  */
 export function canResolveDispute(role: string | null | undefined, resolveType: string): boolean {
   if (!role) return false;
-  const normalizedRole = role.toLowerCase().trim();
-
-  if (normalizedRole === 'admin' || normalizedRole === 'super_admin') {
-    return true;
-  }
-
-  if (normalizedRole === 'manager') {
-    // Managers cannot execute financial remedies
+  const norm = normalizeRole(role);
+  if (norm === 'super_admin') return true;
+  if (norm === 'plant_manager') {
     if ((ADMIN_ONLY_RESOLVE_TYPES as readonly string[]).includes(resolveType)) {
       return false;
     }
-    // Managers can trigger operational rewashes or close notes
     return ['rewash', 'dismissed', 'manual'].includes(resolveType);
   }
-
   return false;
 }
 

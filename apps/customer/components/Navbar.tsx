@@ -50,31 +50,34 @@ export const Navbar: React.FC<NavbarProps> = ({
   });
 
   React.useEffect(() => {
+    let rafId: number;
+
     const updateIndicator = () => {
-      const activeEl = tabRefs.current[activeTab];
-      const navEl = navRef.current;
-      if (activeEl && navEl) {
-        const navRect = navEl.getBoundingClientRect();
-        const activeRect = activeEl.getBoundingClientRect();
+      rafId = requestAnimationFrame(() => {
+        const activeEl = tabRefs.current[activeTab];
+        const navEl = navRef.current;
+        if (activeEl && navEl) {
+          const navRect = navEl.getBoundingClientRect();
+          const activeRect = activeEl.getBoundingClientRect();
 
-        const left = activeRect.left - navRect.left + 6;
-        const width = Math.max(activeRect.width - 12, 16);
+          const left = activeRect.left - navRect.left + 6;
+          const width = Math.max(activeRect.width - 12, 16);
 
-        setIndicatorStyle({
-          left,
-          width,
-          opacity: 1,
-        });
-      } else {
-        setIndicatorStyle((prev) => ({ ...prev, opacity: 0 }));
-      }
+          setIndicatorStyle({
+            left,
+            width,
+            opacity: 1,
+          });
+        } else {
+          setIndicatorStyle((prev) => ({ ...prev, opacity: 0 }));
+        }
+      });
     };
 
     updateIndicator();
-    const timeoutId = setTimeout(updateIndicator, 50);
-    window.addEventListener('resize', updateIndicator);
+    window.addEventListener('resize', updateIndicator, { passive: true });
     return () => {
-      clearTimeout(timeoutId);
+      cancelAnimationFrame(rafId);
       window.removeEventListener('resize', updateIndicator);
     };
   }, [activeTab]);

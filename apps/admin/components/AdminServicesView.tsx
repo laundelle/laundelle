@@ -137,50 +137,50 @@ export const AdminServicesView: React.FC = () => {
   });
 
   return (
-    <div className="w-full space-y-6 p-6 sm:p-8 pb-24">
+    <div className="w-full space-y-5 p-6 sm:p-8 pb-24 font-sans">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-heading font-extrabold text-[#03045E]">Services Catalog & Dynamic Pricing Builder</h1>
-          <p className="text-xs text-gray-500">Configure base laundry services, add-ons, turnaround times, and sector pricing rules.</p>
+          <h1 className="text-xl font-heading font-bold text-slate-900 tracking-tight">Services & Pricing</h1>
+          <p className="text-xs text-slate-500">Configure laundry services and base pricing</p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <button
             onClick={loadServices}
             disabled={loading}
-            className="p-2.5 bg-white border border-gray-200 hover:bg-gray-50 text-[#03045E] rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+            className="px-3.5 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
             title="Refresh Services Catalog"
           >
-            <RefreshCw className={`w-4 h-4 text-[#0077B6] ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${loading ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">Refresh</span>
           </button>
           <button
             onClick={openAddModal}
-            className="bg-[#03045E] hover:bg-[#023E8A] text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-sm cursor-pointer"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
           >
-            <Plus className="w-4 h-4 text-[#48CAE4]" />
-            <span>Add New Service</span>
+            <Plus className="w-4 h-4" />
+            <span>Add Service</span>
           </button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="bg-white rounded-3xl p-2 shadow-xs border border-gray-100 flex items-center gap-2">
+      <div className="bg-white rounded-2xl p-1.5 shadow-xs border border-slate-100 flex items-center gap-1.5">
         <button
           onClick={() => setActiveTab('services')}
-          className={`px-5 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
-            activeTab === 'services' ? 'bg-[#03045E] text-white shadow-sm' : 'text-gray-600'
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            activeTab === 'services' ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
           }`}
         >
-          Services Catalog ({services.length})
+          Services ({services.length})
         </button>
         <button
           onClick={() => setActiveTab('pricing')}
-          className={`px-5 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
-            activeTab === 'pricing' ? 'bg-[#03045E] text-white shadow-sm' : 'text-gray-600'
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+            activeTab === 'pricing' ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
           }`}
         >
-          Dynamic Pricing Rules ({services.length})
+          Pricing Rules
         </button>
       </div>
 

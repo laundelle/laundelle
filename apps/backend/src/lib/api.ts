@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { ObjectId } from 'mongodb';
 import { verifyJwt, verifyJwtAsync, syncRevokedTokens, JwtPayload } from './auth';
+import { getDb } from './mongodb';
+import { hasPermission, normalizeRole } from '@laundelle/auth';
+import { AuditService } from '@/services/AuditService';
+import { generateStaffId } from '@laundelle/ids';
 
 // ---------------------------------------------------------------------------
 // Standard API Responses
@@ -130,21 +135,329 @@ export async function requireAuthAsync(req: NextRequest): Promise<JwtPayload> {
     return user;
 }
 
+// ---------------------------------------------------------------------------
+// Laundelle User Resolution & RBAC Authorization
+// ---------------------------------------------------------------------------
+
+export interface AuthenticatedContext {
+    token: JwtPayload;
+    dbUser: any;
+}
+
+/**
+ * Resolves a Laundelle user profile from MongoDB given a verified JWT payload.
+ * Matches by auth0UserId, auth0_sub, internal _id, or email.
+ * Ensures the account is active and not suspended.
+ */
+export async function resolveLaundelleUser(tokenPayload: JwtPayload): Promise<any> {
+    if (!tokenPayload) return null;
+    const db = await getDb();
+    const sub = tokenPayload.sub;
+    const auth0UserId = tokenPayload.auth0UserId || sub;
+    const email = tokenPayload.email ? String(tokenPayload.email).toLowerCase().trim() : null;
+
+    const queryConditions: any[] = [];
+    if (auth0UserId) {
+        queryConditions.push({ auth0UserId });
+        queryConditions.push({ auth0_sub: auth0UserId });
+    }
+    if (sub) {
+        queryConditions.push({ _id: sub });
+        if (ObjectId.isValid(sub)) {
+            queryConditions.push({ _id: new ObjectId(sub) });
+        }
+        queryConditions.push({ publicId: sub });
+        queryConditions.push({ id: sub });
+    }
+
+    const envAdminEmails = [
+        process.env.ADMIN_EMAIL,
+        ...(process.env.ADDITIONAL_ADMIN_EMAILS || '').split(','),
+    ].filter(Boolean).map(e => String(e).trim().toLowerCase());
+
+    const isDesignatedAdminEmail = Boolean(email && envAdminEmails.includes(email));
+
+    if (email && (tokenPayload.emailVerified === true || tokenPayload.isLegacyToken || isDesignatedAdminEmail)) {
+        queryConditions.push({ email });
+    }
+
+    if (queryConditions.length === 0) return null;
+
+    let user = await db.collection('users').findOne({ $or: queryConditions });
+
+    if (user) {
+        const isStaff = ['super_admin', 'admin', 'plant_manager', 'driver', 'processor'].includes(user.role);
+        if (isStaff) {
+            const matchesSub = user.auth0UserId === auth0UserId || 
+                               user.auth0_sub === auth0UserId || 
+                               String(user._id) === sub ||
+                               user.publicId === sub ||
+                               user.id === sub ||
+                               (user.email && email && user.email === email && (tokenPayload.isLegacyToken || isDesignatedAdminEmail));
+            if (!matchesSub) {
+                // Deny unlinked identity from assuming staff profile by email alone
+                return null;
+            }
+        }
+    }
+
+    // Secure Just-in-Time (JIT) Super Admin Bootstrap
+    // Triggered strictly when a verified Auth0 RS256 token belongs to the designated Super Admin
+    if (!user && !tokenPayload.isLegacyToken) {
+        const isSuperAdminRole = tokenPayload.role === 'super_admin' || (Array.isArray(tokenPayload.roles) && tokenPayload.roles.includes('super_admin'));
+        const designatedAdminSub = (process.env.BOOTSTRAP_ADMIN_SUB || process.env.ADMIN_AUTH0_SUB || '').trim();
+        const designatedAdminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase().trim();
+
+        let isDesignatedAdmin = false;
+        if (designatedAdminSub) {
+            isDesignatedAdmin = sub === designatedAdminSub;
+        } else if (designatedAdminEmail && email) {
+            isDesignatedAdmin = email === designatedAdminEmail;
+        }
+
+        if (isSuperAdminRole && isDesignatedAdmin) {
+            const now = new Date().toISOString();
+            const internalDbId = new ObjectId().toHexString();
+            const adminPublicId = generateStaffId();
+            const adminEmail = email || designatedAdminEmail;
+            const adminName = tokenPayload.name || 'System Administrator';
+
+            const newAdminProfile = {
+                _id: internalDbId as any,
+                publicId: adminPublicId,
+                staffId: adminPublicId,
+                auth0UserId: auth0UserId,
+                auth0_sub: auth0UserId,
+                email: adminEmail,
+                full_name: adminName,
+                role: 'super_admin',
+                is_active: true,
+                customer_status: 'active',
+                email_verified: tokenPayload.emailVerified ?? true,
+                created_at: now,
+                updated_at: now
+            };
+
+            try {
+                await db.collection('users').insertOne(newAdminProfile);
+                user = newAdminProfile;
+                await AuditService.recordEvent({
+                    actorId: String(auth0UserId),
+                    actorRole: 'super_admin',
+                    action: 'super_admin_bootstrap_jit',
+                    entityType: 'user',
+                    entityId: internalDbId,
+                    metadata: {
+                        sub,
+                        auth0UserId,
+                        email: adminEmail,
+                        method: 'auth0_rs256_jit_bootstrap'
+                    }
+                });
+            } catch (err: any) {
+                // Concurrency-safe: if another concurrent request inserted, retrieve it
+                user = await db.collection('users').findOne({ $or: queryConditions });
+            }
+        }
+    }
+
+    if (!user) return null;
+
+    // Verify account is not disabled or suspended
+    if (user.is_active === false || user.status === 'suspended' || user.is_blocked) {
+        throw new ForbiddenError('Account is deactivated or suspended. Please contact support.');
+    }
+
+    // Auto-link Plant Manager to operational plant if missing
+    const normUserRole = normalizeRole(user.role);
+    if (normUserRole === 'plant_manager' && !user.plant_id && !user.plantId) {
+        let plant = await db.collection('plants').findOne({ manager_id: String(user._id) });
+        if (!plant) {
+            plant = await db.collection('plants').findOne({ status: { $ne: 'inactive' } });
+        }
+        if (!plant) {
+            const defaultPlant = {
+                _id: 'plant_preston_central' as any,
+                id: 'plant_preston_central',
+                name: 'Preston Central Processing Plant',
+                code: 'PST-01',
+                address: 'Unit 4, Laundelle Industrial Estate, Preston PR1 1AA',
+                service_pincodes: ['PR1', 'PR2', 'PR3', 'PR4', 'PR5'],
+                manager_id: String(user._id),
+                status: 'active',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            };
+            await db.collection('plants').insertOne(defaultPlant);
+            plant = defaultPlant;
+        }
+        if (plant) {
+            const pId = String(plant._id || plant.id);
+            user.plant_id = pId;
+            user.plantId = pId;
+            await db.collection('users').updateOne(
+                { _id: user._id } as any,
+                { $set: { plant_id: pId, plantId: pId } }
+            );
+        }
+    }
+
+    return user;
+}
+
+/**
+ * Normalizes role matching for backwards compatibility.
+ * e.g. 'super_admin' matches 'admin', 'plant_manager' matches 'manager'.
+ */
+function isRoleAuthorized(userRole: string | undefined, allowedRoles: string[]): boolean {
+    if (!userRole) return false;
+    const normUser = normalizeRole(userRole) || userRole.toLowerCase();
+    const normalizedAllowed = allowedRoles.map(r => normalizeRole(r) || r.toLowerCase());
+    return normalizedAllowed.includes(normUser);
+}
+
 export function requireRole(req: NextRequest, allowedRoles: string[]): JwtPayload {
     const user = requireAuth(req);
-    if (!user.role || !allowedRoles.includes(user.role)) {
+    if (!isRoleAuthorized(user.role, allowedRoles)) {
         throw new ForbiddenError(`Role ${user.role || 'none'} is not authorized`);
+    }
+    const normUser = normalizeRole(user.role) || user.role?.toLowerCase();
+    const isStaff = ['super_admin', 'admin', 'plant_manager', 'driver', 'processor'].includes(normUser || '');
+    if (isStaff) {
+        if ((user as any).emailVerified === false) {
+            throw new ForbiddenError('Email verification is required to perform staff operations.');
+        }
     }
     return user;
 }
 
 export async function requireRoleAsync(req: NextRequest, allowedRoles: string[]): Promise<JwtPayload> {
     const user = await requireAuthAsync(req);
-    if (!user.role || !allowedRoles.includes(user.role)) {
-        throw new ForbiddenError(`Role ${user.role || 'none'} is not authorized`);
+    let effectiveRole = user.role;
+    let dbUser: any = null;
+    if (!isRoleAuthorized(effectiveRole, allowedRoles)) {
+        dbUser = await resolveLaundelleUser(user);
+        if (dbUser?.role) {
+            effectiveRole = dbUser.role;
+        }
     }
-    return user;
+    if (!isRoleAuthorized(effectiveRole, allowedRoles)) {
+        throw new ForbiddenError(`Role ${effectiveRole || 'none'} is not authorized`);
+    }
+    const normUser = normalizeRole(effectiveRole) || effectiveRole?.toLowerCase();
+    const isStaff = ['super_admin', 'admin', 'plant_manager', 'driver', 'processor'].includes(normUser || '');
+    if (isStaff) {
+        if ((user as any).emailVerified === false) {
+            throw new ForbiddenError('Email verification is required to perform staff operations.');
+        }
+        if (dbUser && dbUser.email_verified === false) {
+            throw new ForbiddenError('Email verification is required to perform staff operations.');
+        }
+    }
+    return { ...user, role: effectiveRole };
 }
+
+/**
+ * Authoritative Backend Authorization:
+ * 1. Verifies the Auth0 JWT.
+ * 2. Resolves the Laundelle user from MongoDB using auth0UserId / sub.
+ * 3. Enforces email verification for staff operations.
+ * 4. Enforces the required Auth0 permission.
+ */
+export async function requirePermission(
+    req: NextRequest,
+    permission: string
+): Promise<AuthenticatedContext> {
+    const token = await requireAuthAsync(req);
+    const dbUser = await resolveLaundelleUser(token);
+
+    if (!dbUser) {
+        throw new UnauthorizedError('Laundelle user profile not found. Complete sign-in to continue.');
+    }
+
+    const effectiveRole = dbUser.role || token.role;
+    const normRole = normalizeRole(effectiveRole);
+    const isStaff = ['super_admin', 'admin', 'plant_manager', 'driver', 'processor'].includes(normRole || '');
+
+    if (isStaff) {
+        if (token.emailVerified === false) {
+            throw new ForbiddenError('Email verification is required to perform staff operations.');
+        }
+        if (dbUser.email_verified === false) {
+            throw new ForbiddenError('Email verification is required to perform staff operations.');
+        }
+    }
+
+    const authorized = hasPermission(effectiveRole, token.permissions, permission);
+
+    if (!authorized) {
+        throw new ForbiddenError(`Access denied: Missing required permission "${permission}"`);
+    }
+
+    return { token, dbUser };
+}
+
+/**
+ * Resolves both verified JWT payload and authoritative MongoDB user record.
+ * Ensures caller is active and mapped to a real database user profile.
+ */
+export async function requireAuthWithUser(req: NextRequest): Promise<AuthenticatedContext> {
+    const token = await requireAuthAsync(req);
+    const dbUser = await resolveLaundelleUser(token);
+    if (!dbUser) {
+        throw new UnauthorizedError('Laundelle user profile not found or inactive.');
+    }
+    return { token, dbUser };
+}
+
+/**
+ * Strict Plant Isolation Guard:
+ * Ensures Plant Managers can ONLY access their own plant and staff assigned to their facility.
+ * Super Admins are granted unrestricted global access.
+ */
+export function assertPlantIsolation(
+    managerDbUser: any,
+    targetPlantId?: string | null,
+    targetStaff?: any | null
+): void {
+    if (!managerDbUser) {
+        throw new ForbiddenError('Access denied: Authentication required for plant authorization.');
+    }
+
+    const normRole = normalizeRole(managerDbUser.role);
+
+    // Super Admin has unrestricted global plant access
+    if (normRole === 'super_admin') {
+        return;
+    }
+
+    if (normRole === 'plant_manager') {
+        const managerPlantId = String(managerDbUser.plant_id || managerDbUser.plantId || '').trim();
+        if (!managerPlantId) {
+            throw new ForbiddenError('Access denied: Plant Manager is not linked to an operational plant.');
+        }
+
+        if (targetPlantId && String(targetPlantId).trim() !== managerPlantId) {
+            throw new ForbiddenError('Access denied: You are only authorized to manage operations for your assigned plant.');
+        }
+
+        if (targetStaff) {
+            const staffPlantId = String(targetStaff.plant_id || targetStaff.plantId || '').trim();
+            const staffManagerId = String(targetStaff.manager_id || targetStaff.plantManagerId || '').trim();
+            const isManagerSelf = String(targetStaff._id) === String(managerDbUser._id);
+            const matchesPlant = staffPlantId === managerPlantId;
+            const matchesManager = staffManagerId === String(managerDbUser._id);
+
+            if (!matchesPlant && !matchesManager && !isManagerSelf) {
+                throw new ForbiddenError('Access denied: Staff member does not belong to your facility.');
+            }
+        }
+        return;
+    }
+
+    throw new ForbiddenError('Access denied: Unauthorized role for plant operations.');
+}
+
 
 // ---------------------------------------------------------------------------
 // Error Handler Wrapper for Route Handlers

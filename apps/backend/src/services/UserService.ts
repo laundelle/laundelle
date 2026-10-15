@@ -11,7 +11,8 @@ export class UserService {
             { id: userId },
             { customerId: userId },
             { publicId: userId },
-            { auth0_sub: userId }
+            { auth0_sub: userId },
+            { auth0UserId: userId }
         ];
         if (typeof userId === 'string' && userId.includes('@')) {
             queries.push({ email: userId.toLowerCase().trim() });

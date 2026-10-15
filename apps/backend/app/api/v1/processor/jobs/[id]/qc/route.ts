@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, requireRole } from '@/lib/api';
+import { requireAuthAsync, requireRoleAsync, resolveLaundelleUser } from '@/lib/api';
 import { ProcessorService } from '@/services/ProcessorService';
 
 export async function POST(req: NextRequest, context: any) {
     try {
-        const session = await requireAuth(req);
-        requireRole(req, ['processor', 'super_admin', 'admin', 'manager']);
+        const session = await requireAuthAsync(req);
+        await requireRoleAsync(req, ['processor', 'super_admin', 'admin', 'manager', 'plant_manager']);
+        const dbUser = await resolveLaundelleUser(session);
+        const processorId = String(dbUser?._id || session.sub);
         const body = await req.json();
         const data = await ProcessorService.recordQualityCheck(
-            session.sub, 
+            processorId, 
             (await context.params).id, 
             body.status, 
             body.notes, 

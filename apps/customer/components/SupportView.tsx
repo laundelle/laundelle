@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import Image from 'next/image';
 import {
   MessageSquare,
   Phone,
@@ -18,6 +19,7 @@ import {
   Heart,
   Edit3
 } from 'lucide-react';
+import { LAUNDELLE_IMAGES, getOptimizedImageUrl } from '@laundelle/config';
 import { Order, SupportTicket, ActiveTab } from '@laundelle/types';
 import { dbCreateSupportTicket, getStoredSession } from '@laundelle/api-client';
 import { ScrollReveal } from '@laundelle/ui';
@@ -63,7 +65,7 @@ export const SupportView: React.FC<SupportViewProps> = ({ orders, onNavigate }) 
   const contactRef = useRef<HTMLElement>(null);
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
 
-  // Comprehensive FAQ list combining reference FAQ + extended mock questions
+  // Comprehensive FAQ list combining reference FAQ and customer support guidance
   const allFaqs = [
     {
       category: 'Booking & Collection',
@@ -273,10 +275,13 @@ export const SupportView: React.FC<SupportViewProps> = ({ orders, onNavigate }) 
                 <div className="absolute bottom-0 h-[92%] w-[75%] rounded-t-[150px] bg-blue-200/40" />
 
                 {/* High Quality Care Specialist Photo */}
-                <img
-                  src="/assets/support-agent.jpg"
+                <Image
+                  src={getOptimizedImageUrl(LAUNDELLE_IMAGES.supportAgent, { width: 800, quality: 'auto', format: 'auto' })}
                   alt="Laundelle customer care specialist"
-                  className="relative z-10 w-full h-full object-cover object-top filter brightness-[1.02]"
+                  fill
+                  sizes="(max-width: 768px) 85vw, 400px"
+                  loading="lazy"
+                  className="relative z-10 object-cover object-top filter brightness-[1.02]"
                 />
               </div>
 

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Search, Shirt, Sparkles, Filter, Info, ShoppingBag, ChevronDown, Clock, Droplets, ShieldCheck, Star, X, Zap, Award, CheckCircle2, ArrowRight } from 'lucide-react';
 import { ServiceItem, ActiveTab } from '@laundelle/types';
 import { ScrollReveal } from '@laundelle/ui';
+import Image from 'next/image';
+import { LAUNDELLE_IMAGES, LAUNDELLE_SERVICE_IMAGES, getOptimizedImageUrl } from '@laundelle/config';
 
 interface ServicesViewProps {
   services: ServiceItem[];
@@ -13,23 +15,14 @@ interface ServicesViewProps {
   onClearTargetService?: () => void;
 }
 
-// Map service names to their corresponding images in public/Images
-const SERVICE_NAME_TO_IMAGE: Record<string, string> = {
-  'Basic Alterations & Repairs': '/Images/Basic Alterations & Repairs.png',
-  'Curtains & Heavy Drapes': '/Images/Curtains & Heavy Drapes.png',
-  'Duvets & Bulky Bedding': '/Images/Duvets & Bulky Bedding.png',
-  'Express Same-Day Service': '/Images/Express Same-Day Service.png',
-  'Leather & Suede Jackets': '/Images/Leather & Suede Jackets.png',
-  'Pet Beds & Blankets': '/Images/Pet Beds & Blankets.png',
-  'Silk & Delicates Care': '/Images/Silk & Delicates Care.png',
-  'Sneaker & Shoe Deep Clean': '/Images/Sneaker & Shoe Deep Clean.png',
-  'Sports & Activewear': '/Images/Sports & Activewear.png',
-  'Steam Ironing & Pressing': '/Images/Steam Ironing & Pressing.png',
-  'Suit & Jacket Dry Cleaning': '/Images/Suit & Jacket Dry Cleaning.png',
-  'Wash + Dry + Fold': '/Images/Wash + Dry + Fold.png',
-  'Wash + Steam Iron': '/Images/Wash + Steam Iron.png',
-  'Wedding Dress Preservation': '/Images/Wedding Dress Preservation.png',
-};
+// Map service names to their corresponding Cloudinary optimized WebP images
+const SERVICE_NAME_TO_IMAGE: Record<string, string> = Object.entries(LAUNDELLE_SERVICE_IMAGES).reduce(
+  (acc, [name, meta]) => {
+    acc[name] = getOptimizedImageUrl(meta);
+    return acc;
+  },
+  {} as Record<string, string>
+);
 
 export const ServicesView: React.FC<ServicesViewProps> = ({
   services,
@@ -149,7 +142,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
             <div
               className="w-full h-full bg-cover bg-right sm:bg-center bg-no-repeat opacity-100 transition-all duration-300"
               style={{
-                backgroundImage: `url('/assets/services-hero.png')`,
+                backgroundImage: `url('${getOptimizedImageUrl(LAUNDELLE_IMAGES.servicesHero)}')`,
                 maskImage: 'linear-gradient(to right, transparent 0%, rgba(0,0,0,0.3) 18%, rgba(0,0,0,1) 50%)',
                 WebkitMaskImage: 'linear-gradient(to right, transparent 0%, rgba(0,0,0,0.3) 18%, rgba(0,0,0,1) 50%)',
               }}
@@ -219,8 +212,8 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
       ) : (
         <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-7">
           {filteredServices.map((service, index) => {
-            const fallbackImg = '/Images/Wash + Dry + Fold.png';
-            const serviceImg = SERVICE_NAME_TO_IMAGE[service.name] || (service.image && service.image.startsWith('/Images/') ? service.image : `/Images/${service.name}.png`) || fallbackImg;
+            const fallbackImg = SERVICE_NAME_TO_IMAGE['Wash + Dry + Fold'] || '';
+            const serviceImg = SERVICE_NAME_TO_IMAGE[service.name] || (service.image && !service.image.startsWith('/Images/') ? service.image : fallbackImg);
             const turnaround = 'turnaround' in service ? (service as any).turnaround : '24–48 Hours';
             const isPopular = service.popular || index === 0;
 
@@ -242,16 +235,15 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
                   }`}
                 >
                   {/* TOP VISUAL SIDE (Reduced Margins for a Bigger Image) */}
-                  <div className="w-full shrink-0 bg-white rounded-2xl relative overflow-hidden flex items-center justify-center p-0">
-                    {/* Main Product / Service Image (Shown Bigger) */}
-                    <img
+                  <div className="w-full shrink-0 bg-white rounded-2xl relative overflow-hidden flex items-center justify-center p-0 h-52 sm:h-56 lg:h-60">
+                    {/* Main Product / Service Image with next/image */}
+                    <Image
                       src={serviceImg}
                       alt={service.name}
-                      onError={(e) => {
-                        const target = e.currentTarget as HTMLImageElement;
-                        if (target.src !== fallbackImg) target.src = fallbackImg;
-                      }}
-                      className="w-full h-52 sm:h-56 lg:h-60 object-cover rounded-2xl group-hover:scale-103 transition-transform duration-500"
+                      fill
+                      sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                      loading="lazy"
+                      className="object-cover rounded-2xl group-hover:scale-103 transition-transform duration-500"
                     />
 
                     {/* Highlighted Selected Service Indicator Badge */}

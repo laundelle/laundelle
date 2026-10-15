@@ -20,6 +20,7 @@ import { AdminComplaintsView } from './AdminComplaintsView';
 import { ManagerIncidentsView } from './ManagerIncidentsView';
 import { AdminReportsView } from './AdminReportsView';
 import { AdminSettingsView } from './AdminSettingsView';
+import { AdminCouponsChargesView } from './AdminCouponsChargesView';
 
 
 import { Search, X, QrCode, User, ShoppingBag, LayoutDashboard, Users, Settings, Truck, Package } from 'lucide-react';
@@ -44,6 +45,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   );
   const [selectedLocation, setSelectedLocation] = useState('All Locations');
   const [dateFilter, setDateFilter] = useState('Today');
+  const [customStartDate, setCustomStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().split('T')[0];
+  });
+  const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [orders, setOrders] = useState<any[]>([]);
@@ -160,6 +167,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             onChangeLocation={setSelectedLocation}
             dateFilter={dateFilter}
             onChangeDateFilter={setDateFilter}
+            customStartDate={customStartDate}
+            onChangeCustomStartDate={setCustomStartDate}
+            customEndDate={customEndDate}
+            onChangeCustomEndDate={setCustomEndDate}
             onOpenGlobalSearch={() => setGlobalSearchOpen(true)}
             onExitAdmin={onExitAdmin}
           />
@@ -170,7 +181,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               currentRole === 'manager' ? (
                 <ManagerPortalView onNavigateTab={setActiveTab} />
               ) : (
-                <AdminDashboard onNavigateTab={setActiveTab} selectedLocation={selectedLocation} />
+                <AdminDashboard
+                  onNavigateTab={setActiveTab}
+                  selectedLocation={selectedLocation}
+                  dateFilter={dateFilter}
+                  customStartDate={customStartDate}
+                  customEndDate={customEndDate}
+                />
               )
             )}
 
@@ -183,6 +200,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               currentRole === 'manager' ? <ManagerStaffView /> : <AdminStaffView />
             )}
             {activeTab === 'services' && <AdminServicesView />}
+            {activeTab === 'coupons_charges' && <AdminCouponsChargesView />}
             {activeTab === 'areas' && <AdminAreasView />}
             {activeTab === 'finance' && <AdminFinanceView />}
             {activeTab === 'complaints' && <ManagerIncidentsView />}
@@ -195,45 +213,45 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
       {/* Global Admin Search Modal */}
       {globalSearchOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-white w-full max-w-2xl rounded-3xl p-6 shadow-2xl space-y-5 relative animate-in fade-in zoom-in duration-150">
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-16 bg-black/40 backdrop-blur-xs p-4">
+          <div className="bg-white w-full max-w-2xl rounded-2xl p-6 shadow-xl space-y-5 relative border border-slate-100 animate-in fade-in zoom-in duration-150">
             <button
               onClick={() => setGlobalSearchOpen(false)}
-              className="absolute top-5 right-5 text-gray-400 hover:text-gray-700 bg-gray-100 p-2 rounded-full cursor-pointer"
+              className="absolute top-5 right-5 text-slate-400 hover:text-slate-700 bg-slate-50 p-2 rounded-full cursor-pointer transition-colors"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
 
-            <div className="flex items-center gap-3 border-b border-gray-100 pb-3">
-              <Search className="w-5 h-5 text-[#0077B6]" />
+            <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
+              <Search className="w-4 h-4 text-slate-400" />
               <input
                 type="text"
                 autoFocus
                 value={globalQuery}
                 onChange={(e) => setGlobalQuery(e.target.value)}
-                placeholder="Type customer name, email, order #, QR bag ID, driver name, postcode..."
-                className="w-full text-sm font-medium focus:outline-hidden pr-8"
+                placeholder="Search orders, customers, QR bag ID, staff..."
+                className="w-full text-sm font-medium focus:outline-hidden pr-8 text-slate-900 placeholder:text-slate-400"
               />
             </div>
 
             {/* Results Grouping */}
             <div className="max-h-96 overflow-y-auto space-y-4">
               {globalQuery.trim().length === 0 ? (
-                <div className="py-8 text-center space-y-2">
-                  <Search className="w-8 h-8 text-gray-300 mx-auto" />
-                  <p className="text-xs font-bold text-gray-500">Global Operational Search</p>
-                  <p className="text-[11px] text-gray-400">Search across Orders, Customers, QR Bags, Drivers & Machinery.</p>
+                <div className="py-8 text-center space-y-1.5">
+                  <Search className="w-6 h-6 text-slate-300 mx-auto" />
+                  <p className="text-xs font-semibold text-slate-600">Global Operational Search</p>
+                  <p className="text-[11px] text-slate-400">Search orders, customers, QR bags, and staff.</p>
                 </div>
               ) : !hasGlobalResults ? (
-                <div className="py-8 text-center text-xs text-gray-500 font-bold">
+                <div className="py-8 text-center text-xs text-slate-500 font-medium">
                   No matching record found for "{globalQuery}"
                 </div>
               ) : (
                 <div className="space-y-4 text-xs">
                   {/* Orders */}
                   {searchResults.orders.length > 0 && (
-                    <div className="space-y-2">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                         Orders ({searchResults.orders.length})
                       </span>
                       {searchResults.orders.map((o) => (
@@ -243,14 +261,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             setActiveTab('orders');
                             setGlobalSearchOpen(false);
                           }}
-                          className="p-3 bg-gray-50 hover:bg-[#CAF0F8]/40 rounded-2xl flex items-center justify-between cursor-pointer transition-colors"
+                          className="p-2.5 bg-slate-50/60 hover:bg-slate-100/70 border border-slate-100/80 rounded-xl flex items-center justify-between cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-2">
-                            <ShoppingBag className="w-4 h-4 text-[#0077B6]" />
-                            <span className="font-mono font-bold text-[#03045E]">{o.id}</span>
-                            <span className="text-gray-600 truncate max-w-xs">{o.address}</span>
+                            <ShoppingBag className="w-3.5 h-3.5 text-blue-600" />
+                            <span className="font-mono font-semibold text-slate-900">{o.id}</span>
+                            <span className="text-slate-500 truncate max-w-xs">{o.address}</span>
                           </div>
-                          <span className="font-extrabold text-gray-900">£{o.total.toFixed(2)}</span>
+                          <span className="font-semibold text-slate-900">£{o.total.toFixed(2)}</span>
                         </div>
                       ))}
                     </div>
@@ -258,9 +276,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
                   {/* Customers */}
                   {searchResults.customers.length > 0 && (
-                    <div className="space-y-2">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                        Customers CRM ({searchResults.customers.length})
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                        Customers ({searchResults.customers.length})
                       </span>
                       {searchResults.customers.map((c) => (
                         <div
@@ -269,14 +287,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             setActiveTab('customers');
                             setGlobalSearchOpen(false);
                           }}
-                          className="p-3 bg-gray-50 hover:bg-[#CAF0F8]/40 rounded-2xl flex items-center justify-between cursor-pointer transition-colors"
+                          className="p-2.5 bg-slate-50/60 hover:bg-slate-100/70 border border-slate-100/80 rounded-xl flex items-center justify-between cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-2">
-                            <User className="w-4 h-4 text-[#0077B6]" />
-                            <span className="font-bold text-gray-900">{c.fullName}</span>
-                            <span className="text-gray-500">({c.email})</span>
+                            <User className="w-3.5 h-3.5 text-blue-600" />
+                            <span className="font-semibold text-slate-900">{c.fullName}</span>
+                            <span className="text-slate-400 text-[11px]">({c.email})</span>
                           </div>
-                          <span className="font-bold text-[#03045E]">{c.status}</span>
+                          <span className="text-[11px] font-medium text-slate-600 capitalize">{c.status}</span>
                         </div>
                       ))}
                     </div>
@@ -284,8 +302,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
                   {/* Bags */}
                   {searchResults.bags.length > 0 && (
-                    <div className="space-y-2">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                         QR Bags ({searchResults.bags.length})
                       </span>
                       {searchResults.bags.map((b) => (
@@ -295,13 +313,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                             setActiveTab('orders');
                             setGlobalSearchOpen(false);
                           }}
-                          className="p-3 bg-gray-50 hover:bg-[#CAF0F8]/40 rounded-2xl flex items-center justify-between cursor-pointer transition-colors"
+                          className="p-2.5 bg-slate-50/60 hover:bg-slate-100/70 border border-slate-100/80 rounded-xl flex items-center justify-between cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-2">
-                            <QrCode className="w-4 h-4 text-[#0077B6]" />
-                            <span className="font-mono font-bold text-[#03045E]">{b.qrCode}</span>
+                            <QrCode className="w-3.5 h-3.5 text-blue-600" />
+                            <span className="font-mono font-semibold text-slate-900">{b.qrCode}</span>
                           </div>
-                          <span className="font-bold text-emerald-600">{b.status}</span>
+                          <span className="text-[11px] font-medium text-emerald-600">{b.status}</span>
                         </div>
                       ))}
                     </div>

@@ -19,11 +19,17 @@ import { AdminViewTab } from '@laundelle/types';
 interface AdminDashboardProps {
   onNavigateTab: (tab: AdminViewTab) => void;
   selectedLocation: string;
+  dateFilter?: string;
+  customStartDate?: string;
+  customEndDate?: string;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onNavigateTab,
   selectedLocation,
+  dateFilter = 'Today',
+  customStartDate,
+  customEndDate,
 }) => {
   const [metrics, setMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -39,7 +45,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
 
     try {
-      const data = await dbFetchAdminDashboardMetrics(selectedLocation);
+      const data = await dbFetchAdminDashboardMetrics(selectedLocation, dateFilter, customStartDate, customEndDate);
       if (data) setMetrics(data);
 
       const rawSession = localStorage.getItem('l2u_auth_session');
@@ -66,14 +72,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   useEffect(() => {
     fetchDashboardData();
-  }, [selectedLocation]);
+  }, [selectedLocation, dateFilter, customStartDate, customEndDate]);
 
   const filteredExceptions = selectedLocation && selectedLocation !== 'All Locations'
     ? exceptions.filter(ex => {
         const locLower = selectedLocation.toLowerCase();
-        const pStr = (ex.plantId || ex.locationName || '').toLowerCase();
-        const matchKeyword = ['preston', 'blackburn', 'bolton', 'chorley'].find(k => locLower.includes(k));
-        return matchKeyword ? pStr.includes(matchKeyword) : pStr.includes(locLower);
+        const pStr = (ex.plantId || ex.locationName || ex.facility || '').toLowerCase();
+        return pStr.includes(locLower) || locLower.includes(pStr);
       })
     : exceptions;
 
@@ -86,19 +91,125 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     relatedOrderNumber: ex.orderNumber || ex.orderId ? `#${ex.orderNumber || ex.orderId}` : 'Plant System',
     locationName: ex.plantId || 'Facility Hub'
   }));
+
   const facility = {
-    code: selectedLocation,
+    code: metrics?.facility?.code || selectedLocation,
+    name: metrics?.facility?.name || selectedLocation,
     currentOrdersToday: metrics?.todayOrdersTotal || 0,
-    dailyCapacityOrders: 100,
+    dailyCapacityOrders: metrics?.facility?.dailyCapacityOrders || 100,
     currentKgToday: metrics?.todayKgProcessed || 0,
-    dailyCapacityKg: 500,
+    dailyCapacityKg: metrics?.facility?.dailyCapacityKg || 500,
   };
 
   if (loading || !metrics) {
     return (
-      <div className="w-full flex justify-center py-12">
-        <div className="animate-spin text-[#03045E]">
-          <Clock className="w-8 h-8" />
+      <div className="w-full space-y-6 p-6 sm:p-8 pb-20 animate-in fade-in duration-200">
+        {/* Skeleton Header Banner with Shining Effect */}
+        <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="w-24 h-5 rounded-md bg-slate-100 animate-skeleton-shimmer" />
+              <div className="w-16 h-4 rounded-md bg-slate-100 animate-skeleton-shimmer" />
+            </div>
+            <div className="w-56 sm:w-80 h-8 rounded-xl bg-slate-100 animate-skeleton-shimmer" />
+          </div>
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="w-24 h-9 rounded-xl bg-slate-100 animate-skeleton-shimmer" />
+            <div className="w-28 h-9 rounded-xl bg-slate-100 animate-skeleton-shimmer" />
+          </div>
+        </div>
+
+        {/* Skeleton Top Row: 5 KPI Metric Cards with Shining Effect */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="w-24 h-3.5 bg-slate-100 rounded-md animate-skeleton-shimmer" />
+                <div className="w-8 h-8 rounded-xl bg-slate-50 animate-skeleton-shimmer" />
+              </div>
+              <div className="flex items-baseline justify-between pt-1">
+                <div className="w-20 h-7 bg-slate-100 rounded-lg animate-skeleton-shimmer" />
+                <div className="w-12 h-4 bg-slate-50 rounded-md animate-skeleton-shimmer" />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Skeleton Needs Attention Exceptions Panel with Shining Effect */}
+        <div className="bg-white border border-slate-100 rounded-2xl p-6 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-slate-100 animate-skeleton-shimmer" />
+              <div className="w-36 h-5 rounded-md bg-slate-100 animate-skeleton-shimmer" />
+            </div>
+            <div className="w-24 h-4 rounded-md bg-slate-50 animate-skeleton-shimmer" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="p-3.5 rounded-xl border border-slate-100 bg-white space-y-3 flex flex-col justify-between h-32">
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <div className="w-14 h-4 bg-slate-100 rounded animate-skeleton-shimmer" />
+                    <div className="w-10 h-3 bg-slate-100 rounded animate-skeleton-shimmer" />
+                  </div>
+                  <div className="w-28 h-4 bg-slate-100 rounded animate-skeleton-shimmer" />
+                  <div className="w-full h-3 bg-slate-50 rounded animate-skeleton-shimmer" />
+                </div>
+                <div className="pt-2 border-t border-slate-100 flex justify-between items-center">
+                  <div className="w-16 h-3 bg-slate-50 rounded animate-skeleton-shimmer" />
+                  <div className="w-12 h-5 bg-slate-100 rounded-lg animate-skeleton-shimmer" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Skeleton Order Pipeline & Capacity Grid with Shining Effect */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-8 bg-white rounded-2xl p-6 shadow-xs border border-slate-100 space-y-4">
+            <div className="flex justify-between items-center">
+              <div className="space-y-1">
+                <div className="w-28 h-4 bg-slate-100 rounded animate-skeleton-shimmer" />
+                <div className="w-44 h-3 bg-slate-50 rounded animate-skeleton-shimmer" />
+              </div>
+              <div className="w-20 h-4 bg-slate-100 rounded animate-skeleton-shimmer" />
+            </div>
+            <div className="w-full h-3 bg-slate-100 rounded-full animate-skeleton-shimmer" />
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+                <div key={i} className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl space-y-2">
+                  <div className="w-16 h-3 bg-slate-100 rounded animate-skeleton-shimmer" />
+                  <div className="w-10 h-4 bg-slate-200 rounded animate-skeleton-shimmer" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="lg:col-span-4 bg-white rounded-2xl p-6 shadow-xs border border-slate-100 space-y-4">
+            <div className="flex justify-between items-center">
+              <div className="space-y-1">
+                <div className="w-32 h-4 bg-slate-100 rounded animate-skeleton-shimmer" />
+                <div className="w-28 h-3 bg-slate-50 rounded animate-skeleton-shimmer" />
+              </div>
+              <div className="w-14 h-5 bg-slate-100 rounded-md animate-skeleton-shimmer" />
+            </div>
+            <div className="space-y-4 pt-1">
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <div className="w-16 h-3 bg-slate-100 rounded animate-skeleton-shimmer" />
+                  <div className="w-12 h-3 bg-slate-100 rounded animate-skeleton-shimmer" />
+                </div>
+                <div className="w-full h-2 bg-slate-100 rounded-full animate-skeleton-shimmer" />
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <div className="w-20 h-3 bg-slate-100 rounded animate-skeleton-shimmer" />
+                  <div className="w-12 h-3 bg-slate-100 rounded animate-skeleton-shimmer" />
+                </div>
+                <div className="w-full h-2 bg-slate-100 rounded-full animate-skeleton-shimmer" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -108,177 +219,167 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const getPct = (val: number) => activeCount > 0 ? Math.round((val / activeCount) * 100) : 0;
 
   const pipelineStages = [
-    { name: 'Booked', count: metrics.pipeline.booked, pct: getPct(metrics.pipeline.booked), color: 'bg-sky-500' },
-    { name: 'Scheduled', count: metrics.pipeline.scheduled, pct: getPct(metrics.pipeline.scheduled), color: 'bg-blue-500' },
-    { name: 'Collected', count: metrics.pipeline.collected, pct: getPct(metrics.pipeline.collected), color: 'bg-[#0077B6]' },
-    { name: 'Received', count: metrics.pipeline.received, pct: getPct(metrics.pipeline.received), color: 'bg-[#0096C7]' },
-    { name: 'Processing', count: metrics.pipeline.processing, pct: getPct(metrics.pipeline.processing), color: 'bg-[#00B4D8]' },
-    { name: 'Quality Control', count: metrics.pipeline.qc, pct: getPct(metrics.pipeline.qc), color: 'bg-[#48CAE4]' },
+    { name: 'Booked', count: metrics.pipeline.booked, pct: getPct(metrics.pipeline.booked), color: 'bg-slate-300' },
+    { name: 'Scheduled', count: metrics.pipeline.scheduled, pct: getPct(metrics.pipeline.scheduled), color: 'bg-slate-400' },
+    { name: 'Collected', count: metrics.pipeline.collected, pct: getPct(metrics.pipeline.collected), color: 'bg-blue-400' },
+    { name: 'Received', count: metrics.pipeline.received, pct: getPct(metrics.pipeline.received), color: 'bg-blue-500' },
+    { name: 'Processing', count: metrics.pipeline.processing, pct: getPct(metrics.pipeline.processing), color: 'bg-blue-600' },
+    { name: 'Quality Control', count: metrics.pipeline.qc, pct: getPct(metrics.pipeline.qc), color: 'bg-indigo-500' },
     { name: 'Ready', count: metrics.pipeline.ready, pct: getPct(metrics.pipeline.ready), color: 'bg-emerald-500' },
-    { name: 'Out for Delivery', count: metrics.pipeline.out, pct: getPct(metrics.pipeline.out), color: 'bg-[#03045E]' },
+    { name: 'Out for Delivery', count: metrics.pipeline.out, pct: getPct(metrics.pipeline.out), color: 'bg-slate-800' },
   ];
 
   return (
-    <div className="w-full space-y-8 p-6 sm:p-8 pb-24">
-      {/* Location Banner Callout */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-gradient-to-r from-[#03045E] via-[#023E8A] to-[#0077B6] text-white p-6 rounded-3xl shadow-xl">
+    <div className="w-full space-y-6 p-6 sm:p-8 pb-20">
+      {/* Header Banner - Clean White */}
+      <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <span className="text-[11px] font-bold tracking-widest text-[#48CAE4] uppercase block mb-1">
-            Real-Time Operations Command Center
-          </span>
-          <h1 className="text-2xl sm:text-3xl font-heading font-extrabold">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-[11px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100/60 uppercase tracking-wide">
+              Operations Center
+            </span>
+            <span className="text-xs text-slate-400 font-medium">• Live Sync</span>
+            <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 font-semibold rounded-md border border-blue-100/80">
+              {dateFilter === 'Custom' || dateFilter === 'Custom Range'
+                ? `${customStartDate} to ${customEndDate}`
+                : dateFilter || 'Today'}
+            </span>
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
             {selectedLocation} Dashboard
           </h1>
-          <p className="text-xs text-white/80 mt-1">
-            Monitoring active logistics routes, facility processing capacity, and automated exception flags.
-          </p>
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0">
           <button
             onClick={() => fetchDashboardData(true)}
             disabled={refreshing}
-            className="bg-white/10 hover:bg-white/20 border border-white/20 text-white px-4 py-2.5 rounded-2xl text-xs font-extrabold flex items-center gap-2 shadow-md transition-all cursor-pointer"
+            className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
             title="Refresh Live Metrics"
           >
-            <RefreshCw className={`w-4 h-4 text-[#48CAE4] ${refreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${refreshing ? 'animate-spin' : ''}`} />
             <span>{refreshing ? 'Refreshing...' : 'Refresh'}</span>
           </button>
           <button
             onClick={() => onNavigateTab('orders')}
-            className="bg-[#00B4D8] hover:bg-[#48CAE4] text-[#03045E] px-5 py-2.5 rounded-2xl text-xs font-extrabold flex items-center gap-2 shadow-md transition-all cursor-pointer"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
           >
-            <span>View Live Orders</span>
-            <ArrowRight className="w-4 h-4" />
+            <span>View Orders</span>
+            <ArrowRight className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* Top Row: KPI Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
-        {/* Card 1: Today's Orders */}
-        <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
+      {/* Top Row: KPI Metric Cards - 90% White */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Card 1: Orders */}
+        <div className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Today's Orders</span>
-            <div className="w-10 h-10 bg-[#CAF0F8] text-[#03045E] rounded-2xl flex items-center justify-center">
-              <ShoppingBag className="w-5 h-5" />
+            <span className="text-xs font-medium text-slate-500">
+              {dateFilter === 'Yesterday' ? "Yesterday's Orders" : dateFilter === 'This Week' ? "Week's Orders" : dateFilter === 'Custom' || dateFilter === 'Custom Range' ? "Period Orders" : "Today's Orders"}
+            </span>
+            <div className="w-8 h-8 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center border border-blue-100/50">
+              <ShoppingBag className="w-4 h-4" />
             </div>
           </div>
-          <div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-heading font-black text-[#03045E]">{metrics.todayOrdersTotal}</span>
-              <span className="text-xs font-bold text-emerald-600 flex items-center gap-0.5">
-                <TrendingUp className="w-3.5 h-3.5" />
-                +{metrics.todayOrdersTrendPercent}%
-              </span>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-1">vs 60 orders yesterday</p>
+          <div className="flex items-baseline justify-between pt-1">
+            <span className="text-2xl font-bold text-slate-900">{metrics.todayOrdersTotal}</span>
+            <span className="text-xs font-semibold text-emerald-600 flex items-center gap-0.5">
+              <TrendingUp className="w-3 h-3" />
+              +{metrics.todayOrdersTrendPercent}%
+            </span>
           </div>
         </div>
 
-        {/* Card 2: Today's Revenue */}
-        <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
+        {/* Card 2: Revenue */}
+        <div className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Today's Revenue</span>
-            <div className="w-10 h-10 bg-[#CAF0F8] text-[#03045E] rounded-2xl flex items-center justify-center">
-              <CreditCard className="w-5 h-5" />
+            <span className="text-xs font-medium text-slate-500">
+              {dateFilter === 'Yesterday' ? "Yesterday's Revenue" : dateFilter === 'This Week' ? "Week's Revenue" : dateFilter === 'Custom' || dateFilter === 'Custom Range' ? "Period Revenue" : "Today's Revenue"}
+            </span>
+            <div className="w-8 h-8 bg-slate-50 text-slate-700 rounded-xl flex items-center justify-center border border-slate-100">
+              <CreditCard className="w-4 h-4" />
             </div>
           </div>
-          <div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-heading font-black text-[#03045E]">£{metrics.todayRevenue.toFixed(2)}</span>
-              <span className="text-xs font-bold text-emerald-600 flex items-center gap-0.5">
-                <TrendingUp className="w-3.5 h-3.5" />
-                +{metrics.todayRevenueTrendPercent}%
-              </span>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-1">Avg order value: £21.77</p>
+          <div className="flex items-baseline justify-between pt-1">
+            <span className="text-2xl font-bold text-slate-900">£{metrics.todayRevenue.toFixed(2)}</span>
+            <span className="text-xs font-semibold text-emerald-600 flex items-center gap-0.5">
+              <TrendingUp className="w-3 h-3" />
+              +{metrics.todayRevenueTrendPercent}%
+            </span>
           </div>
         </div>
 
         {/* Card 3: KG Processed */}
-        <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
+        <div className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">KG Processed</span>
-            <div className="w-10 h-10 bg-[#CAF0F8] text-[#03045E] rounded-2xl flex items-center justify-center">
-              <Scale className="w-5 h-5" />
+            <span className="text-xs font-medium text-slate-500">Processed Weight</span>
+            <div className="w-8 h-8 bg-slate-50 text-slate-700 rounded-xl flex items-center justify-center border border-slate-100">
+              <Scale className="w-4 h-4" />
             </div>
           </div>
-          <div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-heading font-black text-[#03045E]">{metrics.todayKgProcessed} kg</span>
-              <span className="text-xs font-bold text-emerald-600 flex items-center gap-0.5">
-                <TrendingUp className="w-3.5 h-3.5" />
-                +{metrics.todayKgTrendPercent}%
-              </span>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-1">Plant capacity: 70% utilized</p>
+          <div className="flex items-baseline justify-between pt-1">
+            <span className="text-2xl font-bold text-slate-900">{metrics.todayKgProcessed} kg</span>
+            <span className="text-xs font-semibold text-emerald-600 flex items-center gap-0.5">
+              <TrendingUp className="w-3 h-3" />
+              +{metrics.todayKgTrendPercent}%
+            </span>
           </div>
         </div>
 
-        {/* Card 4: Doorstep Pickups & Deliveries */}
-        <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
+        {/* Card 4: Pickups & Deliveries */}
+        <div className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Collections & Deliveries</span>
-            <div className="w-10 h-10 bg-[#CAF0F8] text-[#03045E] rounded-2xl flex items-center justify-center">
-              <Truck className="w-5 h-5" />
+            <span className="text-xs font-medium text-slate-500">Transit Activity</span>
+            <div className="w-8 h-8 bg-slate-50 text-slate-700 rounded-xl flex items-center justify-center border border-slate-100">
+              <Truck className="w-4 h-4" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="bg-gray-50 p-2 rounded-xl">
-              <span className="text-[10px] text-gray-500 block">Pickups</span>
-              <span className="font-bold text-[#03045E]">{metrics.collectionsCompleted} done</span>
-              <span className="text-[10px] text-amber-600 block">{metrics.collectionsPending} pending</span>
+          <div className="flex items-center justify-between text-xs pt-1">
+            <div>
+              <span className="text-slate-400 block text-[10px]">Pickups</span>
+              <span className="font-bold text-slate-900">{metrics.collectionsCompleted} done</span>
             </div>
-            <div className="bg-gray-50 p-2 rounded-xl">
-              <span className="text-[10px] text-gray-500 block">Deliveries</span>
-              <span className="font-bold text-[#03045E]">{metrics.deliveriesCompleted} done</span>
-              <span className="text-[10px] text-blue-600 block">{metrics.deliveriesPending} pending</span>
+            <div className="text-right">
+              <span className="text-slate-400 block text-[10px]">Deliveries</span>
+              <span className="font-bold text-slate-900">{metrics.deliveriesCompleted} done</span>
             </div>
           </div>
         </div>
 
         {/* Card 5: Exceptions & SLA */}
-        <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
+        <div className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Exceptions & SLA</span>
-            <div className="w-10 h-10 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center">
-              <AlertTriangle className="w-5 h-5" />
+            <span className="text-xs font-medium text-slate-500">Open Exceptions</span>
+            <div className="w-8 h-8 bg-red-50 text-red-600 rounded-xl flex items-center justify-center border border-red-100/50">
+              <AlertTriangle className="w-4 h-4" />
             </div>
           </div>
-          <div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-heading font-black text-red-600">
-                {exceptionSummary?.openTotal ?? exceptions.length}
-              </span>
-              <span className="text-xs font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded-full">
-                Active
-              </span>
-            </div>
-            <p className="text-[11px] text-gray-500 mt-1">
-              {exceptionSummary?.byPriority?.CRITICAL || 0} critical · {exceptionSummary?.byPriority?.HIGH || 0} high priority
-            </p>
+          <div className="flex items-baseline justify-between pt-1">
+            <span className="text-2xl font-bold text-red-600">
+              {exceptionSummary?.openTotal ?? exceptions.length}
+            </span>
+            <span className="text-[11px] font-semibold text-slate-500 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-100">
+              {exceptionSummary?.byPriority?.CRITICAL || 0} critical
+            </span>
           </div>
         </div>
       </div>
 
-      {/* Prominent NEEDS ATTENTION Exceptions Panel */}
-      <div className="bg-gradient-to-br from-red-50/90 via-amber-50/50 to-white border-2 border-red-200 rounded-3xl p-6 sm:p-8 space-y-5 shadow-md">
+      {/* Needs Attention Exceptions Panel - Clean White */}
+      <div className="bg-white border border-slate-100 rounded-2xl p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-red-600 text-white rounded-2xl flex items-center justify-center shadow-sm">
-              <ShieldAlert className="w-6 h-6 animate-pulse" />
+            <div className="w-8 h-8 bg-red-50 text-red-600 border border-red-100 rounded-xl flex items-center justify-center">
+              <ShieldAlert className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-xl font-heading font-extrabold text-red-950 flex items-center gap-2">
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <span>Needs Attention</span>
-                <span className="text-xs px-2.5 py-0.5 bg-red-600 text-white rounded-full font-bold">
-                  {systemAlerts.length} Exceptions Requiring Action
+                <span className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border border-red-100 rounded-full font-semibold">
+                  {systemAlerts.length}
                 </span>
               </h2>
-              <p className="text-xs text-red-800">
-                System-flagged exceptions requiring manager intervention to prevent customer delays.
-              </p>
             </div>
           </div>
 
@@ -286,62 +387,58 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <button
               onClick={() => fetchDashboardData(true)}
               disabled={refreshing}
-              className="p-2 bg-white/80 hover:bg-white text-red-900 border border-red-200 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+              className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg transition-colors cursor-pointer"
               title="Refresh Exceptions"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">Refresh Alerts</span>
             </button>
             <button
               onClick={() => onNavigateTab('orders')}
-              className="text-xs font-bold text-red-900 hover:text-red-950 underline cursor-pointer"
+              className="text-xs font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
             >
-              Review Active Orders →
+              Review Orders →
             </button>
           </div>
         </div>
 
-        {/* Exception Alert Cards Grid or Empty State */}
+        {/* Exception Alert Cards */}
         {systemAlerts.length === 0 ? (
-          <div className="bg-white/80 border border-emerald-200 rounded-2xl p-6 text-center space-y-2">
-            <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
-              <CheckCircle2 className="w-6 h-6" />
-            </div>
-            <p className="text-sm font-bold text-gray-800">All Operations Running Smoothly</p>
-            <p className="text-xs text-gray-500">Zero open exceptions or SLA breaches requiring urgent intervention.</p>
+          <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 text-center">
+            <p className="text-xs font-semibold text-slate-700">All Operations Running Smoothly</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">Zero open exceptions requiring immediate action.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
             {systemAlerts.map((alt) => (
               <div
                 key={alt.id}
-                className={`p-4 rounded-2xl border bg-white shadow-xs space-y-3 flex flex-col justify-between ${alt.severity === 'critical'
-                  ? 'border-red-300 ring-2 ring-red-400/30'
-                  : 'border-amber-200'
-                  }`}
+                className={`p-3.5 rounded-xl border bg-white shadow-2xs space-y-2.5 flex flex-col justify-between ${
+                  alt.severity === 'critical' ? 'border-red-200' : 'border-amber-200'
+                }`}
               >
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span
-                      className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider ${alt.severity === 'critical' ? 'bg-red-600 text-white' : 'bg-amber-500 text-white'
-                        }`}
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                        alt.severity === 'critical' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                      }`}
                     >
                       {alt.severity}
                     </span>
-                    <span className="text-[10px] text-gray-400 font-semibold">{alt.createdAt.slice(11, 16)}</span>
+                    <span className="text-[10px] text-slate-400 font-medium">{alt.createdAt.slice(11, 16)}</span>
                   </div>
 
-                  <h3 className="text-xs font-bold text-gray-900 leading-snug">{alt.title}</h3>
-                  <p className="text-[11px] text-gray-600 leading-normal">{alt.message}</p>
+                  <h3 className="text-xs font-semibold text-slate-900 leading-snug">{alt.title}</h3>
+                  <p className="text-[11px] text-slate-500 line-clamp-2">{alt.message}</p>
                 </div>
 
-                <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-gray-500">{alt.relatedOrderNumber || alt.locationName}</span>
+                <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-[10px] font-medium text-slate-400">{alt.relatedOrderNumber || alt.locationName}</span>
                   <button
                     onClick={() => onNavigateTab('orders')}
-                    className="px-3 py-1 bg-[#03045E] hover:bg-[#023E8A] text-white rounded-xl text-[11px] font-bold cursor-pointer transition-colors"
+                    className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[10px] font-semibold cursor-pointer transition-colors"
                   >
-                    Inspect & Resolve
+                    Resolve
                   </button>
                 </div>
               </div>
@@ -350,61 +447,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         )}
       </div>
 
-      {/* Visual Order Pipeline & Capacity Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      {/* Visual Order Pipeline & Capacity */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Visual Order Pipeline (8 cols) */}
-        <div className="lg:col-span-8 bg-white rounded-3xl p-6 sm:p-8 shadow-xs border border-gray-100 space-y-6">
+        <div className="lg:col-span-8 bg-white rounded-2xl p-6 shadow-xs border border-slate-100 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-base font-heading font-extrabold text-[#03045E]">Visual Order Pipeline</h3>
-              <p className="text-xs text-gray-500">Live order distribution across operational stages</p>
+              <h3 className="text-sm font-bold text-slate-900">Order Pipeline</h3>
+              <p className="text-xs text-slate-400">Distribution across operational stages</p>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => fetchDashboardData(true)}
-                disabled={refreshing}
-                className="p-1.5 text-gray-400 hover:text-[#0077B6] rounded-lg transition-colors cursor-pointer"
-                title="Refresh Pipeline Stages"
-              >
-                <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-[#0077B6]' : ''}`} />
-              </button>
-              <button
-                onClick={() => onNavigateTab('orders')}
-                className="text-xs font-bold text-[#0077B6] hover:underline cursor-pointer"
-              >
-                Filter Orders View →
-              </button>
-            </div>
+            <button
+              onClick={() => onNavigateTab('orders')}
+              className="text-xs font-semibold text-blue-600 hover:text-blue-700 cursor-pointer"
+            >
+              Filter Orders →
+            </button>
           </div>
 
           {/* Pipeline Stage Bar */}
-          <div className="space-y-4">
-            <div className="w-full h-4 bg-gray-100 rounded-full overflow-hidden flex">
+          <div className="space-y-3">
+            <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex">
               {pipelineStages.map((stg) => (
                 <div
                   key={stg.name}
                   style={{ width: `${stg.pct}%` }}
-                  className={`${stg.color} h-full border-r border-white/20 transition-all hover:opacity-85 cursor-pointer`}
+                  className={`${stg.color} h-full transition-all`}
                   title={`${stg.name}: ${stg.count} orders (${stg.pct}%)`}
                 />
               ))}
             </div>
 
             {/* Stage Chips */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {pipelineStages.map((stg) => (
                 <button
                   key={stg.name}
                   onClick={() => onNavigateTab('orders')}
-                  className="p-3 bg-gray-50 hover:bg-[#CAF0F8]/40 border border-gray-100 rounded-2xl text-left space-y-1 transition-colors cursor-pointer"
+                  className="p-2.5 bg-slate-50 hover:bg-slate-100/70 border border-slate-100 rounded-xl text-left transition-colors cursor-pointer"
                 >
-                  <div className="flex items-center gap-1.5">
-                    <div className={`w-2.5 h-2.5 rounded-full ${stg.color}`} />
-                    <span className="text-[11px] font-bold text-gray-700 truncate">{stg.name}</span>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <div className={`w-2 h-2 rounded-full ${stg.color}`} />
+                    <span className="text-[11px] font-medium text-slate-600 truncate">{stg.name}</span>
                   </div>
                   <div className="flex items-baseline justify-between">
-                    <span className="text-base font-black text-[#03045E]">{stg.count}</span>
-                    <span className="text-[10px] text-gray-400 font-semibold">{stg.pct}%</span>
+                    <span className="text-sm font-bold text-slate-900">{stg.count}</span>
+                    <span className="text-[10px] text-slate-400 font-medium">{stg.pct}%</span>
                   </div>
                 </button>
               ))}
@@ -413,105 +500,93 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         {/* Capacity Widget (4 cols) */}
-        <div className="lg:col-span-4 bg-white rounded-3xl p-6 sm:p-8 shadow-xs border border-gray-100 space-y-6">
-          <div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-heading font-extrabold text-[#03045E]">Today's Facility Capacity</h3>
-                <button
-                  onClick={() => fetchDashboardData(true)}
-                  disabled={refreshing}
-                  className="p-1 text-gray-400 hover:text-[#0077B6] rounded-lg transition-colors cursor-pointer"
-                  title="Refresh Capacity"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-[#0077B6]' : ''}`} />
-                </button>
-              </div>
-              <span className="text-xs px-2.5 py-0.5 bg-[#CAF0F8] text-[#03045E] rounded-full font-bold">
-                {facility.code}
-              </span>
+        <div className="lg:col-span-4 bg-white rounded-2xl p-6 shadow-xs border border-slate-100 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Facility Capacity</h3>
+              <p className="text-xs text-slate-400">Today's limit vs booked</p>
             </div>
-            <p className="text-xs text-gray-500">Processing limit & booking slot availability</p>
+            <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md font-semibold">
+              {facility.code}
+            </span>
           </div>
 
-          <div className="space-y-5">
-            {/* Orders Capacity Gauge */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs font-bold">
-                <span className="text-gray-700">Orders Capacity</span>
-                <span className="text-[#03045E]">{facility.currentOrdersToday} / {facility.dailyCapacityOrders} orders</span>
+          <div className="space-y-4">
+            {/* Orders Capacity */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-600 font-medium">Orders</span>
+                <span className="text-slate-900 font-semibold">{facility.currentOrdersToday} / {facility.dailyCapacityOrders}</span>
               </div>
-              <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                 <div
                   style={{ width: `${(facility.currentOrdersToday / facility.dailyCapacityOrders) * 100}%` }}
-                  className="bg-[#0077B6] h-full rounded-full transition-all"
+                  className="bg-blue-600 h-full rounded-full transition-all"
                 />
               </div>
-              <p className="text-[10px] text-gray-400 text-right font-semibold">68% Booked - Normal</p>
             </div>
 
-            {/* Weight Capacity Gauge */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs font-bold">
-                <span className="text-gray-700">Weight Load Capacity</span>
-                <span className="text-[#03045E]">{facility.currentKgToday} / {facility.dailyCapacityKg} kg</span>
+            {/* Weight Capacity */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-600 font-medium">Weight Load</span>
+                <span className="text-slate-900 font-semibold">{facility.currentKgToday} / {facility.dailyCapacityKg} kg</span>
               </div>
-              <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                 <div
                   style={{ width: `${(facility.currentKgToday / facility.dailyCapacityKg) * 100}%` }}
-                  className="bg-[#00B4D8] h-full rounded-full transition-all"
+                  className="bg-indigo-500 h-full rounded-full transition-all"
                 />
               </div>
-              <p className="text-[10px] text-amber-600 text-right font-bold">70% Weight Capacity - Nearing Limit</p>
             </div>
 
             <button
               onClick={() => onNavigateTab('areas')}
-              className="w-full bg-[#03045E] hover:bg-[#023E8A] text-white py-3 rounded-2xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-md cursor-pointer transition-all"
+              className="w-full bg-slate-900 hover:bg-slate-800 text-white py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
             >
-              <span>Manage Capacity & Booking Slots</span>
-              <ArrowRight className="w-3.5 h-3.5 text-[#48CAE4]" />
+              <span>Manage Capacity Slots</span>
+              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
       </div>
 
-      {/* P1: Subscription Metrics & System Health Row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
+      {/* Subscription Metrics & System Health Row - Clean White */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-gray-500 uppercase">Subscribers & MRR</span>
-            <span className="bg-blue-50 text-[#0077B6] text-[10px] font-extrabold px-2.5 py-0.5 rounded-full">Monthly</span>
+            <span className="text-xs font-medium text-slate-500">Subscribers & MRR</span>
+            <span className="bg-blue-50 text-blue-700 text-[10px] font-semibold px-2 py-0.5 rounded-md border border-blue-100/50">Monthly</span>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-black text-[#03045E]">£4,890</span>
-            <span className="text-xs text-emerald-600 font-bold">+18% MoM</span>
+            <span className="text-xl font-bold text-slate-900">£4,890</span>
+            <span className="text-xs text-emerald-600 font-semibold">+18% MoM</span>
           </div>
-          <p className="text-xs text-gray-500">68 active subscribers • 0.8% churn rate</p>
+          <p className="text-[11px] text-slate-400">68 active subscribers</p>
         </div>
 
-        <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
+        <div className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-gray-500 uppercase">Notification Reliability</span>
-            <span className="bg-emerald-50 text-emerald-700 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full">99.9% Delivered</span>
+            <span className="text-xs font-medium text-slate-500">Notification Reliability</span>
+            <span className="bg-emerald-50 text-emerald-700 text-[10px] font-semibold px-2 py-0.5 rounded-md border border-emerald-100/50">99.9%</span>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-black text-[#03045E]">0 DLQ</span>
-            <span className="text-xs text-gray-500 font-bold">Dead-Letter Queue</span>
+            <span className="text-xl font-bold text-slate-900">0 DLQ</span>
+            <span className="text-xs text-slate-400 font-medium">Queue</span>
           </div>
-          <p className="text-xs text-gray-500">Exponential backoff active • 0 permanent delivery failures</p>
+          <p className="text-[11px] text-slate-400">0 delivery failures</p>
         </div>
 
-        <div className="bg-white rounded-3xl p-6 shadow-xs border border-gray-100 space-y-3">
+        <div className="bg-white rounded-2xl p-5 shadow-xs border border-slate-100 space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-gray-500 uppercase">Audit Chain Integrity</span>
-            <span className="bg-emerald-50 text-emerald-700 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full">Cryptographic</span>
+            <span className="text-xs font-medium text-slate-500">Audit Chain</span>
+            <span className="bg-emerald-50 text-emerald-700 text-[10px] font-semibold px-2 py-0.5 rounded-md border border-emerald-100/50">SHA-256</span>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-black text-emerald-600">SHA-256</span>
-            <span className="text-xs text-gray-500 font-bold">Tamper-Evident</span>
+            <span className="text-xl font-bold text-slate-900">Intact</span>
+            <span className="text-xs text-slate-400 font-medium">Tamper-Evident</span>
           </div>
-          <p className="text-xs text-gray-500">Continuous hash verification intact across audit events</p>
+          <p className="text-[11px] text-slate-400">Hash verification verified</p>
         </div>
       </div>
     </div>

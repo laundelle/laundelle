@@ -15,7 +15,10 @@ import {
   Lock,
   Plus,
   Car,
-  MapPin
+  MapPin,
+  Copy,
+  Check,
+  ExternalLink
 } from 'lucide-react';
 import { dbFetchManagerStaff, dbManagerUpdateStaff, dbManagerCreateStaff } from '@laundelle/api-client';
 
@@ -64,7 +67,6 @@ export const ManagerStaffView: React.FC = () => {
   const [editAvailability, setEditAvailability] = useState<'available' | 'busy' | 'offline'>('available');
   const [editVehicle, setEditVehicle] = useState('');
   const [editPostcodes, setEditPostcodes] = useState('');
-  const [editPassword, setEditPassword] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Add Staff Modal State
@@ -73,10 +75,19 @@ export const ManagerStaffView: React.FC = () => {
   const [newEmail, setNewEmail] = useState('');
   const [newPhoneCountryCode, setNewPhoneCountryCode] = useState('+44');
   const [newPhone, setNewPhone] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [newVehicle, setNewVehicle] = useState('');
   const [newRole, setNewRole] = useState<'driver' | 'processor'>('driver');
   const [adding, setAdding] = useState(false);
+
+  // Invitation Modal State
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [createdStaffInvite, setCreatedStaffInvite] = useState<{
+    name: string;
+    email: string;
+    role: string;
+    ticketUrl: string;
+  } | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   // Notification / Toast
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -112,7 +123,6 @@ export const ManagerStaffView: React.FC = () => {
     setEditVehicle(staff.vehicle || '');
     const postcodes = staff.assigned_postcodes || staff.assignedSectors || [];
     setEditPostcodes(postcodes.join(', '));
-    setEditPassword('');
     setEditModalOpen(true);
   };
 
@@ -136,15 +146,6 @@ export const ManagerStaffView: React.FC = () => {
       payload.vehicle = editVehicle.trim();
     }
 
-    if (editPassword.trim().length > 0) {
-      if (editPassword.trim().length < 6) {
-        showNotification('error', 'Password must be at least 6 characters.');
-        setSaving(false);
-        return;
-      }
-      payload.password = editPassword.trim();
-    }
-
     const result = await dbManagerUpdateStaff(editingStaff._id, payload);
     setSaving(false);
 
@@ -161,12 +162,8 @@ export const ManagerStaffView: React.FC = () => {
   // Submit Add Staff (Driver or Processor)
   const handleAddStaff = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName.trim() || !newEmail.trim() || !newPassword.trim()) {
-      showNotification('error', 'Name, email, and password are required.');
-      return;
-    }
-    if (newPassword.trim().length < 6) {
-      showNotification('error', 'Password must be at least 6 characters.');
+    if (!newName.trim() || !newEmail.trim()) {
+      showNotification('error', 'Name and email are required.');
       return;
     }
 
@@ -177,7 +174,6 @@ export const ManagerStaffView: React.FC = () => {
       full_name: newName.trim(),
       email: newEmail.trim(),
       phone: fullNewPhone,
-      password: newPassword.trim(),
       role: newRole,
       is_active: true,
       availability: 'available',
@@ -188,22 +184,35 @@ export const ManagerStaffView: React.FC = () => {
       payload.vehicle = newVehicle.trim() || 'Logistics Van';
     }
 
-
     const result = await dbManagerCreateStaff(payload);
     setAdding(false);
 
     if (result.success) {
-      showNotification('success', `${newRole === 'driver' ? 'Driver' : 'Processor'} ${newName} added and assigned to your facility!`);
       setAddModalOpen(false);
       setNewName('');
       setNewEmail('');
       setNewPhone('');
-      setNewPassword('');
       setNewVehicle('');
       setNewRole('driver');
       loadStaff();
+
+      if (result.ticketUrl) {
+        setCreatedStaffInvite({
+          name: payload.full_name,
+          email: payload.email,
+          role: payload.role,
+          ticketUrl: result.ticketUrl,
+        });
+        setCopiedLink(false);
+        setInviteModalOpen(true);
+      } else {
+        showNotification('success', 'User created successfully. An onboarding invitation has been generated.');
+      }
     } else {
-      showNotification('error', result.error || 'Failed to add staff member.');
+      const displayError = typeof result.error === 'string' && !result.error.includes('{')
+        ? result.error
+        : 'Failed to add staff member.';
+      showNotification('error', displayError);
     }
   };
 
@@ -717,21 +726,6 @@ export const ManagerStaffView: React.FC = () => {
                 </>
               )}
 
-              {/* Reset Password */}
-              <div className="pt-2 border-t border-gray-100">
-                <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5 mb-1">
-                  <Lock className="w-3.5 h-3.5 text-gray-400" />
-                  <span>Reset Staff Password (Optional)</span>
-                </label>
-                <input
-                  type="password"
-                  placeholder="Enter new password to reset, or leave blank to keep current"
-                  value={editPassword}
-                  onChange={(e) => setEditPassword(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-[#0077B6] focus:bg-white"
-                />
-              </div>
-
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100">
                 <button
                   type="button"
@@ -864,16 +858,14 @@ export const ManagerStaffView: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-gray-700 block mb-1">Initial Password</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Minimum 6 characters"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-[#0077B6] focus:bg-white"
-                />
+              <div className="bg-blue-50/80 border border-blue-200/80 rounded-xl p-3 text-xs text-blue-900 flex items-start gap-2.5">
+                <Mail className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">Auth0 Onboarding Link</p>
+                  <p className="text-blue-700 mt-0.5 leading-relaxed">
+                    A secure onboarding link will be generated immediately so you can copy and send it directly to the team member.
+                  </p>
+                </div>
               </div>
 
               {/* Driver-specific fields */}
@@ -890,8 +882,6 @@ export const ManagerStaffView: React.FC = () => {
                 </div>
               )}
 
-
-
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100">
                 <button
                   type="button"
@@ -907,10 +897,125 @@ export const ManagerStaffView: React.FC = () => {
                   className="px-5 py-2.5 rounded-xl bg-[#023E8A] hover:bg-[#03045E] text-white text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer transition-colors disabled:opacity-50"
                 >
                   {adding && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                  <span>{adding ? 'Registering...' : `Add ${newRole === 'driver' ? 'Driver' : 'Processor'}`}</span>
+                  <span>{adding ? 'Creating user...' : `Add ${newRole === 'driver' ? 'Driver' : 'Processor'}`}</span>
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Onboarding Invitation Link Modal */}
+      {inviteModalOpen && createdStaffInvite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-slate-100 space-y-6">
+            {/* Header */}
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shrink-0">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-[#03045E]">Staff Account Created</h3>
+                  <p className="text-xs text-gray-500 font-medium">
+                    {createdStaffInvite.name} has been provisioned.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInviteModalOpen(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Member Summary Card */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500 font-bold">Email Address:</span>
+                <span className="font-extrabold text-[#03045E] font-mono">{createdStaffInvite.email}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500 font-bold">Role:</span>
+                <span className="font-extrabold uppercase px-2.5 py-0.5 rounded-full text-[10px] bg-blue-100 text-[#0077B6]">
+                  {createdStaffInvite.role === 'driver' ? 'Delivery Driver' : 'Station Processor'}
+                </span>
+              </div>
+            </div>
+
+            {/* Instructions */}
+            <div className="text-xs text-gray-600 space-y-1.5 leading-relaxed bg-blue-50/60 border border-blue-100 rounded-2xl p-3.5">
+              <p className="font-bold text-[#03045E]">How to onboard this staff member:</p>
+              <p className="text-[11px] text-gray-600">
+                Copy the secure onboarding link below and share it with the team member directly via WhatsApp, SMS, or email. When opened, it allows them to set their password and activate their account.
+              </p>
+            </div>
+
+            {/* Link Box */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-black uppercase tracking-wider text-gray-500 block">
+                Secure Invitation Link
+              </label>
+              <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-2xl p-2.5">
+                <input
+                  type="text"
+                  readOnly
+                  value={createdStaffInvite.ticketUrl}
+                  className="w-full bg-transparent text-xs text-gray-700 font-mono focus:outline-hidden select-all"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(createdStaffInvite.ticketUrl);
+                      setCopiedLink(true);
+                      setTimeout(() => setCopiedLink(false), 2500);
+                    } catch {
+                      prompt('Copy invitation link:', createdStaffInvite.ticketUrl);
+                    }
+                  }}
+                  className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 shrink-0 transition-all cursor-pointer shadow-xs ${
+                    copiedLink
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-[#03045E] hover:bg-[#0077B6] text-white active:scale-95'
+                  }`}
+                >
+                  {copiedLink ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy Link</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-between pt-2">
+              <a
+                href={createdStaffInvite.ticketUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-bold text-[#0077B6] hover:text-[#03045E] flex items-center gap-1 hover:underline"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Test Link in New Tab</span>
+              </a>
+              <button
+                type="button"
+                onClick={() => setInviteModalOpen(false)}
+                className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

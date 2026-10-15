@@ -4,8 +4,8 @@ import crypto from 'crypto';
 import { hashPassword } from '@/lib/auth';
 import { NotificationService } from './NotificationService';
 import { AuditService } from './AuditService';
-import { generateStaffId } from '@laundelle/ids';
-import { assertCanPerformOverride } from '@/lib/permissions';
+import { generateStaffId, buildEntityLookupQuery } from '@laundelle/ids';
+import { assertCanPerformOverride, normalizeRole } from '@/lib/permissions';
 import {
     generateSecureNumericPin,
     generatePinSalt,
@@ -13,27 +13,44 @@ import {
     encryptOrderPin
 } from '@/lib/orderPin';
 import { BadRequestError } from '@/lib/api';
+import { StaffProvisioningService } from './StaffProvisioningService';
+import { OrderCustomerEnrichmentService } from './OrderCustomerEnrichmentService';
 
 export class ManagerService {
     private static async getManagerPlantId(managerId: string) {
         const db = await getDb();
+        const managerLookup = buildEntityLookupQuery(managerId, 'user');
         const user = await db.collection('users').findOne({
-            _id: managerId,
-            role: { $in: ['manager', 'admin', 'super_admin'] },
+            ...managerLookup,
+            role: { $in: ['manager', 'plant_manager', 'admin', 'super_admin'] },
             is_active: { $ne: false }
         } as any);
         if (!user) {
             throw new Error('Access denied: User is inactive or does not exist.');
         }
-        if (user.role === 'admin' || user.role === 'super_admin') {
-            return user.plant_id || null;
+        const userNormRole = normalizeRole(user.role);
+        if (userNormRole === 'super_admin') {
+            return user.plant_id || user.plantId || null;
         }
-        let plantId = user.plant_id;
+        let plantId = user.plant_id || user.plantId;
         if (!plantId) {
-            const plant = await db.collection('plants').findOne({ manager_id: managerId } as any);
+            const userInternalId = String(user._id);
+            let plant = await db.collection('plants').findOne({
+                $or: [
+                    { manager_id: userInternalId },
+                    { manager_id: user.publicId },
+                    { manager_id: managerId }
+                ]
+            } as any);
+            if (!plant) {
+                plant = await db.collection('plants').findOne({ status: { $ne: 'inactive' } } as any);
+            }
             if (plant) {
-                plantId = plant._id;
-                await db.collection('users').updateOne({ _id: managerId } as any, { $set: { plant_id: plantId } });
+                plantId = plant.publicId || plant.id || plant._id;
+                await db.collection('users').updateOne(
+                    { _id: user._id } as any,
+                    { $set: { plant_id: plantId, plantId: plantId } }
+                );
             }
         }
         if (!plantId) {
@@ -46,16 +63,31 @@ export class ManagerService {
         const db = await getDb();
         const plantId = await this.getManagerPlantId(managerId);
         
-        const plant = await db.collection('plants').findOne({ _id: plantId } as any);
-        if (!plant) throw new Error('Plant not found.');
+        let plant: any = null;
+        if (plantId) {
+            plant = await db.collection('plants').findOne(buildEntityLookupQuery(plantId, 'plant') as any);
+        }
         
-        const manager = await db.collection('users').findOne({ _id: managerId } as any);
+        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
+
+        const plantKeyConditions: any[] = [];
+        if (plantId) {
+            plantKeyConditions.push({ plant_id: plantId });
+            plantKeyConditions.push({ plantId: plantId });
+        }
+        if (plant) {
+            plantKeyConditions.push({ plant_id: String(plant._id) });
+            plantKeyConditions.push({ plant_id: plant.publicId });
+            plantKeyConditions.push({ plantId: plant.publicId });
+            if (plant.code) plantKeyConditions.push({ plant_code: plant.code });
+        }
+        const managerKeys = [managerId, manager ? String(manager._id) : null, manager?.publicId].filter(Boolean);
+        managerKeys.forEach(mKey => {
+            plantKeyConditions.push({ manager_id: mKey });
+        });
 
         const orders = await db.collection('orders').find({
-            $or: [
-                { plant_id: plantId },
-                { manager_id: managerId }
-            ],
+            $or: plantKeyConditions.length > 0 ? plantKeyConditions : [{ status: { $ne: 'pending_payment' } }],
             status: { $ne: 'pending_payment' }
         }).toArray();
         const activeOrders = orders.filter((o: any) => !['delivered', 'cancelled'].includes(o.status));
@@ -241,6 +273,9 @@ export class ManagerService {
             driverMap = new Map(drivers.map((d: any) => [d._id, d]));
         }
 
+        // Enrich customer information
+        await OrderCustomerEnrichmentService.enrichOrders(orders, db);
+
         // Normalize fields for UI compatibility
         orders.forEach((o: any) => {
             if (o.address && typeof o.address === 'object') {
@@ -281,9 +316,10 @@ export class ManagerService {
         const plantId = await this.getManagerPlantId(managerId);
         const now = new Date().toISOString();
 
-        const order = await db.collection('orders').findOne({ id: orderId });
+        const order = await db.collection('orders').findOne(buildEntityLookupQuery(orderId, 'order'));
         if (!order) throw new Error('Order not found.');
-        if (order.plant_id && order.plant_id !== plantId) {
+        const orderPlant = order.plant_id || order.plantId;
+        if (orderPlant && orderPlant !== plantId) {
             throw new Error('Access denied: Order belongs to a different plant.');
         }
 
@@ -295,7 +331,7 @@ export class ManagerService {
             const revertLabel = revertStatus === 'ready_for_delivery' ? 'Ready for Delivery' : 'Waiting for Driver';
 
             await db.collection('orders').updateOne(
-                { id: orderId },
+                { _id: order._id },
                 {
                     $set: {
                         assigned_driver_id: null,
@@ -318,7 +354,8 @@ export class ManagerService {
             return { success: true, message: 'Driver unassigned successfully.' };
         }
 
-        const driver = await db.collection('users').findOne({ _id: driverId, role: 'driver', is_active: true } as any);
+        const driverLookup = buildEntityLookupQuery(driverId, 'user');
+        const driver = await db.collection('users').findOne({ ...driverLookup, role: 'driver', is_active: true } as any);
         if (!driver) throw new Error('Valid, active driver in your plant not found.');
 
         // Preserve delivery vs collection status
@@ -329,14 +366,16 @@ export class ManagerService {
             newStatusLabel = 'Out for Delivery';
         }
 
+        const driverCanonicalId = driver.publicId || driver.staffId || String(driver._id);
+
         await db.collection('orders').updateOne(
-            { id: orderId },
+            { _id: order._id },
             {
                 $set: { 
-                    assigned_driver_id: driverId, 
+                    assigned_driver_id: driverCanonicalId, 
                     plant_id: plantId,
                     driver: {
-                        id: driver._id,
+                        id: driverCanonicalId,
                         name: driver.full_name,
                         phone: driver.phone,
                         vehicle: driver.vehicle || 'Logistics Van'
@@ -351,7 +390,7 @@ export class ManagerService {
                         label: `Assigned to Driver ${driver.full_name}`,
                         actor: 'manager',
                         actorId: managerId,
-                        driverId,
+                        driverId: driverCanonicalId,
                         timestamp: now
                     }
                 } as any
@@ -365,16 +404,17 @@ export class ManagerService {
         const plantId = await this.getManagerPlantId(managerId);
         const now = new Date().toISOString();
 
-        const order = await db.collection('orders').findOne({ id: orderId });
+        const order = await db.collection('orders').findOne(buildEntityLookupQuery(orderId, 'order'));
         if (!order) throw new Error('Order not found.');
-        if (order.plant_id && order.plant_id !== plantId) {
+        const orderPlant = order.plant_id || order.plantId;
+        if (orderPlant && orderPlant !== plantId) {
             throw new Error('Access denied: Order belongs to a different plant.');
         }
 
         // Handle Unassign Processor
         if (!processorId) {
             await db.collection('orders').updateOne(
-                { id: orderId },
+                { _id: order._id },
                 {
                     $set: {
                         assigned_processor_id: null,
@@ -394,13 +434,16 @@ export class ManagerService {
             return { success: true, message: 'Processor unassigned successfully.' };
         }
 
-        const processor = await db.collection('users').findOne({ _id: processorId, role: 'processor', is_active: true } as any);
+        const processorLookup = buildEntityLookupQuery(processorId, 'user');
+        const processor = await db.collection('users').findOne({ ...processorLookup, role: 'processor', is_active: true } as any);
         if (!processor) throw new Error('Valid, active processor in your plant not found.');
+
+        const processorCanonicalId = processor.publicId || processor.staffId || String(processor._id);
 
         // Keep current status if already in progress, else set to received_at_facility
         const processingStages = ['washing', 'drying', 'folding_steaming', 'ready_for_qc', 'ready_for_delivery'];
         const updateFields: any = {
-            assigned_processor_id: processorId,
+            assigned_processor_id: processorCanonicalId,
             plant_id: plantId,
             updated_at: now
         };
@@ -410,7 +453,7 @@ export class ManagerService {
         }
 
         await db.collection('orders').updateOne(
-            { id: orderId },
+            { _id: order._id },
             {
                 $set: updateFields,
                 $push: {
@@ -463,9 +506,10 @@ export class ManagerService {
         callerRole?: string
     ) {
         const db = await getDb();
-        const manager = await db.collection('users').findOne({ _id: managerId } as any);
+        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
         const managerName = manager?.full_name || manager?.name || 'Plant Manager';
-        const effectiveRole = (callerRole || manager?.role || 'manager').toLowerCase().trim();
+        const effectiveRole = (callerRole || manager?.role || 'plant_manager').toLowerCase().trim();
+        const normRole = normalizeRole(effectiveRole);
 
         // Enforce strict Role-Based Access Control
         assertCanPerformOverride(effectiveRole, action);
@@ -473,7 +517,7 @@ export class ManagerService {
         const plantId = await this.getManagerPlantId(managerId);
         const now = new Date().toISOString();
 
-        const order = await db.collection('orders').findOne({ id: orderId });
+        const order = await db.collection('orders').findOne(buildEntityLookupQuery(orderId, 'order'));
         if (!order) throw new Error('Order not found.');
 
         const isOrderCompleted = order.status === 'delivered' || order.status === 'completed' || Boolean(order.is_delivered);
@@ -481,8 +525,14 @@ export class ManagerService {
             throw new BadRequestError('Cannot execute override: This order is already completed and delivered.');
         }
 
-        if (effectiveRole === 'manager' && plantId && order.plant_id && order.plant_id !== plantId) {
-            throw new Error('Access denied: Order belongs to a different plant.');
+        // Enforce Multi-Plant Isolation for plant managers
+        if (normRole === 'plant_manager') {
+            if (!plantId) {
+                throw new Error('Access denied: Manager has no assigned plant.');
+            }
+            if (order.plant_id && order.plant_id !== plantId) {
+                throw new Error('Access denied: Order belongs to a different plant.');
+            }
         }
 
         const reason = (data?.reason || data?.notes || '').trim();
@@ -870,7 +920,7 @@ export class ManagerService {
             mongoUpdate.$push = { timeline_events: timelineEvent };
         }
 
-        await db.collection('orders').updateOne({ id: orderId }, mongoUpdate);
+        await db.collection('orders').updateOne({ _id: order._id }, mongoUpdate);
 
         // Record tamper-evident audit log
         // Record tamper-evident audit log
@@ -904,15 +954,22 @@ export class ManagerService {
         const plantId = await this.getManagerPlantId(managerId);
         const now = new Date().toISOString();
 
-        const manager = await db.collection('users').findOne({ _id: managerId } as any);
+        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
         const managerName = manager?.full_name || manager?.name || 'Plant Manager';
 
-        const sourceDriver = await db.collection('users').findOne({ _id: sourceDriverId, role: 'driver' } as any);
+        const sourceDriver = await db.collection('users').findOne({
+            ...buildEntityLookupQuery(sourceDriverId, 'user'),
+            role: 'driver'
+        } as any);
         if (!sourceDriver) throw new Error('Source driver not found.');
 
         let targetDriver: any = null;
         if (targetDriverId) {
-            targetDriver = await db.collection('users').findOne({ _id: targetDriverId, role: 'driver', is_active: true } as any);
+            targetDriver = await db.collection('users').findOne({
+                ...buildEntityLookupQuery(targetDriverId, 'user'),
+                role: 'driver',
+                is_active: true
+            } as any);
             if (!targetDriver) throw new Error('Target driver not found or is inactive.');
         }
 
@@ -972,9 +1029,10 @@ export class ManagerService {
         const db = await getDb();
         const plantId = await this.getManagerPlantId(managerId);
 
-        const order = await db.collection('orders').findOne({ id: orderId });
+        const order = await db.collection('orders').findOne(buildEntityLookupQuery(orderId, 'order'));
         if (!order) throw new Error('Order not found.');
-        if (order.plant_id && order.plant_id !== plantId) {
+        const orderPlant = order.plant_id || order.plantId;
+        if (orderPlant && orderPlant !== plantId) {
             throw new Error('Access denied: Order belongs to a different plant.');
         }
 
@@ -985,11 +1043,16 @@ export class ManagerService {
     static async getStaff(managerId: string) {
         const db = await getDb();
         const plantId = await this.getManagerPlantId(managerId);
+        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
+
+        const managerKeys = [managerId, manager ? String(manager._id) : null, manager?.publicId].filter(Boolean);
+        const plantKeys = [plantId, manager?.plant_id, manager?.plantId].filter(Boolean);
 
         const query = {
             $or: [
-                { plant_id: plantId },
-                { manager_id: managerId }
+                { plant_id: { $in: plantKeys } },
+                { plantId: { $in: plantKeys } },
+                { manager_id: { $in: managerKeys } }
             ],
             role: { $in: ['driver', 'processor'] }
         };
@@ -1003,15 +1066,23 @@ export class ManagerService {
     // ─── Helper: Sync all driver/processor postcodes from manager's plant ───────
     static async syncAllStaffPostcodes(managerId: string): Promise<void> {
         const db = await getDb();
-        const manager = await db.collection('users').findOne({ _id: managerId } as any);
+        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
         if (!manager) return;
 
         let plant: any = null;
-        if (manager.plant_id) {
-            plant = await db.collection('plants').findOne({ _id: manager.plant_id } as any);
+        const managerPlantId = manager.plant_id || manager.plantId;
+        if (managerPlantId) {
+            plant = await db.collection('plants').findOne(buildEntityLookupQuery(managerPlantId, 'plant') as any);
         }
         if (!plant) {
-            plant = await db.collection('plants').findOne({ manager_id: managerId } as any);
+            const mInternalId = String(manager._id);
+            plant = await db.collection('plants').findOne({
+                $or: [
+                    { manager_id: mInternalId },
+                    { manager_id: manager.publicId },
+                    { manager_id: managerId }
+                ]
+            } as any);
         }
         if (!plant) return;
 
@@ -1019,9 +1090,16 @@ export class ManagerService {
             ? plant.service_pincodes
             : (plant.service_pincodes || '').split(',').map((p: string) => p.trim().toUpperCase()).filter(Boolean);
 
+        const plantKeys = [String(plant._id), plant.publicId, plant.id].filter(Boolean);
+        const managerKeys = [managerId, String(manager._id), manager.publicId].filter(Boolean);
+
         await db.collection('users').updateMany(
             {
-                $or: [{ manager_id: managerId }, { plant_id: plant._id }],
+                $or: [
+                    { manager_id: { $in: managerKeys } },
+                    { plant_id: { $in: plantKeys } },
+                    { plantId: { $in: plantKeys } }
+                ],
                 role: { $in: ['driver', 'processor'] }
             },
             { $set: { assigned_postcodes: pincodes, assignedSectors: pincodes } }
@@ -1030,119 +1108,34 @@ export class ManagerService {
 
     static async createStaffMember(managerId: string, staffData: any) {
         const db = await getDb();
-        const plantId = await this.getManagerPlantId(managerId);
+        const managerUser = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
+        if (!managerUser) throw new Error('Plant Manager profile not found.');
 
-        if (!staffData?.email || !staffData?.password) {
-            throw new Error('Email and password required.');
-        }
+        const actorContext: any = {
+            token: { sub: managerId, role: 'plant_manager', email: managerUser.email },
+            dbUser: managerUser
+        };
 
-        if (!['driver', 'processor'].includes(staffData.role)) {
+        const targetRole = (staffData.role || '').toLowerCase();
+        if (targetRole === 'driver') {
+            return StaffProvisioningService.provisionDriver(actorContext, staffData);
+        } else if (targetRole === 'processor') {
+            return StaffProvisioningService.provisionProcessor(actorContext, staffData);
+        } else {
             throw new Error('Plant Managers can only create Drivers or Processors.');
         }
-
-        const existing = await db.collection('users').findOne({ email: staffData.email.toLowerCase() });
-        if (existing) throw new Error('Email already in use.');
-
-        // Resolve postcodes from manager's plant
-        const plant = await db.collection('plants').findOne({ _id: plantId } as any);
-        const plantPostcodes: string[] = plant
-            ? (Array.isArray(plant.service_pincodes)
-                ? plant.service_pincodes
-                : (plant.service_pincodes || '').split(',').map((p: string) => p.trim().toUpperCase()).filter(Boolean))
-            : [];
-
-        const internalDbId = new ObjectId().toHexString();
-        const canonicalStaffId = generateStaffId();
-        const now = new Date().toISOString();
-        
-        const newStaff: any = {
-            ...staffData,
-            _id: internalDbId,
-            id: canonicalStaffId,
-            publicId: canonicalStaffId,
-            staffId: canonicalStaffId,
-            email: staffData.email.toLowerCase(),
-            password: hashPassword(staffData.password),
-            role: staffData.role, // 'driver' or 'processor'
-            plant_id: plantId, // Force to manager's plant
-            manager_id: managerId,
-            // Postcodes always inherited from plant — never from request body
-            assigned_postcodes: plantPostcodes,
-            assignedSectors: plantPostcodes,
-            is_active: staffData.is_active !== undefined ? staffData.is_active : true,
-            vehicle_type: staffData.vehicle_type || staffData.vehicleType || '',
-            vehicle_reg: staffData.vehicle_reg || staffData.vehicleReg || '',
-            license_number: staffData.license_number || staffData.licenseNum || '',
-            emergency_contact: staffData.emergency_contact || (staffData.emergencyName || staffData.emergencyPhone ? { name: staffData.emergencyName || '', phone: staffData.emergencyPhone || '' } : undefined),
-            vehicle: staffData.vehicle || (staffData.vehicle_reg || staffData.vehicleReg ? `${staffData.vehicle_type || staffData.vehicleType || 'Vehicle'} - ${staffData.vehicle_reg || staffData.vehicleReg}` : staffData.vehicle || ''),
-            created_at: now,
-            created_by: managerId
-        };
-        await db.collection('users').insertOne(newStaff as any);
-
-        return { success: true, staffId: canonicalStaffId, publicId: canonicalStaffId };
     }
 
     static async updateStaffMember(managerId: string, staffId: string, staffData: any) {
         const db = await getDb();
-        const plantId = await this.getManagerPlantId(managerId);
+        const managerUser = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
+        if (!managerUser) throw new Error('Plant Manager profile not found.');
 
-        const user = await db.collection('users').findOne({ _id: staffId } as any);
-        if (!user) throw new Error('Staff member not found.');
+        const actorContext: any = {
+            token: { sub: managerId, role: 'plant_manager', email: managerUser.email },
+            dbUser: managerUser
+        };
 
-        // Enforce strict manager separation: must belong to manager's plant or be assigned to this manager
-        const isAssignedToThisManager = (user.plant_id && user.plant_id === plantId) || (user.manager_id && user.manager_id === managerId);
-        if (!isAssignedToThisManager || !['driver', 'processor'].includes(user.role)) {
-            throw new Error('Access denied: You can only edit staff members assigned to your facility.');
-        }
-
-        if (staffData.role && staffData.role !== user.role) {
-            throw new Error('Access denied: Managers cannot change a staff member\'s role.');
-        }
-
-        if (staffData.is_active === false && user.role === 'driver') {
-            const activeOrders = await db.collection('orders').countDocuments({
-                assigned_driver_id: staffId,
-                status: { $nin: ['delivered', 'cancelled', 'order_placed', 'pending_payment'] }
-            });
-            if (activeOrders > 0) {
-                throw new Error(`Cannot suspend driver with ${activeOrders} active assigned order(s). Please reassign their orders first.`);
-            }
-        }
-
-        const now = new Date().toISOString();
-        const updateFields: any = { updated_at: now };
-
-        // Whitelist fields a manager can update for their assigned staff
-        if (staffData.full_name) updateFields.full_name = staffData.full_name;
-        if (staffData.phone) updateFields.phone = staffData.phone;
-        if (staffData.email) updateFields.email = staffData.email.toLowerCase();
-        if (staffData.is_active !== undefined) updateFields.is_active = Boolean(staffData.is_active);
-        if (staffData.password && staffData.password.trim().length > 0) updateFields.password = hashPassword(staffData.password);
-        if (staffData.vehicle !== undefined) updateFields.vehicle = staffData.vehicle;
-        if (staffData.vehicle_type !== undefined || staffData.vehicleType !== undefined) updateFields.vehicle_type = staffData.vehicle_type || staffData.vehicleType;
-        if (staffData.vehicle_reg !== undefined || staffData.vehicleReg !== undefined) updateFields.vehicle_reg = staffData.vehicle_reg || staffData.vehicleReg;
-        if (staffData.license_number !== undefined || staffData.licenseNum !== undefined) updateFields.license_number = staffData.license_number || staffData.licenseNum;
-        if (staffData.emergency_contact !== undefined) updateFields.emergency_contact = staffData.emergency_contact;
-        if (staffData.emergencyName !== undefined || staffData.emergencyPhone !== undefined) {
-            updateFields.emergency_contact = { name: staffData.emergencyName || '', phone: staffData.emergencyPhone || '' };
-        }
-        if (staffData.availability !== undefined) {
-            updateFields.availability = staffData.availability;
-            updateFields.status = staffData.availability;
-        }
-        // NOTE: assigned_postcodes are intentionally excluded — they are always inherited
-        // from the manager's plant (service_pincodes). Use syncAllStaffPostcodes() to refresh.
-
-        await db.collection('users').updateOne({ _id: staffId } as any, { $set: updateFields });
-        
-        await AuditService.recordEvent({
-            entityType: 'staff',
-            entityId: staffId,
-            action: 'staff_updated_by_manager',
-            actorId: managerId,
-            actorRole: 'manager'
-        });
-        return { success: true };
+        return StaffProvisioningService.updateUser(actorContext, staffId, staffData);
     }
 }

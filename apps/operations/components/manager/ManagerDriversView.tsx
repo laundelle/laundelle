@@ -17,7 +17,8 @@ import {
   Lock,
   UserCheck,
   ChevronRight,
-  Eye
+  Eye,
+  Edit
 } from 'lucide-react';
 import {
   dbFetchManagerStaff,
@@ -67,7 +68,6 @@ export const ManagerDriversView: React.FC = () => {
   const [editPhone, setEditPhone] = useState('');
   const [editVehicle, setEditVehicle] = useState('');
   const [editPostcodes, setEditPostcodes] = useState('');
-  const [editPassword, setEditPassword] = useState('');
 
   const [actionLoading, setActionLoading] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -121,7 +121,6 @@ export const ManagerDriversView: React.FC = () => {
       vehicle: editVehicle,
       assigned_postcodes: postcodes
     };
-    if (editPassword) payload.password = editPassword;
 
     const res = await dbManagerUpdateStaff(editingDriver._id, payload);
     setActionLoading(false);
@@ -157,14 +156,25 @@ export const ManagerDriversView: React.FC = () => {
   };
 
   const getCustomerName = (ord: any) => {
-    if (ord.customer_name) return ord.customer_name;
-    if (ord.customerName) return ord.customerName;
+    if (ord.customer_name && ord.customer_name !== 'Valued Customer' && ord.customer_name !== 'Customer') return ord.customer_name;
+    if (ord.customerName && ord.customerName !== 'Valued Customer' && ord.customerName !== 'Customer') return ord.customerName;
+    if (ord.contactDetails) {
+      const cName = `${ord.contactDetails.firstName || ''} ${ord.contactDetails.lastName || ''}`.trim();
+      if (cName) return cName;
+    }
     if (ord.customer && (ord.customer.full_name || ord.customer.name)) {
       return ord.customer.full_name || ord.customer.name;
     }
-    if (ord.userName) return ord.userName;
-    if (ord.user_name) return ord.user_name;
-    return 'Customer';
+    if (ord.userName && ord.userName !== 'Customer') return ord.userName;
+    if (ord.user_name && ord.user_name !== 'Customer') return ord.user_name;
+    if (ord.user && (ord.user.full_name || ord.user.name)) {
+      return ord.user.full_name || ord.user.name;
+    }
+    if (ord.customerEmail || ord.email) {
+      const email = ord.customerEmail || ord.email;
+      return email.split('@')[0];
+    }
+    return ord.customer_name || ord.customerName || 'Customer';
   };
 
   // Filtered drivers list
@@ -411,13 +421,12 @@ export const ManagerDriversView: React.FC = () => {
                               setEditVehicle(driver.vehicle || '');
                               const pc = driver.assigned_postcodes || driver.assignedSectors || [];
                               setEditPostcodes(pc.join(', '));
-                              setEditPassword('');
                               setEditDriverModalOpen(true);
                             }}
                             className="p-1.5 hover:bg-gray-100 text-gray-500 rounded-lg transition-colors cursor-pointer"
-                            title="Edit Driver Credentials"
+                            title="Edit Driver Details"
                           >
-                            <Lock className="w-3.5 h-3.5" />
+                            <Edit className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -655,17 +664,6 @@ export const ManagerDriversView: React.FC = () => {
                   onChange={(e) => setEditPostcodes(e.target.value)}
                   placeholder="e.g. PR1, PR2, M1"
                   className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden uppercase"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">Reset Driver Password (Optional)</label>
-                <input
-                  type="password"
-                  value={editPassword}
-                  onChange={(e) => setEditPassword(e.target.value)}
-                  placeholder="Leave blank to keep unchanged"
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
                 />
               </div>
 

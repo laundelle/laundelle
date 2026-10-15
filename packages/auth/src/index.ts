@@ -4,6 +4,7 @@
 
 export interface AuthUser {
   id: string;
+  publicId?: string;
   email: string;
   name: string;
   role?: string;
@@ -15,7 +16,9 @@ export interface AuthSession {
   token: string;
   user: AuthUser;
   isAuthenticated: boolean;
+  role?: string;
 }
+
 
 export const SESSION_STORAGE_KEY = 'l2u_auth_session';
 export const AUTH_CHANGE_EVENT = 'l2u_auth_change';
@@ -46,6 +49,9 @@ export function clearSession(): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.removeItem(SESSION_STORAGE_KEY);
+    localStorage.removeItem('l2u_customer_profile');
+    localStorage.removeItem('l2u_customer_orders');
+    localStorage.removeItem('l2u_customer_notifications');
     window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
   } catch (err) {
     console.error('Failed to clear auth session:', err);
@@ -65,20 +71,24 @@ export function authHeaders(): HeadersInit {
 }
 
 export function isOperationsRole(role?: string): boolean {
-  return role === 'driver' || role === 'processor' || role === 'manager';
+  const norm = (role || '').toLowerCase().trim();
+  return norm === 'driver' || norm === 'processor' || norm === 'manager' || norm === 'plant_manager';
 }
 
 export function isAdminRole(role?: string): boolean {
-  return role === 'admin' || role === 'super_admin';
+  const norm = (role || '').toLowerCase().trim();
+  return norm === 'admin' || norm === 'super_admin';
 }
 
 export function getRoleLandingPath(role?: string): string {
-  switch (role) {
+  const norm = (role || '').toLowerCase().trim();
+  switch (norm) {
     case 'driver':
       return '/driver';
     case 'processor':
       return '/processor';
     case 'manager':
+    case 'plant_manager':
       return '/manager';
     case 'admin':
     case 'super_admin':

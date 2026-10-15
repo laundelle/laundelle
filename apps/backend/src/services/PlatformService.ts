@@ -431,6 +431,26 @@ export class PlatformService {
         };
     }
 
+    static async getActiveDistricts(): Promise<string[]> {
+        const db = await getDb();
+        const activePlants = await db.collection('plants').find({ status: { $in: ['ACTIVE', 'active'] } }).toArray();
+        const districts = new Set<string>();
+        for (const p of activePlants) {
+            if (Array.isArray(p.pincodes)) {
+                for (const pin of p.pincodes) {
+                    if (pin && typeof pin === 'string') {
+                        districts.add(pin.trim().toUpperCase());
+                    }
+                }
+            }
+        }
+        const activeSectors = await db.collection('postcode_sectors').find({ is_active: true }).toArray();
+        for (const s of activeSectors) {
+            if (s.district) districts.add(s.district.trim().toUpperCase());
+        }
+        return Array.from(districts);
+    }
+
     static async getAdminPostcodes() {
         const db = await getDb();
         return db.collection('postcode_sectors').find({}).toArray();

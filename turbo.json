@@ -18,7 +18,11 @@
         "TWILIO_AUTH_TOKEN",
         "TWILIO_VERIFY_SERVICE_SID",
         "ADMIN_EMAIL",
-        "ADMIN_PASSWORD",
+        "BOOTSTRAP_ADMIN_SUB",
+        "AUTH0_DOMAIN",
+        "AUTH0_M2M_CLIENT_ID",
+        "AUTH0_M2M_CLIENT_SECRET",
+        "AUTH0_MANAGEMENT_AUDIENCE",
         "ALLOWED_ORIGINS",
         "CUSTOMER_APP_URL",
         "ADMIN_URL",
@@ -36,6 +40,8 @@
         "NEXT_PUBLIC_API_URL",
         "NEXT_PUBLIC_APP_URL",
         "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY",
+        "NEXT_PUBLIC_AUTH0_DOMAIN",
+        "NEXT_PUBLIC_AUTH0_CLIENT_ID",
         "APP_URL"
       ]
     },
@@ -47,6 +53,8 @@
         "NEXT_PUBLIC_APP_URL",
         "NEXT_PUBLIC_CUSTOMER_URL",
         "NEXT_PUBLIC_OPERATIONS_URL",
+        "NEXT_PUBLIC_AUTH0_DOMAIN",
+        "NEXT_PUBLIC_AUTH0_CLIENT_ID",
         "APP_URL"
       ]
     },
@@ -56,6 +64,8 @@
       "env": [
         "NEXT_PUBLIC_API_URL",
         "NEXT_PUBLIC_APP_URL",
+        "NEXT_PUBLIC_AUTH0_DOMAIN",
+        "NEXT_PUBLIC_AUTH0_CLIENT_ID",
         "APP_URL"
       ]
     },

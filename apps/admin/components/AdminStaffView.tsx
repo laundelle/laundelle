@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Mail, Phone, Plus, X, Lock, RefreshCw, Edit, MapPin, Eye, ShieldCheck, Calendar, Search } from 'lucide-react';
+import { Users, Mail, Phone, Plus, X, Lock, RefreshCw, Edit, MapPin, Eye, ShieldCheck, Calendar, Search, Copy, Check, ExternalLink } from 'lucide-react';
 import { dbFetchStaff, dbCreateStaffMember, dbUpdateStaffMember, dbFetchPlants, dbFetchManagers, dbFetchManagerDetails, dbAdminFetchOrders } from '@laundelle/api-client';
 
 export const AdminStaffView: React.FC = () => {
@@ -15,6 +15,14 @@ export const AdminStaffView: React.FC = () => {
   const [editingStaff, setEditingStaff] = useState<any | null>(null);
   const [viewingStaff, setViewingStaff] = useState<any | null>(null);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+  const [invitationModalOpen, setInvitationModalOpen] = useState(false);
+  const [createdStaffInvite, setCreatedStaffInvite] = useState<{
+    name: string;
+    email: string;
+    role: string;
+    ticketUrl: string;
+  } | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
 
   // New admin member form state
@@ -30,7 +38,6 @@ export const AdminStaffView: React.FC = () => {
   const [phoneCountryCode, setPhoneCountryCode] = useState('+44');
   const [phone, setPhone] = useState('');
   const [role, setRole] = useState('manager');
-  const [password, setPassword] = useState('');
   const [plantId, setPlantId] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [assignedPostcodes, setAssignedPostcodes] = useState('');
@@ -134,7 +141,6 @@ export const AdminStaffView: React.FC = () => {
     setPhoneCountryCode('+44');
     setPhone('');
     setRole('manager');
-    setPassword('');
     setPlantId('');
     setAssignedPostcodes('');
     setIsActive(true);
@@ -157,7 +163,6 @@ export const AdminStaffView: React.FC = () => {
     setPhoneCountryCode(parsedP.code);
     setPhone(parsedP.num);
     setRole(stf.role);
-    setPassword('');
     setPlantId(stf.plantId || '');
     setAssignedPostcodes((stf.assigned_postcodes || []).join(', '));
     setIsActive(stf.isActive);
@@ -202,6 +207,7 @@ export const AdminStaffView: React.FC = () => {
 
     const fullPhone = phone.trim() ? `${phoneCountryCode} ${phone.trim().replace(/^0/, '')}`.trim() : '';
     const staffData: any = {
+      name: fullName,
       full_name: fullName,
       email,
       phone: fullPhone,
@@ -215,6 +221,7 @@ export const AdminStaffView: React.FC = () => {
         // On edit: just send updatable fields (no manager/plant/postcode change)
       } else {
         staffData.manager_id = selectedManagerId;
+        staffData.plantManagerId = selectedManagerId;
       }
       // Driver-specific
       if (role === 'driver') {
@@ -227,33 +234,44 @@ export const AdminStaffView: React.FC = () => {
       }
     } else if (role === 'manager') {
       staffData.plant_id = plantId || null;
+      staffData.plantId = plantId || null;
     }
     // admin/super_admin: no plant or postcode fields
-
-    if (password) {
-      staffData.password = password;
-    }
 
     let res;
     if (editingStaff) {
       res = await dbUpdateStaffMember(editingStaff.id, staffData);
     } else {
-      if (!password) {
-        alert('Password is required when creating a new user.');
-        setSubmitting(false);
-        return;
-      }
-      res = await dbCreateStaffMember({ ...staffData, password });
+      res = await dbCreateStaffMember(staffData);
     }
     setSubmitting(false);
 
     if (res.success) {
-      alert(editingStaff ? '✓ Staff member updated successfully!' : '✓ Staff member created successfully!');
       setModalOpen(false);
       loadStaff();
       loadPlants();
+
+      if (!editingStaff && res.ticketUrl) {
+        setCreatedStaffInvite({
+          name: fullName,
+          email,
+          role,
+          ticketUrl: res.ticketUrl,
+        });
+        setCopiedLink(false);
+        setInvitationModalOpen(true);
+      } else {
+        alert(
+          editingStaff
+            ? '✓ Staff member updated successfully!'
+            : '✓ User created successfully. An onboarding invitation has been generated.'
+        );
+      }
     } else {
-      alert(`Error saving staff member: ${res.error || 'Unknown error'}`);
+      const displayError = typeof res.error === 'string' && !res.error.includes('{')
+        ? res.error
+        : 'Failed to save staff member. Please verify input details and try again.';
+      alert(`Error saving staff member: ${displayError}`);
     }
   };
 
@@ -288,35 +306,35 @@ export const AdminStaffView: React.FC = () => {
   };
 
   return (
-    <div className="w-full space-y-6 p-6 sm:p-8 pb-24">
+    <div className="w-full space-y-4 md:space-y-5 p-4 sm:p-8 pb-20 md:pb-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-heading font-extrabold text-[#03045E]">Staff & Plant Managers</h1>
-          <p className="text-xs text-gray-500">Manage operational staff, drivers, processors, and Plant Managers.</p>
+          <h1 className="text-xl md:text-2xl font-bold text-slate-900 tracking-tight">Staff Accounts</h1>
+          <p className="text-xs text-slate-500 mt-0.5">Manage plant managers, drivers, processors, and staff permissions.</p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             onClick={() => { loadStaff(); loadPlants(); }}
             disabled={loading}
-            className="p-2.5 bg-white border border-gray-200 hover:bg-gray-50 text-[#03045E] rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+            className="px-3.5 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
             title="Refresh Staff & Plant Managers"
           >
-            <RefreshCw className={`w-4 h-4 text-[#0077B6] ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${loading ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">Refresh Staff</span>
           </button>
           <button
             onClick={openAddModal}
-            className="bg-[#03045E] hover:bg-[#023E8A] text-white px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 shadow-sm cursor-pointer"
+            className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
           >
-            <Plus className="w-4 h-4 text-[#48CAE4]" />
-            <span>Add Staff / Plant Manager</span>
+            <Plus className="w-3.5 h-3.5" />
+            <span>Add Staff</span>
           </button>
         </div>
       </div>
 
       {/* Role Filter Tabs */}
-      <div className="bg-white rounded-3xl p-3 shadow-xs border border-gray-100 flex items-center gap-2 overflow-x-auto">
+      <div className="bg-slate-100/70 p-1 rounded-xl flex items-center gap-1 overflow-x-auto w-fit">
         {[
           { id: 'all', label: 'All Staff' },
           { id: 'manager', label: 'Plant Managers' },
@@ -327,8 +345,9 @@ export const AdminStaffView: React.FC = () => {
           <button
             key={r.id}
             onClick={() => setRoleFilter(r.id)}
-            className={`px-4 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer ${roleFilter === r.id ? 'bg-[#03045E] text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
-              }`}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
+              roleFilter === r.id ? 'bg-white text-slate-900 shadow-xs font-semibold' : 'text-slate-600 hover:text-slate-900'
+            }`}
           >
             {r.label}
           </button>
@@ -336,23 +355,23 @@ export const AdminStaffView: React.FC = () => {
       </div>
 
       {/* Search & Extra Filters Bar */}
-      <div className="bg-white rounded-3xl p-4 shadow-xs border border-gray-100 flex flex-col md:flex-row items-center justify-between gap-3">
-        <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto flex-1">
-          <div className="relative w-full sm:w-72">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+      <div className="bg-white rounded-2xl p-4 shadow-xs border border-slate-100 flex flex-col md:flex-row items-center justify-between gap-3">
+        <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full md:w-auto flex-1">
+          <div className="relative w-full sm:w-64">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search by name, email, phone, EMP #..."
+              placeholder="Search by name, email, EMP #..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+              className="w-full pl-9 pr-3.5 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-xs font-medium focus:bg-white focus:border-blue-500 focus:outline-hidden"
             />
           </div>
 
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="w-full sm:w-auto px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-hidden cursor-pointer"
+            className="w-full sm:w-auto px-3 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-xs font-medium text-slate-700 focus:bg-white focus:border-blue-500 focus:outline-hidden cursor-pointer"
           >
             <option value="all">All Statuses</option>
             <option value="active">Active Only</option>
@@ -362,7 +381,7 @@ export const AdminStaffView: React.FC = () => {
           <select
             value={plantFilter}
             onChange={(e) => setPlantFilter(e.target.value)}
-            className="w-full sm:w-auto px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-semibold text-gray-700 focus:outline-hidden cursor-pointer"
+            className="w-full sm:w-auto px-3 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-xs font-medium text-slate-700 focus:bg-white focus:border-blue-500 focus:outline-hidden cursor-pointer"
           >
             <option value="all">All Facilities</option>
             {plants.map((p) => (
@@ -380,39 +399,39 @@ export const AdminStaffView: React.FC = () => {
                 setStatusFilter('all');
                 setPlantFilter('all');
               }}
-              className="text-xs font-bold text-[#0077B6] hover:text-[#03045E] cursor-pointer whitespace-nowrap"
+              className="text-xs font-semibold text-blue-600 hover:text-blue-700 cursor-pointer whitespace-nowrap"
             >
               Reset Filters
             </button>
           )}
         </div>
 
-        <div className="text-xs text-gray-500 font-bold self-end md:self-auto">
-          Showing <span className="text-[#03045E] font-black">{filteredStaff.length}</span> staff members
+        <div className="text-xs text-slate-500 font-medium self-end md:self-auto">
+          Showing <span className="text-slate-900 font-bold">{filteredStaff.length}</span> staff members
         </div>
       </div>
 
       {loading ? (
-        <div className="text-center py-12 text-sm text-gray-500 font-bold space-y-2">
-          <RefreshCw className="w-8 h-8 text-[#03045E] animate-spin mx-auto" />
-          <p>Syncing staff records with center database...</p>
+        <div className="text-center py-16 text-xs text-slate-400 font-medium space-y-2">
+          <RefreshCw className="w-5 h-5 text-blue-600 animate-spin mx-auto" />
+          <p>Syncing staff records...</p>
         </div>
       ) : (
-        /* Staff Tabular Format (Rows and Columns) */
-        <div className="w-full bg-white rounded-3xl shadow-xs border border-gray-100 overflow-hidden">
-          <div className="overflow-x-auto">
+        /* Staff Box - Fixed Sized with Vertical Scroll */
+        <div className="w-full bg-white rounded-2xl shadow-xs border border-slate-100 overflow-hidden flex flex-col h-[calc(100vh-270px)] min-h-[460px]">
+          <div className="flex-1 overflow-y-auto overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-[#f8fafc] text-gray-500 font-bold border-b border-gray-100 uppercase tracking-wider text-[10px]">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-[10px]">
                 <tr>
-                  <th className="py-4 px-5">Staff Member</th>
-                  <th className="py-4 px-5">Role</th>
-                  <th className="py-4 px-5">Operational Assignment</th>
-                  <th className="py-4 px-5">Contact Details</th>
-                  <th className="py-4 px-5">Status</th>
-                  <th className="py-4 px-5 text-right">Actions</th>
+                  <th className="py-3 px-4">Staff Member</th>
+                  <th className="py-3 px-4">Role</th>
+                  <th className="py-3 px-4">Operational Assignment</th>
+                  <th className="py-3 px-4">Contact Details</th>
+                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-slate-100">
                 {filteredStaff.map((stf) => (
                   <tr
                     key={stf.id}
@@ -420,86 +439,86 @@ export const AdminStaffView: React.FC = () => {
                       setViewingStaff(stf);
                       setDetailsModalOpen(true);
                     }}
-                    className="hover:bg-[#CAF0F8]/30 transition-colors cursor-pointer group"
+                    className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
                   >
-                    <td className="py-4 px-5 flex items-center gap-3">
+                    <td className="py-3 px-4 flex items-center gap-3">
                       <img
                         src={stf.avatarUrl}
                         alt={stf.fullName}
-                        className="w-10 h-10 rounded-2xl object-cover shadow-2xs border border-[#00B4D8]/50 shrink-0"
+                        className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
                       />
                       <div>
-                        <h4 className="font-extrabold text-sm text-[#03045E] group-hover:text-[#0077B6] transition-colors">
+                        <h4 className="font-semibold text-xs text-slate-900 group-hover:text-blue-600 transition-colors">
                           {stf.fullName}
                         </h4>
-                        <span className="text-[10px] font-bold text-gray-400 font-mono block">
+                        <span className="text-[10px] font-medium text-slate-400 font-mono block">
                           {stf.employeeNumber}
                         </span>
                       </div>
                     </td>
-                    <td className="py-4 px-5">
+                    <td className="py-3 px-4">
                       <span
-                        className={`px-3 py-1 rounded-full text-[10px] font-extrabold tracking-wider uppercase ${
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase ${
                           stf.role === 'manager'
-                            ? 'bg-[#FFF0F2] text-[#E63946]'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-100/60'
                             : stf.role === 'driver'
-                            ? 'bg-[#EBF7FF] text-[#0077B6]'
+                            ? 'bg-blue-50 text-blue-700 border border-blue-100/60'
                             : stf.role === 'processor'
-                            ? 'bg-[#EFEAEE] text-[#7209B7]'
-                            : 'bg-[#CAF0F8] text-[#03045E]'
+                            ? 'bg-purple-50 text-purple-700 border border-purple-100/60'
+                            : 'bg-slate-100 text-slate-700'
                         }`}
                       >
                         {stf.roleLabel}
                       </span>
                     </td>
-                    <td className="py-4 px-5">
+                    <td className="py-3 px-4">
                       {stf.role === 'manager' || stf.role === 'processor' ? (
-                        <div className="flex items-center gap-1.5 text-xs text-gray-700">
-                          <MapPin className="w-3.5 h-3.5 text-[#E63946] shrink-0" />
-                          <span className="font-semibold">{getPlantName(stf.plantId)}</span>
+                        <div className="flex items-center gap-1.5 text-xs text-slate-700">
+                          <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                          <span className="font-medium">{getPlantName(stf.plantId)}</span>
                         </div>
                       ) : stf.role === 'driver' && stf.assigned_postcodes?.length > 0 ? (
                         <div className="flex flex-wrap gap-1 max-w-xs">
                           {stf.assigned_postcodes.map((pc: string) => (
                             <span
                               key={pc}
-                              className="px-2 py-0.5 rounded-md bg-blue-50 text-[#0077B6] text-[10px] font-bold font-mono border border-blue-100"
+                              className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-medium font-mono"
                             >
                               {pc}
                             </span>
                           ))}
                         </div>
                       ) : (
-                        <span className="text-gray-400 italic font-medium">Headquarters Hub</span>
+                        <span className="text-slate-400 font-medium">Headquarters Hub</span>
                       )}
                     </td>
-                    <td className="py-4 px-5 space-y-0.5 text-xs">
-                      <p className="flex items-center gap-1.5 font-medium text-gray-700">
-                        <Mail className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                    <td className="py-3 px-4 space-y-0.5 text-xs">
+                      <p className="flex items-center gap-1.5 font-medium text-slate-600">
+                        <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span>{stf.email}</span>
                       </p>
-                      <p className="flex items-center gap-1.5 font-medium text-gray-700">
-                        <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                      <p className="flex items-center gap-1.5 font-medium text-slate-600">
+                        <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                         <span>{stf.phone}</span>
                       </p>
                     </td>
-                    <td className="py-4 px-5">
+                    <td className="py-3 px-4">
                       <span
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold ${
+                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                           stf.isActive
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-red-50 text-red-600 border border-red-200'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-100/60'
+                            : 'bg-red-50 text-red-700 border border-red-100/60'
                         }`}
                       >
                         <span
                           className={`w-1.5 h-1.5 rounded-full ${
-                            stf.isActive ? 'bg-emerald-600 animate-ping' : 'bg-red-500'
+                            stf.isActive ? 'bg-emerald-500' : 'bg-red-500'
                           }`}
                         />
                         {stf.isActive ? 'active' : 'suspended'}
                       </span>
                     </td>
-                    <td className="py-4 px-5 text-right">
+                    <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <button
                           onClick={(e) => {
@@ -507,9 +526,9 @@ export const AdminStaffView: React.FC = () => {
                             setViewingStaff(stf);
                             setDetailsModalOpen(true);
                           }}
-                          className="px-3 py-1.5 bg-[#CAF0F8] hover:bg-[#ADE8F4] text-[#03045E] rounded-xl text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1 shadow-2xs group-hover:bg-[#03045E] group-hover:text-white"
+                          className="px-3 py-1 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-medium transition-all cursor-pointer inline-flex items-center gap-1 shadow-2xs group-hover:border-slate-300"
                         >
-                          <Eye className="w-3.5 h-3.5 text-[#0077B6] group-hover:text-[#48CAE4]" />
+                          <Eye className="w-3.5 h-3.5 text-blue-600" />
                           <span>View</span>
                         </button>
                         <button
@@ -517,7 +536,7 @@ export const AdminStaffView: React.FC = () => {
                             e.stopPropagation();
                             openEditModal(stf);
                           }}
-                          className="p-1.5 text-gray-400 hover:text-[#03045E] hover:bg-gray-100 rounded-xl transition-all cursor-pointer"
+                          className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-all cursor-pointer"
                           title="Edit Staff Member"
                         >
                           <Edit className="w-3.5 h-3.5" />
@@ -885,22 +904,17 @@ export const AdminStaffView: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">
-                  Password {editingStaff && <span className="text-gray-400 font-normal">(leave blank to keep unchanged)</span>}
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-3" />
-                  <input
-                    type="password"
-                    required={!editingStaff}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter password"
-                    className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border rounded-xl font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
-                  />
+              {!editingStaff && (
+                <div className="bg-blue-50/80 border border-blue-200/80 rounded-xl p-3 text-xs text-blue-900 flex items-start gap-2.5">
+                  <Mail className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold">Password Setup via Auth0</p>
+                    <p className="text-blue-700 mt-0.5 leading-relaxed">
+                      An invitation email will be sent to the new user so they can set their password.
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1142,10 +1156,125 @@ export const AdminStaffView: React.FC = () => {
                 disabled={submitting}
                 className="w-1/2 py-2.5 bg-[#03045E] hover:bg-[#023E8A] text-white rounded-xl text-xs font-black cursor-pointer shadow-md disabled:opacity-50 transition-colors"
               >
-                {submitting ? 'Saving...' : editingStaff ? 'Save Changes' : 'Create Staff'}
+                {submitting ? (editingStaff ? 'Saving...' : 'Creating user...') : editingStaff ? 'Save Changes' : 'Create Staff'}
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Onboarding Invitation Modal */}
+      {invitationModalOpen && createdStaffInvite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100 space-y-5 animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-100">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-[#03045E]">Staff Account Created!</h3>
+                  <p className="text-xs text-gray-500 font-medium">
+                    Auth0 onboarding invitation ready for {createdStaffInvite.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInvitationModalOpen(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Member Summary Card */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500 font-bold">Email Address:</span>
+                <span className="font-extrabold text-[#03045E] font-mono">{createdStaffInvite.email}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500 font-bold">Role:</span>
+                <span className="font-extrabold uppercase px-2.5 py-0.5 rounded-full text-[10px] bg-blue-100 text-[#0077B6]">
+                  {createdStaffInvite.role.replace('_', ' ')}
+                </span>
+              </div>
+            </div>
+
+            {/* Instructions */}
+            <div className="text-xs text-gray-600 space-y-1.5 leading-relaxed bg-blue-50/60 border border-blue-100 rounded-2xl p-3.5">
+              <p className="font-bold text-[#03045E]">How to onboard this staff member:</p>
+              <p className="text-[11px] text-gray-600">
+                Copy the secure invitation link below and share it with the manager via email, WhatsApp, or Slack. When opened, it allows them to set their password and activate their account (valid for 5 days).
+              </p>
+            </div>
+
+            {/* Link Box */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-black uppercase tracking-wider text-gray-500 block">
+                Secure Invitation Link
+              </label>
+              <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-2xl p-2.5">
+                <input
+                  type="text"
+                  readOnly
+                  value={createdStaffInvite.ticketUrl}
+                  className="w-full bg-transparent text-xs text-gray-700 font-mono focus:outline-hidden select-all"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(createdStaffInvite.ticketUrl);
+                      setCopiedLink(true);
+                      setTimeout(() => setCopiedLink(false), 2500);
+                    } catch {
+                      prompt('Copy invitation link:', createdStaffInvite.ticketUrl);
+                    }
+                  }}
+                  className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 shrink-0 transition-all cursor-pointer shadow-xs ${
+                    copiedLink
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-[#03045E] hover:bg-[#0077B6] text-white active:scale-95'
+                  }`}
+                >
+                  {copiedLink ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy Link</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-between pt-2">
+              <a
+                href={createdStaffInvite.ticketUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-bold text-[#0077B6] hover:text-[#03045E] flex items-center gap-1 hover:underline"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Test Link in New Tab</span>
+              </a>
+              <button
+                type="button"
+                onClick={() => setInvitationModalOpen(false)}
+                className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

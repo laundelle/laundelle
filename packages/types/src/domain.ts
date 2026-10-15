@@ -717,6 +717,8 @@ export interface Order {
   isPaid?: boolean;
   declaredItemCount?: number;
   promoCodeApplied?: string;
+  couponCode?: string;
+  coupon_code?: string;
   additionalCharge?: AdditionalCharge;
   driver?: {
     name: string;

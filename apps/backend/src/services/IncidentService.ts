@@ -9,8 +9,9 @@ import { generateIncidentId, buildEntityLookupQuery } from '@laundelle/ids';
 export class IncidentService {
     private static async getManagerPlantId(managerId: string) {
         const db = await getDb();
+        const managerLookup = buildEntityLookupQuery(managerId, 'user');
         const user = await db.collection('users').findOne({
-            _id: managerId,
+            ...managerLookup,
             role: { $in: ['manager', 'admin', 'super_admin'] },
             is_active: { $ne: false }
         } as any);
@@ -18,14 +19,20 @@ export class IncidentService {
             throw new Error('Access denied: User is inactive or does not exist.');
         }
         if (user.role === 'admin' || user.role === 'super_admin') {
-            return user.plant_id || null;
+            return user.plant_id || user.plantId || null;
         }
-        let plantId = user.plant_id;
+        let plantId = user.plant_id || user.plantId;
         if (!plantId) {
-            const plant = await db.collection('plants').findOne({ manager_id: managerId } as any);
+            const plant = await db.collection('plants').findOne({
+                $or: [
+                    { manager_id: managerId },
+                    { manager_id: user.publicId },
+                    { manager_id: String(user._id) }
+                ]
+            } as any);
             if (plant) {
-                plantId = plant._id;
-                await db.collection('users').updateOne({ _id: managerId } as any, { $set: { plant_id: plantId } });
+                plantId = plant.publicId || plant._id || plant.id;
+                await db.collection('users').updateOne({ _id: user._id } as any, { $set: { plant_id: plantId, plantId: plantId } });
             }
         }
         if (!plantId) {
@@ -39,7 +46,7 @@ export class IncidentService {
         const plantId = await this.getManagerPlantId(managerId);
         const now = new Date().toISOString();
 
-        const manager = await db.collection('users').findOne({ _id: managerId } as any);
+        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
         const managerName = manager?.full_name || manager?.name || 'Plant Manager';
 
         if (!data.title || !data.description || !data.type) {
@@ -48,7 +55,7 @@ export class IncidentService {
 
         let orderData: any = null;
         if (data.orderId) {
-            orderData = await db.collection('orders').findOne({ id: data.orderId });
+            orderData = await db.collection('orders').findOne(buildEntityLookupQuery(data.orderId, 'order'));
         }
 
         const canonicalIncidentId = generateIncidentId();
@@ -105,7 +112,7 @@ export class IncidentService {
             };
 
             await db.collection('orders').updateOne(
-                { id: data.orderId },
+                buildEntityLookupQuery(data.orderId, 'order') as any,
                 {
                     $push: { timeline_events: timelineEvent },
                     $set: { has_active_incident: true, updated_at: now }
@@ -191,7 +198,7 @@ export class IncidentService {
             throw new Error('Investigation note cannot be empty.');
         }
 
-        const manager = await db.collection('users').findOne({ _id: managerId } as any);
+        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
         const managerName = manager?.full_name || manager?.name || 'Plant Manager';
 
         const incident = await db.collection('incidents').findOne(
@@ -251,7 +258,7 @@ export class IncidentService {
         callerRole?: string
     ) {
         const db = await getDb();
-        const manager = await db.collection('users').findOne({ _id: managerId } as any);
+        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
         const managerName = manager?.full_name || manager?.name || 'Plant Manager';
         const effectiveRole = (callerRole || manager?.role || 'manager').toLowerCase().trim();
 
@@ -310,7 +317,7 @@ export class IncidentService {
 
         // If order linked, update order status or push timeline event
         if (incident.orderId) {
-            const order = await db.collection('orders').findOne({ id: incident.orderId });
+            const order = await db.collection('orders').findOne(buildEntityLookupQuery(incident.orderId, 'order') as any);
             if (order) {
                 const orderUpdates: any = { updated_at: now, has_active_incident: false };
                 const timelineEventsPush: any[] = [];
@@ -342,7 +349,7 @@ export class IncidentService {
                 }
 
                 await db.collection('orders').updateOne(
-                    { id: incident.orderId },
+                    { _id: order._id } as any,
                     {
                         $set: orderUpdates,
                         $push: { timeline_events: { $each: timelineEventsPush } }

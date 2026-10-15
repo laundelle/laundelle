@@ -224,17 +224,11 @@ export const ManagerIncidentsView: React.FC = () => {
       {/* Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="bg-red-600 text-white px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider">
-              Quality & Security
-            </span>
-            <span className="text-xs text-gray-500 font-medium">Dispute Resolution Console</span>
-          </div>
-          <h1 className="text-xl md:text-3xl font-heading font-extrabold text-[#03045E] mt-1 tracking-tight">
-            Incident & Claims Management
+          <h1 className="text-xl font-heading font-bold text-slate-900 tracking-tight">
+            Incidents & Claims
           </h1>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Track garment damage reports, missing items, delivery discrepancies, and execute official managerial resolutions.
+          <p className="text-xs text-slate-500 mt-0.5">
+            Customer dispute tracking and manager claim resolutions
           </p>
         </div>
 
@@ -242,65 +236,65 @@ export const ManagerIncidentsView: React.FC = () => {
           <button
             onClick={loadIncidents}
             disabled={loading}
-            className="p-2.5 bg-white hover:bg-gray-50 border border-gray-200 rounded-2xl text-[#03045E] cursor-pointer flex items-center gap-1.5 shadow-2xs transition-all"
+            className="px-3.5 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-slate-700 cursor-pointer flex items-center gap-1.5 shadow-2xs transition-all text-xs font-semibold"
             title="Refresh Incidents"
           >
-            <RefreshCw className={`w-4 h-4 text-[#0077B6] ${loading ? 'animate-spin' : ''}`} />
-            <span className="text-xs font-bold font-mono hidden sm:inline">Refresh</span>
+            <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${loading ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">Refresh</span>
           </button>
           <button
             onClick={() => setCreateModalOpen(true)}
-            className="px-4 py-2.5 bg-[#03045E] hover:bg-[#0077B6] text-white rounded-2xl text-xs font-bold flex items-center gap-2 shadow-xs cursor-pointer transition-all"
+            className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-2xs cursor-pointer transition-all"
           >
             <Plus className="w-4 h-4" />
-            <span>File Incident Report</span>
+            <span>File Incident</span>
           </button>
         </div>
       </div>
 
       {/* KPI Overview Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-5">
-        <div className="bg-white rounded-2xl md:rounded-3xl p-4 md:p-5 border border-gray-100 shadow-xs flex items-center justify-between">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+        <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-xs flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Active Claims</span>
-            <h3 className="text-2xl md:text-3xl font-heading font-extrabold text-red-600 mt-1">{activeCount}</h3>
-            <span className="text-[10px] text-red-700 font-bold">Pending investigation</span>
+            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Active Claims</span>
+            <h3 className="text-xl font-bold text-slate-900 mt-0.5">{activeCount}</h3>
+            <span className="text-[10px] text-red-600 font-medium">Pending review</span>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center text-red-600">
-            <AlertOctagon className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-600">
+            <AlertOctagon className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl md:rounded-3xl p-4 md:p-5 border border-gray-100 shadow-xs flex items-center justify-between">
+        <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-xs flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Under Investigation</span>
-            <h3 className="text-2xl md:text-3xl font-heading font-extrabold text-purple-600 mt-1">{investigatingCount}</h3>
-            <span className="text-[10px] text-gray-400 font-medium">Evidence being audited</span>
+            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Investigating</span>
+            <h3 className="text-xl font-bold text-slate-900 mt-0.5">{investigatingCount}</h3>
+            <span className="text-[10px] text-slate-400 font-medium">In progress</span>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-purple-50 flex items-center justify-center text-purple-600">
-            <Clock className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
+            <Clock className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl md:rounded-3xl p-4 md:p-5 border border-gray-100 shadow-xs flex items-center justify-between">
+        <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-xs flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Lost / Damaged Items</span>
-            <h3 className="text-2xl md:text-3xl font-heading font-extrabold text-amber-600 mt-1">{damageLostCount}</h3>
-            <span className="text-[10px] text-gray-400 font-medium">Garment physical defects</span>
+            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Damaged / Lost</span>
+            <h3 className="text-xl font-bold text-slate-900 mt-0.5">{damageLostCount}</h3>
+            <span className="text-[10px] text-slate-400 font-medium">Garment items</span>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600">
-            <Package className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600">
+            <Package className="w-5 h-5" />
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl md:rounded-3xl p-4 md:p-5 border border-gray-100 shadow-xs flex items-center justify-between">
+        <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-xs flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Resolved Cases</span>
-            <h3 className="text-2xl md:text-3xl font-heading font-extrabold text-emerald-600 mt-1">{resolvedCount}</h3>
-            <span className="text-[10px] text-emerald-700 font-medium">Compensated or closed</span>
+            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Resolved Cases</span>
+            <h3 className="text-xl font-bold text-slate-900 mt-0.5">{resolvedCount}</h3>
+            <span className="text-[10px] text-emerald-600 font-medium">Settled</span>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600">
-            <CheckCircle2 className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
+            <CheckCircle2 className="w-5 h-5" />
           </div>
         </div>
       </div>

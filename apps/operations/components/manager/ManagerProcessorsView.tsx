@@ -19,7 +19,8 @@ import {
   Layers,
   Flame,
   Wind,
-  Eye
+  Eye,
+  Edit
 } from 'lucide-react';
 import {
   dbFetchManagerStaff,
@@ -56,7 +57,6 @@ export const ManagerProcessorsView: React.FC = () => {
   const [editingProcessor, setEditingProcessor] = useState<any | null>(null);
   const [editPhoneCountryCode, setEditPhoneCountryCode] = useState('+44');
   const [editPhone, setEditPhone] = useState('');
-  const [editPassword, setEditPassword] = useState('');
 
   const [actionLoading, setActionLoading] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -104,7 +104,6 @@ export const ManagerProcessorsView: React.FC = () => {
 
     const fullEditPhone = editPhone.trim() ? `${editPhoneCountryCode} ${editPhone.trim().replace(/^0/, '')}`.trim() : '';
     const payload: any = { phone: fullEditPhone };
-    if (editPassword) payload.password = editPassword;
 
     const res = await dbManagerUpdateStaff(editingProcessor._id, payload);
     setActionLoading(false);
@@ -120,14 +119,25 @@ export const ManagerProcessorsView: React.FC = () => {
   };
 
   const getCustomerName = (ord: any) => {
-    if (ord.customer_name) return ord.customer_name;
-    if (ord.customerName) return ord.customerName;
+    if (ord.customer_name && ord.customer_name !== 'Valued Customer' && ord.customer_name !== 'Customer') return ord.customer_name;
+    if (ord.customerName && ord.customerName !== 'Valued Customer' && ord.customerName !== 'Customer') return ord.customerName;
+    if (ord.contactDetails) {
+      const cName = `${ord.contactDetails.firstName || ''} ${ord.contactDetails.lastName || ''}`.trim();
+      if (cName) return cName;
+    }
     if (ord.customer && (ord.customer.full_name || ord.customer.name)) {
       return ord.customer.full_name || ord.customer.name;
     }
-    if (ord.userName) return ord.userName;
-    if (ord.user_name) return ord.user_name;
-    return 'Customer';
+    if (ord.userName && ord.userName !== 'Customer') return ord.userName;
+    if (ord.user_name && ord.user_name !== 'Customer') return ord.user_name;
+    if (ord.user && (ord.user.full_name || ord.user.name)) {
+      return ord.user.full_name || ord.user.name;
+    }
+    if (ord.customerEmail || ord.email) {
+      const email = ord.customerEmail || ord.email;
+      return email.split('@')[0];
+    }
+    return ord.customer_name || ord.customerName || 'Customer';
   };
 
   // Filtered processors list
@@ -349,13 +359,12 @@ export const ManagerProcessorsView: React.FC = () => {
                               const p = parsePhone(processor.phone);
                               setEditPhoneCountryCode(p.code);
                               setEditPhone(p.num);
-                              setEditPassword('');
                               setEditProcessorModalOpen(true);
                             }}
                             className="p-1.5 hover:bg-gray-100 text-gray-500 rounded-lg transition-colors cursor-pointer"
-                            title="Edit Processor Credentials"
+                            title="Edit Processor Details"
                           >
-                            <Lock className="w-3.5 h-3.5" />
+                            <Edit className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -561,17 +570,6 @@ export const ManagerProcessorsView: React.FC = () => {
                     className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="block font-bold text-gray-700 mb-1">Reset Password (Optional)</label>
-                <input
-                  type="password"
-                  value={editPassword}
-                  onChange={(e) => setEditPassword(e.target.value)}
-                  placeholder="Leave blank to keep unchanged"
-                  className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
-                />
               </div>
 
               <div className="flex gap-2 pt-2">

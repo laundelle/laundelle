@@ -77,131 +77,6 @@ export const getCustomerInitials = (name?: string): string => {
     return parts[0].substring(0, 2).toUpperCase();
 };
 
-const REFERENCE_JOBS: DriverJobItem[] = [
-    {
-        id: 'LD4582',
-        type: 'collection',
-        customerName: 'Sarah Mitchell',
-        customerPhone: '+44 7700 900123',
-        time: '09:00 AM',
-        addressLine1: '12 Grove Road, Fulham',
-        addressLine2: 'London, SW6 1AA',
-        fullAddress: '12 Grove Road, Fulham, London, SW6 1AA',
-        orderCode: 'LD4582',
-        bagCount: 4,
-        status: 'driver_assigned',
-        items: [
-            { name: 'Mixed Wash & Fold (10kg)', quantity: 2 },
-            { name: 'Formal Shirts (Ironed)', quantity: 5 },
-            { name: 'Bedding & Duvet Set', quantity: 1 }
-        ]
-    },
-    {
-        id: 'LD4583',
-        type: 'delivery',
-        customerName: 'James Carter',
-        customerPhone: '+44 7700 900456',
-        time: '11:30 AM',
-        addressLine1: '88 Clapham High Street',
-        addressLine2: 'London, SW4 7UG',
-        fullAddress: '88 Clapham High Street, London, SW4 7UG',
-        orderCode: 'LD4583',
-        bagCount: 2,
-        status: 'out_for_delivery',
-        items: [
-            { name: 'Delicates & Silks', quantity: 3 },
-            { name: 'Wool Coat Dry Clean', quantity: 1 }
-        ]
-    },
-    {
-        id: 'LD4584',
-        type: 'collection',
-        customerName: 'Emma Williams',
-        customerPhone: '+44 7700 900789',
-        time: '02:00 PM',
-        addressLine1: '27 Richmond Avenue',
-        addressLine2: 'London, TW9 2NA',
-        fullAddress: '27 Richmond Avenue, London, TW9 2NA',
-        orderCode: 'LD4584',
-        bagCount: 6,
-        status: 'driver_assigned',
-        items: [
-            { name: 'Family Wash (15kg)', quantity: 3 },
-            { name: 'Curtains & Drapes', quantity: 2 }
-        ]
-    },
-    {
-        id: 'LD4585',
-        type: 'delivery',
-        customerName: 'Daniel Thompson',
-        customerPhone: '+44 7700 900321',
-        time: '04:30 PM',
-        addressLine1: '14 Kingston Road',
-        addressLine2: 'London, SW15 3DW',
-        fullAddress: '14 Kingston Road, London, SW15 3DW',
-        orderCode: 'LD4585',
-        bagCount: 3,
-        status: 'out_for_delivery',
-        items: [
-            { name: 'Business Suits (Steam Pressed)', quantity: 4 },
-            { name: 'Winter Parka', quantity: 1 }
-        ]
-    },
-    {
-        id: 'LD4586',
-        type: 'collection',
-        customerName: 'Sophia Davis',
-        customerPhone: '+44 7700 900654',
-        time: '05:45 PM',
-        addressLine1: '52 Wimbledon Hill Road',
-        addressLine2: 'London, SW19 7PA',
-        fullAddress: '52 Wimbledon Hill Road, London, SW19 7PA',
-        orderCode: 'LD4586',
-        bagCount: 2,
-        status: 'driver_assigned',
-        items: [
-            { name: 'Evening Dresses', quantity: 2 }
-        ]
-    }
-];
-
-const REFERENCE_COMPLETED_JOBS: any[] = [
-    {
-        id: 'ORD-4630891284',
-        original_id: 'ORD-4630891284',
-        status: 'delivered',
-        completed_action: 'both',
-        is_both: true,
-        is_delivered: true,
-        customer_name: 'Customer #46308',
-        address: 'SW6 Fulham Sector',
-        bag_count: 1,
-        items: [
-            { name: 'Sneaker & Shoe Deep Clean', quantity: 6 }
-        ],
-        pickup_completed_at: '2026-08-26T09:30:00.000Z',
-        delivery_completed_at: '2026-08-26T20:52:25.473Z',
-        completed_at: '2026-08-26T20:52:25.473Z',
-        createdAt: '2026-08-26T08:50:52.714Z'
-    },
-    {
-        id: 'ORD-1482390572',
-        original_id: 'ORD-1482390572',
-        status: 'laundry_collected',
-        completed_action: 'collection',
-        is_delivered: false,
-        customer_name: 'Customer #14823',
-        address: 'SW6 Fulham Sector',
-        bag_count: 2,
-        items: [
-            { name: 'Mixed Wash & Fold (10kg)', quantity: 2 },
-            { name: 'Formal Shirts (Ironed)', quantity: 5 }
-        ],
-        pickup_completed_at: '2026-08-26T20:42:11.681Z',
-        completed_at: '2026-08-26T20:42:11.681Z',
-        createdAt: '2026-08-26T20:29:05.445Z'
-    }
-];
 
 interface DriverPortalProps {
     onSignOut: () => void;
@@ -630,22 +505,35 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
 
     // Map real DB active orders into DriverJobItem format
     const mappedAssignedJobs: DriverJobItem[] = allActiveOrders.map((order: any) => {
-        const isPickup = ['order_placed', 'pending_payment', 'booking_confirmed', 'collection_scheduled', 'driver_assigned', 'pickup_in_progress', 'pickup_failed'].includes(order.status);
+        const isPickup = ['order_placed', 'pending_payment', 'booking_confirmed', 'collection_scheduled', 'driver_assigned', 'pickup_in_progress', 'pickup_failed', 'laundry_collected'].includes(order.status);
         const rawAddress = order.address || order.fullAddress || (order.deliveryAddress ? (typeof order.deliveryAddress === 'string' ? order.deliveryAddress : `${order.deliveryAddress.line1 || ''}, ${order.deliveryAddress.city || ''} ${order.deliveryAddress.postcode || ''}`) : '') || '';
         const addrParts = rawAddress.split(',').map((s: string) => s.trim()).filter(Boolean);
-        const line1 = addrParts[0] || order.addressLine1 || '123 High Street';
-        const line2 = addrParts.slice(1).join(', ') || order.addressLine2 || (order.city ? `${order.city} ${order.postcode || ''}` : (order.postcode || 'London'));
+        const line1 = addrParts[0] || order.addressLine1 || (rawAddress ? rawAddress : 'Address not specified');
+        const line2 = addrParts.slice(1).join(', ') || order.addressLine2 || (order.city ? `${order.city} ${order.postcode || ''}` : (order.postcode || ''));
 
-        let displayTime = '10:00 AM';
+        let displayTime = 'Scheduled';
         if (isPickup) {
-            displayTime = order.pickup_slot || order.pickupSlot || order.pickupTime || (order.created_at ? formatTime(order.created_at) : '10:00 AM');
+            displayTime = order.pickup_slot || order.pickupSlot || order.pickupTime || (order.created_at ? formatTime(order.created_at) : 'Scheduled');
         } else {
-            displayTime = order.delivery_slot || order.deliverySlot || order.deliveryTime || order.pickup_slot || order.pickupSlot || (order.created_at ? formatTime(order.created_at) : '10:00 AM');
+            displayTime = order.delivery_slot || order.deliverySlot || order.deliveryTime || order.pickup_slot || order.pickupSlot || (order.created_at ? formatTime(order.created_at) : 'Scheduled');
         }
 
         const orderId = order.id || order.publicId || (order._id ? String(order._id) : 'ORD-UNKNOWN');
-        const customerName = order.customerName || order.customer_name || order.user_name || order.customer?.name || order.userName || 'Valued Customer';
-        const customerPhone = order.customerPhone || order.customer_phone || order.phone || order.customer?.phone || '+44 7700 900123';
+        const contactName = order.contactDetails
+            ? `${order.contactDetails.firstName || ''} ${order.contactDetails.lastName || ''}`.trim()
+            : '';
+        const customerName = (order.customerName && order.customerName !== 'Valued Customer' && order.customerName !== 'Customer')
+            ? order.customerName
+            : (order.customer_name && order.customer_name !== 'Valued Customer' && order.customer_name !== 'Customer')
+            ? order.customer_name
+            : contactName
+            || order.user_name
+            || order.customer?.name
+            || order.customer?.full_name
+            || order.userName
+            || (order.customerEmail ? order.customerEmail.split('@')[0] : '')
+            || 'Customer';
+        const customerPhone = order.customerPhone || order.customer_phone || order.contactDetails?.phone || order.phone || order.customer?.phone || '';
 
         return {
             id: orderId,
@@ -656,11 +544,11 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
             formattedTimeSlot: displayTime,
             addressLine1: line1,
             addressLine2: line2,
-            fullAddress: rawAddress || `${line1}, ${line2}`,
+            fullAddress: rawAddress || (line1 ? `${line1}, ${line2}` : 'Address unavailable'),
             orderCode: order.publicId || order.orderNumber || order.id || orderId,
-            bagCount: order.bag_count || order.bagCount || (order.items && order.items.length > 0 ? order.items.reduce((sum: number, it: any) => sum + (it.quantity || 1), 0) : 3),
+            bagCount: order.bag_count || order.bagCount || (order.items && order.items.length > 0 ? order.items.reduce((sum: number, it: any) => sum + (it.quantity || 1), 0) : 1),
             status: order.status,
-            items: order.items || [{ name: 'Assorted Garments', quantity: 3 }],
+            items: order.items || [],
             rawOrder: order,
             isReal: true,
             pickupInstructionType: order.pickupInstructionType || order.pickup_instruction_type,
@@ -668,10 +556,8 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
         };
     });
 
-    // Real DB orders prioritized; if completely empty and no driver account loaded yet, reference demo fallback
-    const combinedJobs: DriverJobItem[] = mappedAssignedJobs.length > 0
-        ? mappedAssignedJobs
-        : (allActiveOrders.length === 0 && !loading ? [] : REFERENCE_JOBS);
+    // Real DB orders only (no mock fallback)
+    const combinedJobs: DriverJobItem[] = mappedAssignedJobs;
 
     const allCount = combinedJobs.length;
     const collectionsCount = combinedJobs.filter(j => j.type === 'collection').length;
@@ -684,7 +570,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
     });
 
     // ── Dashboard Live Helpers ──
-    const nextJob = combinedJobs.find(j => ['driver_assigned', 'pickup_in_progress', 'delivery_driver_assigned', 'delivery_driver_accepted', 'ready_for_delivery', 'out_for_delivery'].includes(j.status)) || combinedJobs[0];
+    const nextJob = combinedJobs.find(j => ['driver_assigned', 'pickup_in_progress', 'laundry_collected', 'delivery_driver_assigned', 'delivery_driver_accepted', 'ready_for_delivery', 'out_for_delivery'].includes(j.status)) || combinedJobs[0];
     const todayCompletedOrders = completed.filter(o => {
         const rawDate = o.completed_at || o.qr_tracking?.deliveredAt || o.qr_tracking?.collectedAt || o.delivered_at || o.updated_at || o.createdAt;
         if (!rawDate) return false;
@@ -692,14 +578,14 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
             return new Date(rawDate).toDateString() === new Date().toDateString();
         } catch { return false; }
     });
-    const todayCompletedCount = todayCompletedOrders.length > 0 ? todayCompletedOrders.length : (completed.length > 0 ? completed.length : 2);
-    const rawTodayEarnings = todayCompletedOrders.reduce((acc, o) => acc + 5 + ((o.total_price || 0) * 0.1), 0);
-    const displayTodayEarnings = rawTodayEarnings > 0 ? rawTodayEarnings.toFixed(2) : '68.50';
+    const todayCompletedCount = todayCompletedOrders.length;
+    const rawTodayEarnings = todayCompletedOrders.reduce((acc, o) => acc + 5 + ((o.total_price || o.total || 0) * 0.1), 0);
+    const displayTodayEarnings = rawTodayEarnings.toFixed(2);
     const totalPlannedStops = allCount + todayCompletedCount;
-    const shiftProgressPercent = Math.min(100, Math.round((todayCompletedCount / (totalPlannedStops || 1)) * 100));
+    const shiftProgressPercent = totalPlannedStops > 0 ? Math.min(100, Math.round((todayCompletedCount / totalPlannedStops) * 100)) : 0;
 
     // ── Completed Jobs Date Filtering & Helpers ──
-    const allCompletedJobs = completed.length > 0 ? completed : (driverInfo ? [] : REFERENCE_COMPLETED_JOBS);
+    const allCompletedJobs = completed;
 
     const getOrderDateString = (order: any): string => {
         const raw = order.completed_at || order.qr_tracking?.deliveredAt || order.qr_tracking?.collectedAt || order.delivered_at || order.updated_at || order.createdAt;
@@ -1221,7 +1107,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
                             </div>
 
                             {/* 2. "UP NEXT ON YOUR ROUTE" Live Action Card */}
-                            {nextJob && (
+                            {nextJob ? (
                                 <div className="space-y-1.5">
                                     <div className="flex items-center justify-between px-1">
                                         <div className="flex items-center gap-1.5">
@@ -1302,6 +1188,16 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
                                         </div>
                                     </div>
                                 </div>
+                            ) : (
+                                <div className="bg-white rounded-3xl p-5 shadow-xs border border-gray-100 flex items-center gap-3.5">
+                                    <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                                        <CheckCircle2 className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-black text-gray-900">No Pending Stops</h3>
+                                        <p className="text-xs text-gray-500 mt-0.5">You have completed all active deliveries and pickups for now.</p>
+                                    </div>
+                                </div>
                             )}
 
                             {/* 3. Today's Route Shift Progress & Timeline Tracker */}
@@ -1328,29 +1224,33 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
 
                                 {/* Mini Stops Timeline Preview */}
                                 <div className="pt-2 space-y-2.5">
-                                    {combinedJobs.slice(0, 3).map((job, idx) => (
-                                        <div
-                                            key={job.id}
-                                            onClick={() => setView('assignments')}
-                                            className="flex items-center justify-between p-2.5 rounded-xl hover:bg-gray-50 transition-colors cursor-pointer border border-gray-50"
-                                        >
-                                            <div className="flex items-center gap-2.5">
-                                                <div className="w-6 h-6 rounded-full bg-blue-100 text-[#1877F2] text-xs font-black flex items-center justify-center shrink-0">
-                                                    {idx + 1}
+                                    {combinedJobs.length === 0 ? (
+                                        <p className="text-xs text-gray-400 py-2 text-center font-medium">No active stops remaining on your route.</p>
+                                    ) : (
+                                        combinedJobs.slice(0, 3).map((job, idx) => (
+                                            <div
+                                                key={job.id}
+                                                onClick={() => setView('assignments')}
+                                                className="flex items-center justify-between p-2.5 rounded-xl hover:bg-gray-50 transition-colors cursor-pointer border border-gray-50"
+                                            >
+                                                <div className="flex items-center gap-2.5">
+                                                    <div className="w-6 h-6 rounded-full bg-blue-100 text-[#1877F2] text-xs font-black flex items-center justify-center shrink-0">
+                                                        {idx + 1}
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-bold text-gray-800 leading-tight">{job.customerName}</p>
+                                                        <p className="text-[10px] text-gray-400 mt-0.5">{job.addressLine1}</p>
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <p className="text-xs font-bold text-gray-800 leading-tight">{job.customerName}</p>
-                                                    <p className="text-[10px] text-gray-400 mt-0.5">{job.addressLine1}</p>
+                                                <div className="text-right shrink-0">
+                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${job.type === 'collection' ? 'bg-blue-50 text-[#1877F2]' : 'bg-emerald-50 text-emerald-700'
+                                                        }`}>
+                                                        {job.time}
+                                                    </span>
                                                 </div>
                                             </div>
-                                            <div className="text-right shrink-0">
-                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${job.type === 'collection' ? 'bg-blue-50 text-[#1877F2]' : 'bg-emerald-50 text-emerald-700'
-                                                    }`}>
-                                                    {job.time}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        ))
+                                    )}
                                 </div>
 
                                 <button
@@ -1455,32 +1355,34 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
 
                                 <div className="grid grid-cols-3 gap-2 pt-1 text-center">
                                     <div className="p-2.5 bg-gray-50 rounded-2xl border border-gray-100">
-                                        <p className="text-[10px] text-gray-400 font-bold uppercase">Inspection</p>
-                                        <p className="text-xs font-extrabold text-emerald-600 mt-0.5">Passed</p>
+                                        <p className="text-[10px] text-gray-400 font-bold uppercase">Status</p>
+                                        <p className="text-xs font-extrabold text-emerald-600 mt-0.5">{driverInfo?.status || 'Active'}</p>
                                     </div>
                                     <div className="p-2.5 bg-gray-50 rounded-2xl border border-gray-100">
-                                        <p className="text-[10px] text-gray-400 font-bold uppercase">Clean Bags</p>
-                                        <p className="text-xs font-extrabold text-gray-900 mt-0.5">12 Ready</p>
+                                        <p className="text-[10px] text-gray-400 font-bold uppercase">Assigned</p>
+                                        <p className="text-xs font-extrabold text-gray-900 mt-0.5">{allCount} Jobs</p>
                                     </div>
                                     <div className="p-2.5 bg-gray-50 rounded-2xl border border-gray-100">
-                                        <p className="text-[10px] text-gray-400 font-bold uppercase">Scanner / GPS</p>
-                                        <p className="text-xs font-extrabold text-blue-600 mt-0.5">Optimal</p>
+                                        <p className="text-[10px] text-gray-400 font-bold uppercase">Network</p>
+                                        <p className="text-xs font-extrabold text-blue-600 mt-0.5">{isOnline ? 'Online' : 'Offline'}</p>
                                     </div>
                                 </div>
                             </div>
 
                             {/* 6. Live Hub Operational Notice */}
-                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100/80 rounded-2xl p-4 flex items-start gap-3 shadow-2xs">
-                                <div className="w-8 h-8 rounded-full bg-[#1877F2] text-white flex items-center justify-center shrink-0 mt-0.5">
-                                    <Waves className="w-4 h-4" />
+                            {driverInfo?.assigned_hub && (
+                                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100/80 rounded-2xl p-4 flex items-start gap-3 shadow-2xs">
+                                    <div className="w-8 h-8 rounded-full bg-[#1877F2] text-white flex items-center justify-center shrink-0 mt-0.5">
+                                        <Waves className="w-4 h-4" />
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-extrabold text-[#1877F2]">{driverInfo.assigned_hub} Operations</p>
+                                        <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">
+                                            Processing facility active. Drop-off cutoff is 8:00 PM.
+                                        </p>
+                                    </div>
                                 </div>
-                                <div>
-                                    <p className="text-xs font-extrabold text-[#1877F2]">West London Plant Hub Status</p>
-                                    <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">
-                                        Fulham & Chelsea processing hub is running on normal schedule. Drop-off cutoff is 8:00 PM.
-                                    </p>
-                                </div>
-                            </div>
+                            )}
                         </div>
                     )}
 
@@ -1903,6 +1805,39 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
 
                                                 {/* 5. ACTION BUTTONS */}
                                                 <div className="space-y-1.5">
+                                                    {job.status === 'laundry_collected' ? (
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => handleStartNavigation(job, e)}
+                                                                className="w-full py-2 px-3 bg-[#1877F2] hover:bg-[#1565C0] active:scale-98 text-white rounded-xl flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
+                                                                title="Navigate"
+                                                            >
+                                                                <Navigation className="w-4 h-4 text-white fill-white shrink-0" />
+                                                                <div className="text-left min-w-0">
+                                                                    <span className="block text-xs font-black leading-none">Navigate</span>
+                                                                    <span className="block text-[8px] font-extrabold opacity-80 tracking-wider uppercase mt-0.5">OPEN IN MAPS</span>
+                                                                </div>
+                                                            </button>
+
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setSelectedJob(job.rawOrder || job);
+                                                                    setQrModalOpen(true);
+                                                                }}
+                                                                className="w-full py-2 px-3 bg-gradient-to-r from-[#03045E] to-[#0077B6] hover:from-[#023E8A] hover:to-[#0096C7] active:scale-98 text-white rounded-xl flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
+                                                                title="Handover QR"
+                                                            >
+                                                                <QrCode className="w-4 h-4 text-white shrink-0" />
+                                                                <div className="text-left min-w-0">
+                                                                    <span className="block text-xs font-black leading-none truncate">Handover QR</span>
+                                                                    <span className="block text-[8px] font-extrabold opacity-80 tracking-wider uppercase mt-0.5">PLANT INTAKE</span>
+                                                                </div>
+                                                            </button>
+                                                        </div>
+                                                    ) : (
                                                     <div className="grid grid-cols-2 gap-2">
                                                         <button
                                                             type="button"
@@ -1937,6 +1872,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
                                                             </div>
                                                         </button>
                                                     </div>
+                                                )}
 
                                                     {((job.rawOrder?.payment_method === 'cash_on_delivery' || job.rawOrder?.paymentMethod === 'cash_on_delivery') && !job.rawOrder?.is_paid && job.rawOrder?.payment_status !== 'paid') && (
                                                         <button
@@ -2458,12 +2394,32 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
                     ['out_for_delivery', 'delivered'].includes(selectedJob.status);
 
                 const isColl = !isDeliveryJob && !isBoth;
+                const isDelivered =
+                    selectedJob.status === 'delivered' ||
+                    selectedJob.status === 'completed' ||
+                    selectedJob.completed_action === 'delivery' ||
+                    selectedJob.completed_action === 'both' ||
+                    selectedJob.is_delivered === true ||
+                    Boolean(selectedJob.delivery_completed_at && (selectedJob.status === 'delivered' || selectedJob.status === 'completed'));
                 const rawId = selectedJob.rawOrder?.publicId || selectedJob.publicId || selectedJob.orderCode || selectedJob.order_code || selectedJob.id || '';
                 const orderCodeDisplay = rawId ? (rawId.startsWith('#') ? rawId : `#${rawId}`) : '';
 
                 const timeSlotDisplay = selectedJob.formattedTimeSlot || formatJobTimeSlot(selectedJob);
-                const customerNameDisplay = selectedJob.customer_name || selectedJob.customerName || selectedJob.user_name || 'Valued Customer';
-                const customerPhoneDisplay = selectedJob.customer_phone || selectedJob.customerPhone || selectedJob.phone || '';
+                const contactNameDisplay = selectedJob.contactDetails
+                    ? `${selectedJob.contactDetails.firstName || ''} ${selectedJob.contactDetails.lastName || ''}`.trim()
+                    : '';
+                const customerNameDisplay = (selectedJob.customer_name && selectedJob.customer_name !== 'Valued Customer' && selectedJob.customer_name !== 'Customer')
+                    ? selectedJob.customer_name
+                    : (selectedJob.customerName && selectedJob.customerName !== 'Valued Customer' && selectedJob.customerName !== 'Customer')
+                    ? selectedJob.customerName
+                    : contactNameDisplay
+                    || selectedJob.user_name
+                    || selectedJob.userName
+                    || selectedJob.customer?.name
+                    || selectedJob.customer?.full_name
+                    || (selectedJob.customerEmail ? selectedJob.customerEmail.split('@')[0] : '')
+                    || 'Customer';
+                const customerPhoneDisplay = selectedJob.customer_phone || selectedJob.customerPhone || selectedJob.contactDetails?.phone || selectedJob.phone || '';
                 const addressDisplay = selectedJob.address || selectedJob.fullAddress || `${selectedJob.addressLine1 || ''} ${selectedJob.addressLine2 || ''}`;
                 const itemsList = selectedJob.items && selectedJob.items.length > 0
                     ? selectedJob.items
@@ -2566,7 +2522,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
                                                     Privacy Protection Active
                                                 </p>
                                                 <p className="text-amber-700 text-xs mt-0.5 font-medium leading-relaxed">
-                                                    Customer name, phone number, address, verification photos, and QR code generation are hidden for completed jobs.
+                                                    Customer name, phone number, address, and verification photos are protected for completed jobs.
                                                 </p>
                                             </div>
                                         </div>
@@ -2707,18 +2663,32 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
                                                 <span>Navigate</span>
                                             </button>
 
-                                            {/* Verify PIN */}
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    handleOpenVerification(selectedJob.id);
-                                                    setSelectedJob(null);
-                                                }}
-                                                className="py-2.5 px-2 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-2xl text-xs flex flex-col items-center justify-center gap-1 border border-amber-100 transition-all text-center cursor-pointer"
-                                            >
-                                                <Camera className="w-4 h-4" />
-                                                <span>Verify & PIN</span>
-                                            </button>
+                                            {/* Verify PIN / Handover QR */}
+                                            {selectedJob.status === 'laundry_collected' ? (
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setQrModalOpen(true);
+                                                    }}
+                                                    className="py-2.5 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-2xl text-xs flex flex-col items-center justify-center gap-1 border border-indigo-100 transition-all text-center cursor-pointer"
+                                                >
+                                                    <QrCode className="w-4 h-4" />
+                                                    <span>Handover QR</span>
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        handleOpenVerification(selectedJob.id);
+                                                        setSelectedJob(null);
+                                                    }}
+                                                    className="py-2.5 px-2 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-2xl text-xs flex flex-col items-center justify-center gap-1 border border-amber-100 transition-all text-center cursor-pointer"
+                                                >
+                                                    <Camera className="w-4 h-4" />
+                                                    <span>Verify & PIN</span>
+                                                </button>
+                                            )}
                                         </div>
 
                                         {/* Time Slot Window Card */}
@@ -2959,51 +2929,85 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
                                     );
                                 })()}
 
-                                {/* Primary Action Buttons (Active Jobs Only) */}
-                                {!isCompleted && (
+                                {/* Primary Action Buttons */}
+                                {!isCompleted ? (
                                     <div className="pt-2 space-y-2">
-                                        <div className="grid grid-cols-2 gap-2">
+                                        {selectedJob.status === 'laundry_collected' ? (
                                             <button
                                                 type="button"
-                                                onClick={() => {
-                                                    const j = combinedJobs.find(x => x.id === selectedJob.id) || selectedJob;
-                                                    setFailedModalJob(j);
-                                                    setFailedReason('customer_unavailable');
-                                                    setFailedNotes('');
-                                                    setFailedPhoto(null);
-                                                    setSelectedJob(null);
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setQrModalOpen(true);
                                                 }}
-                                                className="py-3 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-2xl text-xs flex items-center justify-center gap-1.5 border border-rose-200 cursor-pointer"
+                                                className="w-full py-3.5 bg-gradient-to-r from-[#03045E] to-[#0077B6] hover:from-[#023E8A] hover:to-[#0096C7] text-white font-bold rounded-2xl text-sm transition-all flex items-center justify-center gap-2 shadow-md shadow-blue-900/10 cursor-pointer"
                                             >
-                                                <AlertCircle className="w-4 h-4 text-rose-600" />
-                                                Report Failed
+                                                <QrCode className="w-4 h-4" />
+                                                Generate Handover QR (Plant Intake)
                                             </button>
+                                        ) : (
+                                            <>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const j = combinedJobs.find(x => x.id === selectedJob.id) || selectedJob;
+                                                            setFailedModalJob(j);
+                                                            setFailedReason('customer_unavailable');
+                                                            setFailedNotes('');
+                                                            setFailedPhoto(null);
+                                                            setSelectedJob(null);
+                                                        }}
+                                                        className="py-3 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-2xl text-xs flex items-center justify-center gap-1.5 border border-rose-200 cursor-pointer"
+                                                    >
+                                                        <AlertCircle className="w-4 h-4 text-rose-600" />
+                                                        Report Failed
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const id = selectedJob.id;
+                                                            setSelectedJob(null);
+                                                            handleOpenVerification(id);
+                                                        }}
+                                                        className="py-3 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                                                    >
+                                                        <Camera className="w-4 h-4" />
+                                                        Verify & Complete
+                                                    </button>
+                                                </div>
+
+                                                {!isDelivered && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setQrModalOpen(true);
+                                                        }}
+                                                        className="w-full py-3.5 bg-gradient-to-r from-[#03045E] to-[#0077B6] hover:from-[#023E8A] hover:to-[#0096C7] text-white font-bold rounded-2xl text-sm transition-all flex items-center justify-center gap-2 shadow-md shadow-blue-900/10 cursor-pointer"
+                                                    >
+                                                        <QrCode className="w-4 h-4" />
+                                                        Generate Handover QR (Plant Intake)
+                                                    </button>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                ) : (
+                                    !isDelivered && (
+                                        <div className="pt-2">
                                             <button
                                                 type="button"
-                                                onClick={() => {
-                                                    const id = selectedJob.id;
-                                                    setSelectedJob(null);
-                                                    handleOpenVerification(id);
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setQrModalOpen(true);
                                                 }}
-                                                className="py-3 px-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                                                className="w-full py-3.5 bg-gradient-to-r from-[#03045E] to-[#0077B6] hover:from-[#023E8A] hover:to-[#0096C7] text-white font-bold rounded-2xl text-sm transition-all flex items-center justify-center gap-2 shadow-md shadow-blue-900/10 cursor-pointer"
                                             >
-                                                <Camera className="w-4 h-4" />
-                                                Verify & Complete
+                                                <QrCode className="w-4 h-4" />
+                                                Generate Handover QR (Plant Intake)
                                             </button>
                                         </div>
-
-                                        <button
-                                            type="button"
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setQrModalOpen(true);
-                                            }}
-                                            className="w-full py-3.5 bg-gradient-to-r from-[#03045E] to-[#0077B6] hover:from-[#023E8A] hover:to-[#0096C7] text-white font-bold rounded-2xl text-sm transition-all flex items-center justify-center gap-2 shadow-md shadow-blue-900/10 cursor-pointer"
-                                        >
-                                            <QrCode className="w-4 h-4" />
-                                            Generate Handover QR (Plant Intake)
-                                        </button>
-                                    </div>
+                                    )
                                 )}
                             </div>
                         </div>

@@ -40,15 +40,7 @@ export const AdminFinanceView: React.FC = () => {
     loadFinance();
   }, []);
 
-  const orders: any[] = data?.orders || [
-    { id: 'LD1042', customerName: 'Emma Watson', date: 'Today, 10:30 AM', paymentMethod: 'Stripe Card', paymentStatus: 'Paid', incomingAmount: 38.50, refundAmount: 0.00, netAmount: 38.50, status: 'In Processing' },
-    { id: 'LD1043', customerName: 'David H. Miller', date: 'Today, 09:15 AM', paymentMethod: 'Apple Pay', paymentStatus: 'Paid', incomingAmount: 52.00, refundAmount: 0.00, netAmount: 52.00, status: 'Collected' },
-    { id: 'LD1044', customerName: 'Marcus Bennett', date: 'Yesterday, 04:45 PM', paymentMethod: 'Stripe Card', paymentStatus: 'Refunded', incomingAmount: 14.00, refundAmount: 14.00, netAmount: 0.00, status: 'Cancelled / Refunded' },
-    { id: 'LD1045', customerName: 'Dr. Sarah Al-Mansoor', date: 'Yesterday, 02:00 PM', paymentMethod: 'Stripe Card', paymentStatus: 'Paid', incomingAmount: 89.00, refundAmount: 0.00, netAmount: 89.00, status: 'Out for Delivery' },
-    { id: 'LD1046', customerName: 'Sophie Zhang', date: 'Yesterday, 11:00 AM', paymentMethod: 'Stripe Card', paymentStatus: 'Paid', incomingAmount: 45.00, refundAmount: 0.00, netAmount: 45.00, status: 'Delivered' },
-    { id: 'LD1047', customerName: 'James Wilson', date: '2 days ago', paymentMethod: 'Google Pay', paymentStatus: 'Paid', incomingAmount: 64.00, refundAmount: 0.00, netAmount: 64.00, status: 'Delivered' },
-    { id: 'LD1048', customerName: 'Oliver Twist', date: '3 days ago', paymentMethod: 'Stripe Card', paymentStatus: 'Paid', incomingAmount: 29.50, refundAmount: 0.00, netAmount: 29.50, status: 'Delivered' },
-  ];
+  const orders: any[] = data?.orders || [];
 
   const refunds: any[] = data?.refunds || [];
   const credits: any[] = data?.credits || [];
@@ -141,94 +133,94 @@ export const AdminFinanceView: React.FC = () => {
   const totalIncoming = filteredOrders.reduce((sum, o) => sum + Number(o.incomingAmount || o.total || 0), 0);
   const totalRefunds = data?.totalRefundsAmount ?? filteredOrders.reduce((sum, o) => sum + Number(o.refundAmount || 0), 0);
   const netRevenue = Math.max(0, totalIncoming - Number(totalRefunds));
-  const stripeSuccess = data?.stripeSuccessRate ?? 98.4;
-  const activeCredits = data?.activeStoreCreditsTotal ?? 10.00;
+  const stripeSuccess = data?.stripeSuccessRate ?? 100.0;
+  const activeCredits = data?.activeStoreCreditsTotal ?? 0.00;
 
   return (
-    <div className="w-full space-y-6 p-6 sm:p-8 pb-24">
+    <div className="w-full space-y-5 p-6 sm:p-8 pb-24 font-sans">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-heading font-extrabold text-[#03045E]">Finance, Refunds & Incoming Revenue</h1>
-          <p className="text-xs text-gray-500">Order revenue tracking, incoming payments, refund audit logs, goodwill store credits, and financial overrides.</p>
+          <h1 className="text-xl font-heading font-bold text-slate-900 tracking-tight">Finance & Ledger</h1>
+          <p className="text-xs text-slate-500">Revenue, settlements, refunds, and adjustments</p>
         </div>
 
         <button
           onClick={loadFinance}
-          className="p-2.5 bg-white border border-gray-200 text-gray-700 rounded-2xl hover:bg-gray-50 shadow-xs cursor-pointer flex items-center gap-2 text-xs font-bold"
+          className="px-3.5 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 shadow-2xs cursor-pointer flex items-center gap-2 text-xs font-semibold transition-colors"
         >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          <span>Sync Stripe & Ledger</span>
+          <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${loading ? 'animate-spin' : ''}`} />
+          <span>Sync Ledger</span>
         </button>
       </div>
 
       {/* Financial KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-xs space-y-1">
-          <span className="text-xs text-gray-500 font-bold uppercase block">Total Incoming Revenue</span>
-          <span className="text-2xl font-black text-[#03045E]">£{Number(totalIncoming).toFixed(2)}</span>
-          <span className="text-[10px] text-gray-400 block font-medium">From {orders.length} incoming customer orders</span>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs space-y-0.5">
+          <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider block">Incoming Revenue</span>
+          <span className="text-xl font-bold text-slate-900">£{Number(totalIncoming).toFixed(2)}</span>
+          <span className="text-[10px] text-slate-400 block">{orders.length} orders</span>
         </div>
-        <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-xs space-y-1">
-          <span className="text-xs text-amber-600 font-bold uppercase block">Total Refunds</span>
-          <span className="text-2xl font-black text-amber-600">-£{Number(totalRefunds).toFixed(2)}</span>
-          <span className="text-[10px] text-amber-700 block font-medium">{refunds.length || 1} processed refund payouts</span>
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs space-y-0.5">
+          <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider block">Total Refunds</span>
+          <span className="text-xl font-bold text-red-600">-£{Number(totalRefunds).toFixed(2)}</span>
+          <span className="text-[10px] text-slate-400 block">{refunds.length || 0} refunds</span>
         </div>
-        <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-xs space-y-1">
-          <span className="text-xs text-emerald-600 font-bold uppercase block">Net Settled Revenue</span>
-          <span className="text-2xl font-black text-emerald-600">£{Number(netRevenue).toFixed(2)}</span>
-          <span className="text-[10px] text-emerald-700 block font-medium">Gross revenue minus refunds</span>
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs space-y-0.5">
+          <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider block">Net Revenue</span>
+          <span className="text-xl font-bold text-slate-900">£{Number(netRevenue).toFixed(2)}</span>
+          <span className="text-[10px] text-emerald-600 font-medium block">Settled</span>
         </div>
-        <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-xs space-y-1">
-          <span className="text-xs text-blue-600 font-bold uppercase block">Payment Success Rate</span>
-          <span className="text-2xl font-black text-[#0077B6]">{stripeSuccess}%</span>
-          <span className="text-[10px] text-gray-400 block font-medium">Stripe card webhooks verified</span>
+        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs space-y-0.5">
+          <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider block">Success Rate</span>
+          <span className="text-xl font-bold text-blue-600">{stripeSuccess}%</span>
+          <span className="text-[10px] text-slate-400 block">Stripe verified</span>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="bg-white rounded-3xl p-2 shadow-xs border border-gray-100 flex items-center gap-2 overflow-x-auto">
+      <div className="bg-white rounded-2xl p-1.5 shadow-xs border border-slate-100 flex items-center gap-1.5 overflow-x-auto">
         <button
           onClick={() => setActiveTab('orders')}
-          className={`px-5 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
-            activeTab === 'orders' ? 'bg-[#03045E] text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === 'orders' ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
           }`}
         >
-          Incoming Order Revenues ({filteredOrders.length !== orders.length ? `${filteredOrders.length}/${orders.length}` : orders.length})
+          Orders ({filteredOrders.length !== orders.length ? `${filteredOrders.length}/${orders.length}` : orders.length})
         </button>
         <button
           onClick={() => setActiveTab('refunds')}
-          className={`px-5 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
-            activeTab === 'refunds' ? 'bg-[#03045E] text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === 'refunds' ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
           }`}
         >
-          Refund Records ({filteredRefunds.length !== refunds.length ? `${filteredRefunds.length}/${refunds.length}` : refunds.length})
+          Refunds ({filteredRefunds.length !== refunds.length ? `${filteredRefunds.length}/${refunds.length}` : refunds.length})
         </button>
         <button
           onClick={() => setActiveTab('credits')}
-          className={`px-5 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
-            activeTab === 'credits' ? 'bg-[#03045E] text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === 'credits' ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
           }`}
         >
           Store Credits ({filteredCredits.length !== credits.length ? `${filteredCredits.length}/${credits.length}` : credits.length})
         </button>
         <button
           onClick={() => setActiveTab('adjustments')}
-          className={`px-5 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
-            activeTab === 'adjustments' ? 'bg-[#03045E] text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+            activeTab === 'adjustments' ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
           }`}
         >
-          Price Adjustments ({filteredAdjustments.length !== adjustments.length ? `${filteredAdjustments.length}/${adjustments.length}` : adjustments.length})
+          Adjustments ({filteredAdjustments.length !== adjustments.length ? `${filteredAdjustments.length}/${adjustments.length}` : adjustments.length})
         </button>
         <button
           onClick={() => setActiveTab('cod')}
-          className={`px-5 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'cod' ? 'bg-[#03045E] text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+            activeTab === 'cod' ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-50'
           }`}
         >
           <Banknote className="w-3.5 h-3.5" />
-          <span>COD Reconciliation ({codData?.records ? (filteredCodRecords.length !== codData.records.length ? `${filteredCodRecords.length}/${codData.records.length}` : codData.records.length) : 0})</span>
+          <span>COD Reconciliation</span>
           {codData?.summary?.discrepancyCount > 0 && (
-            <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+            <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold">
               {codData.summary.discrepancyCount}
             </span>
           )}
@@ -321,31 +313,30 @@ export const AdminFinanceView: React.FC = () => {
           <p className="text-xs font-bold text-gray-500">Reconciling financial ledgers...</p>
         </div>
       ) : activeTab === 'orders' ? (
-        <div className="bg-white rounded-3xl shadow-xs border border-gray-100 overflow-hidden">
-          <div className="overflow-x-auto">
+        <div className="w-full bg-white rounded-2xl shadow-xs border border-slate-100 overflow-hidden flex flex-col h-[calc(100vh-340px)] min-h-[460px]">
+          <div className="flex-1 overflow-y-auto overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-[#f8fafc] text-gray-500 font-bold border-b border-gray-100 uppercase tracking-wider text-[10px]">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-[10px]">
                 <tr>
-                  <th className="py-4 px-5">Order ID</th>
-                  <th className="py-4 px-5">Customer Name</th>
-                  <th className="py-4 px-5">Payment Method & Date</th>
-                  <th className="py-4 px-5">Incoming Amount</th>
-                  <th className="py-4 px-5">Refund Amount</th>
-                  <th className="py-4 px-5">Net Amount</th>
-                  <th className="py-4 px-5">Payment Status</th>
-                  <th className="py-4 px-5 text-right">Order Status</th>
+                  <th className="py-3 px-4">Order ID</th>
+                  <th className="py-3 px-4">Customer Name</th>
+                  <th className="py-3 px-4">Payment Method & Date</th>
+                  <th className="py-3 px-4">Incoming Amount</th>
+                  <th className="py-3 px-4">Refund Amount</th>
+                  <th className="py-3 px-4">Net Amount</th>
+                  <th className="py-3 px-4">Payment Status</th>
+                  <th className="py-3 px-4 text-right">Order Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-slate-100">
                 {filteredOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center text-gray-400">
-                      <p className="text-sm font-bold text-gray-600">No revenue orders match your active filters.</p>
-                      <p className="text-xs text-gray-400 mt-1">Try clearing your search query or selecting a different payment status.</p>
+                    <td colSpan={8} className="py-12 text-center text-slate-400">
+                      <p className="text-xs font-semibold text-slate-600">No revenue orders match your active filters.</p>
                       {hasActiveFilters && (
                         <button
                           onClick={resetFilters}
-                          className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-[#0077B6] bg-sky-50 px-3 py-1.5 rounded-xl border border-sky-200 hover:bg-sky-100"
+                          className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-xl border border-blue-200 hover:bg-blue-100 cursor-pointer"
                         >
                           <RotateCcw className="w-3 h-3" /> Reset Filters
                         </button>
@@ -354,15 +345,15 @@ export const AdminFinanceView: React.FC = () => {
                   </tr>
                 ) : (
                   filteredOrders.map((ord) => (
-                    <tr key={ord.id} className="hover:bg-[#CAF0F8]/30 transition-colors">
-                      <td className="py-4 px-5 font-mono font-bold text-[#03045E]">
+                    <tr key={ord.id} className="hover:bg-slate-50/70 transition-colors">
+                      <td className="py-3 px-4 font-mono font-bold text-slate-900">
                         {ord.id}
                       </td>
-                      <td className="py-4 px-5 font-bold text-gray-900">
+                      <td className="py-3 px-4 font-semibold text-slate-900">
                         {ord.customerName}
                       </td>
-                      <td className="py-4 px-5 space-y-0.5">
-                        <span className="block font-semibold text-gray-800">{ord.paymentMethod}</span>
+                      <td className="py-3 px-4 space-y-0.5">
+                        <span className="block font-medium text-slate-800">{ord.paymentMethod}</span>
                         <span className="text-[10px] text-gray-400 block">{ord.date}</span>
                       </td>
                       <td className="py-4 px-5 font-extrabold text-emerald-700 text-sm">

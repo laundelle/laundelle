@@ -37,6 +37,7 @@ export const apiFetch = (path: string, init?: RequestInit): Promise<Response> =>
 };
 
 import { UserProfile, UserAddress, UserPreferences, Order, CustomerNotification } from '@laundelle/types';
+import { LAUNDELLE_SERVICE_IMAGES, getOptimizedImageUrl } from '@laundelle/config';
 
 // ─── Auth Session Helpers ─────────────────────────────────────────────────────
 
@@ -74,6 +75,9 @@ export function saveSession(session: MongoAuthSession): void {
 export function clearSession(): void {
     if (typeof window === 'undefined') return;
     localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(LOCAL_PROFILE_KEY);
+    localStorage.removeItem(LOCAL_ORDERS_KEY);
+    localStorage.removeItem(LOCAL_NOTIF_KEY);
     window.dispatchEvent(new Event('l2u_auth_change'));
 }
 
@@ -92,17 +96,21 @@ export function authHeaders(): HeadersInit {
 // ─── Auth Actions ─────────────────────────────────────────────────────────────
 
 export interface AuthResult {
-    user: { id: string; email: string; name: string; phone?: string; role?: string } | null;
+    user: { id: string; publicId?: string; email: string; name: string; phone?: string; role?: string } | null;
     token: string | null;
     error: string | null;
     needsProfileCompletion?: boolean;
 }
 
+
 function getErrorMessage(err: any, fallback: string): string {
     if (!err) return fallback;
     if (typeof err === 'string') return err;
     if (typeof err === 'object') {
-        return err.message || err.code || fallback;
+        if (typeof err.message === 'string') return err.message;
+        if (typeof err.error === 'string') return err.error;
+        if (err.error && typeof err.error === 'object') return getErrorMessage(err.error, fallback);
+        return err.code || (err.details && typeof err.details === 'string' ? err.details : null) || fallback;
     }
     return String(err);
 }
@@ -163,11 +171,16 @@ export async function dbAuth0Sync(auth0User: {
     name?: string;
     sub?: string;
     picture?: string;
-}): Promise<AuthResult> {
+    portal?: string;
+}, accessToken?: string): Promise<AuthResult> {
     try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (accessToken) {
+            headers['Authorization'] = `Bearer ${accessToken}`;
+        }
         const res = await apiFetch('/api/v1/auth/auth0-sync', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers,
             body: JSON.stringify(auth0User),
         });
         const json = await res.json();
@@ -176,15 +189,16 @@ export async function dbAuth0Sync(auth0User: {
             return { user: null, token: null, error: getErrorMessage(data.error, 'Auth0 synchronization failed') };
         }
 
+        const effectiveToken = data.token || accessToken;
         const session: MongoAuthSession = {
-            token: data.token,
+            token: effectiveToken,
             user: data.user,
             isAuthenticated: true,
         };
         saveSession(session);
         return { 
             user: data.user, 
-            token: data.token, 
+            token: effectiveToken, 
             error: null,
             needsProfileCompletion: Boolean(data.needsProfileCompletion || !data.user?.phone)
         };
@@ -194,6 +208,16 @@ export async function dbAuth0Sync(auth0User: {
 }
 
 export function mongoSignOut(): void {
+    const token = getAuthToken();
+    if (token) {
+        apiFetch('/api/v1/auth/logout', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            }
+        }).catch(() => {});
+    }
     clearSession();
 }
 
@@ -222,12 +246,12 @@ function setLocal<T>(key: string, val: T): void {
 }
 
 const DEFAULT_PROFILE: UserProfile = {
-    name: 'Guest Customer',
+    name: '',
     email: '',
     phone: '',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80',
-    walletBalance: 25.0,
-    rewardPoints: 120,
+    avatar: '',
+    walletBalance: 0,
+    rewardPoints: 0,
     addresses: [],
     preferences: {
         detergent: 'Standard',
@@ -256,6 +280,17 @@ export async function checkPostcodeSectorActive(postcode: string): Promise<boole
         return !!data.isServiceable;
     } catch {
         return false;
+    }
+}
+
+export async function dbFetchActiveDistricts(): Promise<string[]> {
+    try {
+        const res = await apiFetch('/api/v1/platform/postcodes');
+        const json = await res.json().catch(() => ({}));
+        const data = json.success ? json.data : json;
+        return Array.isArray(data?.districts) ? data.districts : [];
+    } catch {
+        return [];
     }
 }
 
@@ -294,34 +329,25 @@ export async function checkPostcodeCoverage(postcode: string): Promise<{
     }
 }
 
-export const SERVICE_NAME_IMAGES: Record<string, string> = {
-    'Basic Alterations & Repairs': '/Images/Basic Alterations & Repairs.png',
-    'Curtains & Heavy Drapes': '/Images/Curtains & Heavy Drapes.png',
-    'Duvets & Bulky Bedding': '/Images/Duvets & Bulky Bedding.png',
-    'Express Same-Day Service': '/Images/Express Same-Day Service.png',
-    'Leather & Suede Jackets': '/Images/Leather & Suede Jackets.png',
-    'Pet Beds & Blankets': '/Images/Pet Beds & Blankets.png',
-    'Silk & Delicates Care': '/Images/Silk & Delicates Care.png',
-    'Sneaker & Shoe Deep Clean': '/Images/Sneaker & Shoe Deep Clean.png',
-    'Sports & Activewear': '/Images/Sports & Activewear.png',
-    'Steam Ironing & Pressing': '/Images/Steam Ironing & Pressing.png',
-    'Suit & Jacket Dry Cleaning': '/Images/Suit & Jacket Dry Cleaning.png',
-    'Wash + Dry + Fold': '/Images/Wash + Dry + Fold.png',
-    'Wash + Steam Iron': '/Images/Wash + Steam Iron.png',
-    'Wedding Dress Preservation': '/Images/Wedding Dress Preservation.png',
-};
+export const SERVICE_NAME_IMAGES: Record<string, string> = Object.entries(LAUNDELLE_SERVICE_IMAGES).reduce(
+    (acc, [name, meta]) => {
+        acc[name] = getOptimizedImageUrl(meta);
+        return acc;
+    },
+    {} as Record<string, string>
+);
 
 export function resolveServiceImage(s: { name?: string; id?: string; image?: string; category?: string }): string {
     if (s.name && SERVICE_NAME_IMAGES[s.name]) {
         return SERVICE_NAME_IMAGES[s.name];
     }
-    if (s.image && s.image.startsWith('/Images/')) {
+    if (s.name && LAUNDELLE_SERVICE_IMAGES[s.name]) {
+        return getOptimizedImageUrl(LAUNDELLE_SERVICE_IMAGES[s.name]);
+    }
+    if (s.image && !s.image.startsWith('/Images/')) {
         return s.image;
     }
-    if (s.name) {
-        return `/Images/${s.name}.png`;
-    }
-    return s.image || '/Images/Wash + Dry + Fold.png';
+    return SERVICE_NAME_IMAGES['Wash + Dry + Fold'] || '';
 }
 
 export async function dbFetchServices(): Promise<any[]> {
@@ -331,9 +357,11 @@ export async function dbFetchServices(): Promise<any[]> {
             method: 'GET',
             headers: { 'Content-Type': 'application/json' }
         });
-        const json = await res.json();
+        const json = await res.json().catch(() => ({}));
         const data = json.success ? json.data : json;
-        if (data.error) throw new Error(data.error);
+        if (!res.ok || data?.error) {
+            throw new Error(getErrorMessage(data?.error, !res.ok ? `HTTP ${res.status} Error fetching services` : 'Failed to fetch services'));
+        }
         const servicesArray = Array.isArray(data) ? data : (data.services || []);
         
         // Ensure every service uses its matching image from public/Images/<name>.png
@@ -344,8 +372,8 @@ export async function dbFetchServices(): Promise<any[]> {
 
         setLocal(LOCAL_SERVICES_KEY, sanitized);
         return sanitized;
-    } catch (e) {
-        console.error('[db] dbFetchServices:', e);
+    } catch (e: any) {
+        console.error('[db] dbFetchServices:', e?.message || e);
         return cached.map((s: any) => ({
             ...s,
             image: resolveServiceImage(s),
@@ -386,13 +414,15 @@ export async function dbFetchProfile(_userId?: string): Promise<UserProfile> {
             method: 'GET',
             headers: authHeaders(),
         });
-        const json = await res.json();
+        const json = await res.json().catch(() => ({}));
         const data = json.success ? json.data : json;
-        if (data.error) throw new Error(data.error);
+        if (!res.ok || data?.error) {
+            throw new Error(getErrorMessage(data?.error, !res.ok ? `HTTP ${res.status} Error fetching profile` : 'Failed to fetch profile'));
+        }
         setLocal(LOCAL_PROFILE_KEY, data);
         return data as UserProfile;
-    } catch (e) {
-        console.error('[db] dbFetchProfile:', e);
+    } catch (e: any) {
+        console.error('[db] dbFetchProfile:', e?.message || e);
         return cached;
     }
 }
@@ -488,66 +518,27 @@ export async function dbFetchOrders(_userId?: string): Promise<Order[]> {
             method: 'GET',
             headers: authHeaders(),
         });
-        const json = await res.json();
+        const json = await res.json().catch(() => ({}));
         const data = json.success ? json.data : json;
-        if (data.error) throw new Error(data.error);
+        if (!res.ok || data?.error) {
+            throw new Error(getErrorMessage(data?.error, !res.ok ? `HTTP ${res.status} Error fetching orders` : 'Failed to fetch orders'));
+        }
         const ordersArray = Array.isArray(data) ? data : (data.orders || []);
         setLocal(LOCAL_ORDERS_KEY, ordersArray);
         return ordersArray;
-    } catch (e) {
-        console.error('[db] dbFetchOrders:', e);
+    } catch (e: any) {
+        console.error('[db] dbFetchOrders:', e?.message || e);
         return getLocal<Order[]>(LOCAL_ORDERS_KEY, []);
     }
 }
 
-export async function dbCreateOrder(userIdOrOrder: string | Order, maybeOrder?: Order): Promise<Order | any> {
-    const order: Order = (typeof userIdOrOrder === 'string' ? maybeOrder : userIdOrOrder) as Order;
-    if (!order) {
-        console.error('[db] dbCreateOrder called without an order object');
-        return;
-    }
-
-    // SECURITY: Completely block online payment orders from being created via this function.
-    // All Stripe payment orders are created ONLY when the webhook fires (checkout.session.completed).
-    // dbCreateOrder must ONLY be used for Cash on Delivery orders.
-    const isCash = order.paymentMethod === 'Cash on Delivery' || order.paymentMethod === 'Cash';
-    if (!isCash) {
-        console.error(
-            '[db] dbCreateOrder blocked: online payment orders cannot be created client-side. ' +
-            'Orders are created by the Stripe webhook after payment is confirmed.'
-        );
-        throw new Error(
-            'Online payment orders cannot be submitted directly. ' +
-            'Your order will be confirmed automatically once payment is verified by Stripe.'
-        );
-    }
-
-    const local = getLocal<Order[]>(LOCAL_ORDERS_KEY, []);
-    local.unshift(order);
-    setLocal(LOCAL_ORDERS_KEY, local);
-
-    try {
-        const res = await apiFetch('/api/v1/orders', {
-            method: 'POST',
-            headers: authHeaders(),
-            body: JSON.stringify(order),
-        });
-        if (res.ok) {
-            const data = await res.json();
-            if (typeof window !== 'undefined') {
-                window.dispatchEvent(new Event('l2u_orders_change'));
-                window.dispatchEvent(new Event('l2u_driver_assignments_changed'));
-            }
-            return data.data || data.order || data;
-        }
-    } catch (e) {
-        console.error('[db] dbCreateOrder:', e);
-    }
-    if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('l2u_orders_change'));
-        window.dispatchEvent(new Event('l2u_driver_assignments_changed'));
-    }
-    return order;
+export async function dbCreateOrder(_userIdOrOrder?: string | Order, _maybeOrder?: Order): Promise<Order | any> {
+    console.error(
+        '[db] dbCreateOrder blocked: Cash on Delivery is disabled. All Laundelle orders must be placed and paid securely online via Stripe checkout.'
+    );
+    throw new Error(
+        'Cash payment is not accepted. All orders must be placed and paid securely online via Stripe checkout.'
+    );
 }
 
 export async function dbCancelOrder(_userId: string, orderId: string, reason: string = 'Customer requested cancellation'): Promise<{ success: boolean; error?: string }> {
@@ -605,12 +596,15 @@ export async function dbFetchNotifications(_userId?: string): Promise<CustomerNo
         const res = await apiFetch('/api/v1/notifications', {
             headers: authHeaders(),
         });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
+        const json = await res.json().catch(() => ({}));
+        const data = json.success ? json.data : json;
+        if (!res.ok || data?.error) {
+            throw new Error(getErrorMessage(data?.error, !res.ok ? `HTTP ${res.status} Error fetching notifications` : 'Failed to fetch notifications'));
+        }
         setLocal(LOCAL_NOTIF_KEY, data.items || []);
         return data.items || [];
-    } catch (e) {
-        console.error('[db] dbFetchNotifications:', e);
+    } catch (e: any) {
+        console.error('[db] dbFetchNotifications:', e?.message || e);
         return getLocal<CustomerNotification[]>(LOCAL_NOTIF_KEY, []);
     }
 }
@@ -705,19 +699,20 @@ export async function dbFetchManagerDetails(managerId: string): Promise<{ staff:
 }
 
 
-export async function dbCreateStaffMember(staffData: any): Promise<{ success: boolean; error?: string }> {
+export async function dbCreateStaffMember(staffData: any): Promise<{ success: boolean; error?: string; staffId?: string; ticketUrl?: string }> {
     try {
+        const { password, ...sanitized } = staffData || {};
         const res = await apiFetch('/api/v1/admin/staff', {
             method: 'POST',
             headers: authHeaders(),
-            body: JSON.stringify(staffData),
+            body: JSON.stringify(sanitized),
         });
         const data = await res.json();
         if (!res.ok || data.error) {
             const msg = typeof data.error === 'string' ? data.error : data.error?.message;
             return { success: false, error: msg || 'Failed to create staff member' };
         }
-        return { success: true };
+        return { success: true, staffId: data.staffId, ticketUrl: data.ticketUrl };
     } catch (e: any) {
         return { success: false, error: e.message || 'Network error' };
     }
@@ -725,10 +720,11 @@ export async function dbCreateStaffMember(staffData: any): Promise<{ success: bo
 
 export async function dbUpdateStaffMember(staffId: string, staffData: any): Promise<{ success: boolean; error?: string }> {
     try {
+        const { password, ...sanitized } = staffData || {};
         const res = await apiFetch(`/api/v1/admin/staff/${staffId}`, {
             method: 'PATCH',
             headers: authHeaders(),
-            body: JSON.stringify(staffData),
+            body: JSON.stringify(sanitized),
         });
         const data = await res.json();
         if (!res.ok || data.error) {
@@ -749,7 +745,8 @@ export async function dbFetchPlants(): Promise<any[]> {
         });
         const data = await res.json();
         if (!res.ok || data.error) return [];
-        return data.data?.plants || data.plants || [];
+        const list = data.data?.plants || data.plants || (Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []));
+        return Array.isArray(list) ? list : [];
     } catch {
         return [];
     }
@@ -791,11 +788,23 @@ export async function dbUpdatePlant(plantId: string, plantData: any): Promise<{ 
     }
 }
 
-export async function dbFetchAdminDashboardMetrics(location?: string): Promise<any> {
+export async function dbFetchAdminDashboardMetrics(location?: string, dateFilter?: string, startDate?: string, endDate?: string): Promise<any> {
     try {
-        const url = location && location !== 'All Locations'
-            ? `/api/v1/admin/metrics?location=${encodeURIComponent(location)}`
-            : '/api/v1/admin/metrics';
+        const params = new URLSearchParams();
+        if (location && location !== 'All Locations') {
+            params.set('location', location);
+        }
+        if (dateFilter) {
+            params.set('dateFilter', dateFilter);
+        }
+        if (startDate) {
+            params.set('startDate', startDate);
+        }
+        if (endDate) {
+            params.set('endDate', endDate);
+        }
+        const qs = params.toString();
+        const url = qs ? `/api/v1/admin/metrics?${qs}` : '/api/v1/admin/metrics';
         const res = await apiFetch(url, {
             method: 'GET',
             headers: authHeaders(),
@@ -859,10 +868,11 @@ export async function dbFetchManagerStaff(): Promise<any[]> {
 
 export async function dbManagerUpdateStaff(staffId: string, staffData: any): Promise<{ success: boolean; error?: string }> {
     try {
+        const { password, ...sanitized } = staffData || {};
         const res = await apiFetch(`/api/v1/manager/staff/${staffId}`, {
             method: 'PATCH',
             headers: authHeaders(),
-            body: JSON.stringify({ staffData }),
+            body: JSON.stringify({ staffData: sanitized }),
         });
         const data = await res.json();
         if (!res.ok || data.error) {
@@ -875,19 +885,20 @@ export async function dbManagerUpdateStaff(staffId: string, staffData: any): Pro
     }
 }
 
-export async function dbManagerCreateStaff(staffData: any): Promise<{ success: boolean; error?: string; staffId?: string }> {
+export async function dbManagerCreateStaff(staffData: any): Promise<{ success: boolean; error?: string; staffId?: string; ticketUrl?: string }> {
     try {
+        const { password, ...sanitized } = staffData || {};
         const res = await apiFetch('/api/v1/manager/staff', {
             method: 'POST',
             headers: authHeaders(),
-            body: JSON.stringify({ staffData }),
+            body: JSON.stringify({ staffData: sanitized }),
         });
         const data = await res.json();
         if (!res.ok || data.error) {
             const msg = typeof data.error === 'string' ? data.error : data.error?.message;
             return { success: false, error: msg || 'Failed to create staff member' };
         }
-        return { success: true, staffId: data.staffId };
+        return { success: true, staffId: data.staffId, ticketUrl: data.ticketUrl };
     } catch (e: any) {
         return { success: false, error: e.message || 'Network error' };
     }
@@ -1663,4 +1674,124 @@ export async function dbAdminFetchAuditLogs(): Promise<any[]> {
         return [];
     }
 }
+
+// ─── Coupons & Pricing Charges ───────────────────────────────────────────────────
+
+export async function dbFetchPricingCharges(): Promise<any> {
+    try {
+        const res = await apiFetch('/api/v1/platform/pricing-charges');
+        const json = await res.json();
+        if (!res.ok || json.error) return null;
+        return json.success ? json.data : json;
+    } catch (e) {
+        console.error('dbFetchPricingCharges error:', e);
+        return null;
+    }
+}
+
+export async function dbUpdatePricingCharges(updates: any): Promise<{ success: boolean; data?: any; error?: string }> {
+    try {
+        const res = await apiFetch('/api/v1/platform/pricing-charges', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                ...authHeaders(),
+            },
+            body: JSON.stringify(updates),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) return { success: false, error: json.error || 'Failed to update pricing charges' };
+        return { success: true, data: json.success ? json.data : json };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Network error' };
+    }
+}
+
+export async function dbFetchAdminCoupons(): Promise<any[]> {
+    try {
+        const res = await apiFetch('/api/v1/platform/coupons', {
+            headers: authHeaders(),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) return [];
+        return json.success ? json.data : (Array.isArray(json) ? json : []);
+    } catch (e) {
+        console.error('dbFetchAdminCoupons error:', e);
+        return [];
+    }
+}
+
+export async function dbCreateCoupon(couponData: any): Promise<{ success: boolean; coupon?: any; error?: string }> {
+    try {
+        const res = await apiFetch('/api/v1/platform/coupons', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...authHeaders(),
+            },
+            body: JSON.stringify(couponData),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) return { success: false, error: json.error || 'Failed to create coupon' };
+        return { success: true, coupon: json.success ? json.data : json };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Network error' };
+    }
+}
+
+export async function dbUpdateCoupon(id: string, updates: any): Promise<{ success: boolean; coupon?: any; error?: string }> {
+    try {
+        const res = await apiFetch(`/api/v1/platform/coupons/${id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                ...authHeaders(),
+            },
+            body: JSON.stringify(updates),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) return { success: false, error: json.error || 'Failed to update coupon' };
+        return { success: true, coupon: json.success ? json.data : json };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Network error' };
+    }
+}
+
+export async function dbDeleteCoupon(id: string): Promise<{ success: boolean; error?: string }> {
+    try {
+        const res = await apiFetch(`/api/v1/platform/coupons/${id}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        const json = await res.json();
+        if (!res.ok || json.error) return { success: false, error: json.error || 'Failed to delete coupon' };
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Network error' };
+    }
+}
+
+export async function dbValidateCoupon(code: string, subtotal: number): Promise<{
+    valid: boolean;
+    discountAmount?: number;
+    coupon?: any;
+    message?: string;
+}> {
+    try {
+        const res = await apiFetch('/api/v1/platform/coupons/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, subtotal }),
+        });
+        const json = await res.json();
+        const data = json.success ? json.data : json;
+        if (!res.ok || json.error) {
+            return { valid: false, message: json.error || 'Failed to validate coupon' };
+        }
+        return data;
+    } catch (e: any) {
+        return { valid: false, message: e.message || 'Network error validating promo code' };
+    }
+}
+
 

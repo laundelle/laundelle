@@ -10,6 +10,41 @@ export interface ApiClientOptions {
   getToken?: () => string | null;
 }
 
+export interface CreateManagerInput {
+  name: string;
+  email: string;
+  phone?: string;
+  plant_id?: string | null;
+  assigned_postcodes?: string[];
+  [key: string]: any;
+}
+
+export interface CreateDriverInput {
+  name: string;
+  email: string;
+  phone?: string;
+  vehicle?: string;
+  vehicle_type?: string;
+  vehicle_reg?: string;
+  license_number?: string;
+  emergency_contact?: { name: string; phone: string };
+  manager_id?: string;
+  plant_id?: string;
+  [key: string]: any;
+}
+
+export interface CreateProcessorInput {
+  name: string;
+  email: string;
+  phone?: string;
+  shift?: string;
+  skills?: string[];
+  station?: string;
+  manager_id?: string;
+  plant_id?: string;
+  [key: string]: any;
+}
+
 export class LaundelleApiClient {
   private baseUrl: string;
   private getToken: () => string | null;
@@ -161,6 +196,36 @@ export class LaundelleApiClient {
       this.request(`/api/v1/admin/reports?range=${range}`),
     getAuditLogs: () =>
       this.request('/api/v1/admin/audit-logs'),
+  };
+
+  // Users (Auth0 Provisioning & Profile Management)
+  public users = {
+    getMe: () =>
+      this.request('/api/v1/users/me'),
+    getManagers: () =>
+      this.request('/api/v1/users/managers'),
+    createManager: (data: CreateManagerInput) => {
+      const { password, ...payload } = (data || {}) as any;
+      return this.request('/api/v1/users/managers', { method: 'POST', body: JSON.stringify(payload) });
+    },
+    getDrivers: (plantId?: string) =>
+      this.request(`/api/v1/users/drivers${plantId ? `?plantId=${encodeURIComponent(plantId)}` : ''}`),
+    createDriver: (data: CreateDriverInput) => {
+      const { password, ...payload } = (data || {}) as any;
+      return this.request('/api/v1/users/drivers', { method: 'POST', body: JSON.stringify(payload) });
+    },
+    getProcessors: (plantId?: string) =>
+      this.request(`/api/v1/users/processors${plantId ? `?plantId=${encodeURIComponent(plantId)}` : ''}`),
+    createProcessor: (data: CreateProcessorInput) => {
+      const { password, ...payload } = (data || {}) as any;
+      return this.request('/api/v1/users/processors', { method: 'POST', body: JSON.stringify(payload) });
+    },
+    updateUser: (userId: string, data: any) => {
+      const { password, ...payload } = (data || {}) as any;
+      return this.request(`/api/v1/users/${userId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+    },
+    updateStatus: (userId: string, statusData: any) =>
+      this.request(`/api/v1/users/${userId}/status`, { method: 'PATCH', body: JSON.stringify(statusData) }),
   };
 }
 

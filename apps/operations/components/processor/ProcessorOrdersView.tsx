@@ -230,7 +230,16 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
       if (data.assigned) {
         const mapped: ProcessorOrder[] = data.assigned.map((o: any) => ({
           id: o.publicId || o.orderNumber || o.id || o._id?.toString(),
-          customerName: o.customerName || o.customer_name || 'Valued Customer',
+          customerName: (o.customerName && o.customerName !== 'Valued Customer' && o.customerName !== 'Customer')
+            ? o.customerName
+            : (o.customer_name && o.customer_name !== 'Valued Customer' && o.customer_name !== 'Customer')
+            ? o.customer_name
+            : (o.contactDetails ? `${o.contactDetails.firstName || ''} ${o.contactDetails.lastName || ''}`.trim() : '')
+            || o.customer?.full_name
+            || o.customer?.name
+            || o.user_name
+            || (o.customerEmail ? o.customerEmail.split('@')[0] : '')
+            || 'Customer',
           customerPhone: o.customerPhone || o.phone || o.customer?.phone || o.customer_phone || '',
           serviceType: o.items?.[0]?.name || o.service || 'Laundry Garments',
           status: normalizeStatus(o.status),
@@ -239,7 +248,7 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
             : o.updatedAt
               ? new Date(o.updatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
               : 'Recently',
-          bagQr: o.package?.qr_code || o.qr_code || o.qr_tracking?.qrTagId || (o.publicId ? `BAG-${o.publicId}` : `BAG-${o.id}`),
+          bagQr: o.package?.qr_code || o.qr_code || o.qr_tracking?.qrTagId || o.bag_id || o.bagId || o.publicId || o.id,
           weightKg: o.actualWeightKg || o.weightKg || 5.0,
           itemCount: o.items?.length || 1,
           total: o.total || o.total_price || 0,
@@ -440,7 +449,7 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
 
       {/* ── Toast Notification ── */}
       {toastMessage && (
-        <div className="fixed top-5 right-5 z-50 px-4 py-3 rounded-2xl shadow-xl bg-slate-900 text-white border border-slate-700 text-xs font-bold transition-all animate-in slide-in-from-top-4 duration-200 flex items-center gap-2.5">
+        <div className="fixed top-5 right-5 z-50 px-4 py-3 rounded-2xl shadow-lg bg-slate-900 text-white text-xs font-semibold transition-all animate-in slide-in-from-top-4 duration-200 flex items-center gap-2.5">
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           <span>{toastMessage}</span>
           <button onClick={() => setToastMessage(null)} className="ml-2 hover:opacity-75 cursor-pointer">
@@ -449,10 +458,9 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
         </div>
       )}
 
-
-      {/* ── Toolbar: Search & Filter Dropdown (Sticky on scroll) ── */}
-      <div className="sticky top-16 md:top-[68px] z-10 py-2.5 -my-2.5 bg-[#f8fafc]/95 backdrop-blur-md">
-        <div className="bg-white rounded-2xl md:rounded-3xl p-3 sm:p-3.5 border border-slate-200/80 shadow-xs">
+      {/* ── Toolbar: Search & Filter (Sticky on scroll) ── */}
+      <div className="sticky top-16 md:top-[68px] z-10 py-2.5 -my-2.5 bg-slate-50/95 backdrop-blur-md">
+        <div className="bg-white rounded-2xl p-3 border border-slate-100 shadow-2xs">
           <div className="flex items-center gap-2.5">
             {/* Search Box */}
             <div className="relative flex-1">
@@ -461,34 +469,34 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by Order ID, Name, Mobile Number..."
-                className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#0077B6] focus:bg-white transition-all"
+                placeholder="Search by Order ID, Name, Phone..."
+                className="w-full pl-10 pr-9 py-2 bg-slate-50 border border-slate-200/80 rounded-xl text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 text-xs font-semibold cursor-pointer"
                 >
                   Clear
                 </button>
               )}
             </div>
 
-            {/* Filter Dropdown beside Search Bar */}
+            {/* Filter Dropdown */}
             <div className="relative" ref={filterDropdownRef}>
               <button
                 type="button"
                 onClick={() => setIsFilterDropdownOpen(prev => !prev)}
-                className={`flex items-center gap-2 px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all border cursor-pointer select-none ${selectedFilters.length > 0
-                  ? 'bg-[#03045E] text-white border-[#03045E] shadow-xs'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium transition-all border cursor-pointer select-none ${selectedFilters.length > 0
+                  ? 'bg-blue-50 text-blue-700 border-blue-200 shadow-2xs'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200/80'
                   }`}
               >
-                <Filter className="w-4 h-4 shrink-0" />
-                <span className="hidden sm:inline">Filters</span>
+                <Filter className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">Filter</span>
                 {selectedFilters.length > 0 && (
-                  <span className="w-5 h-5 rounded-full bg-[#48CAE4] text-[#03045E] font-black text-[10px] flex items-center justify-center">
+                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white font-bold text-[10px] flex items-center justify-center">
                     {selectedFilters.length}
                   </span>
                 )}
@@ -497,57 +505,45 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
 
               {/* Dropdown Menu */}
               {isFilterDropdownOpen && (
-                <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 p-2 z-40 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100">
-                    <span className="text-xs font-black text-slate-800 uppercase tracking-wider">Filter by Stage</span>
+                <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-2xl shadow-xl border border-slate-100 p-2 z-40 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-100">
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Stages</span>
                     {selectedFilters.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setSelectedFilters([])}
-                        className="text-[11px] font-bold text-[#0077B6] hover:underline cursor-pointer"
+                        className="text-[11px] font-medium text-blue-600 hover:underline cursor-pointer"
                       >
-                        Clear all
+                        Reset
                       </button>
                     )}
                   </div>
 
-                  <div className="py-1.5 space-y-1">
+                  <div className="py-1 space-y-0.5">
                     {FILTER_OPTIONS.map(opt => {
                       const isChecked = selectedFilters.includes(opt.id);
                       return (
                         <label
                           key={opt.id}
-                          className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold cursor-pointer transition-colors ${isChecked ? 'bg-blue-50 text-[#03045E]' : 'hover:bg-slate-50 text-slate-700'
+                          className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors ${isChecked ? 'bg-blue-50 text-blue-700' : 'hover:bg-slate-50 text-slate-700'
                             }`}
                         >
-                          <div className="flex items-center gap-2.5">
+                          <div className="flex items-center gap-2">
                             <input
                               type="checkbox"
                               checked={isChecked}
                               onChange={() => toggleFilter(opt.id)}
-                              className="w-4 h-4 rounded-md border-slate-300 text-[#03045E] focus:ring-[#0077B6] cursor-pointer"
+                              className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                             />
                             <span>{opt.label}</span>
                           </div>
-                          <span className="text-[11px] font-mono text-slate-400">
-                            ({opt.count})
+                          <span className="text-[10px] font-mono text-slate-400">
+                            {opt.count}
                           </span>
                         </label>
                       );
                     })}
                   </div>
-
-                  {selectedFilters.length > 0 && (
-                    <div className="pt-2 border-t border-slate-100 px-1">
-                      <button
-                        type="button"
-                        onClick={() => setIsFilterDropdownOpen(false)}
-                        className="w-full py-1.5 bg-[#03045E] text-white text-xs font-bold rounded-xl hover:bg-[#023E8A] transition-colors cursor-pointer"
-                      >
-                        Apply ({filteredOrders.length} {filteredOrders.length === 1 ? 'job' : 'jobs'})
-                      </button>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -555,7 +551,7 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
             {/* Sync Status */}
             {lastSyncedAt && (
               <span className="text-[11px] text-slate-400 font-mono hidden lg:inline shrink-0">
-                Synced {lastSyncedAt}
+                {lastSyncedAt}
               </span>
             )}
           </div>
@@ -566,13 +562,13 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
       {loading && orders.length === 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3, 4, 5, 6].map(i => (
-            <div key={i} className="bg-white rounded-3xl p-5 border border-slate-100 shadow-2xs animate-pulse space-y-4">
+            <div key={i} className="bg-white rounded-2xl p-5 border border-slate-100 shadow-2xs animate-pulse space-y-4">
               <div className="flex justify-between items-center">
                 <div className="w-24 h-4 bg-slate-200 rounded-md" />
                 <div className="w-20 h-6 bg-slate-100 rounded-full" />
               </div>
               <div className="w-40 h-5 bg-slate-200 rounded-md" />
-              <div className="w-full h-10 bg-slate-100 rounded-2xl" />
+              <div className="w-full h-8 bg-slate-100 rounded-xl" />
             </div>
           ))}
         </div>
@@ -580,25 +576,25 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
 
       {/* ── Empty State ── */}
       {!loading && filteredOrders.length === 0 && (
-        <div className="text-center mt-5 h-full p-4 bg-white rounded-3xl border-2 border-dashed border-slate-200 shadow-2xs space-y-4">
-          <div className="w-14 h-14 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center mx-auto">
-            <ShoppingBag className="w-7 h-7" />
+        <div className="text-center py-16 px-4 bg-white rounded-2xl border border-slate-100 shadow-2xs space-y-3">
+          <div className="w-12 h-12 bg-slate-50 text-slate-400 rounded-xl flex items-center justify-center mx-auto border border-slate-100">
+            <ShoppingBag className="w-6 h-6" />
           </div>
           <div>
-            <h3 className="font-extrabold text-slate-800 text-base">No Laundry Jobs in this View</h3>
-            <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+            <h3 className="font-bold text-slate-900 text-sm">No Orders Found</h3>
+            <p className="text-xs text-slate-500 mt-0.5 max-w-sm mx-auto">
               {searchQuery
-                ? `No orders matching "${searchQuery}". Clear your search query to see active jobs.`
-                : 'No laundry batches currently in this processing stage. Scan a new bag at intake to start.'}
+                ? `No orders matching "${searchQuery}". Clear search to view all jobs.`
+                : 'No orders in this processing stage right now.'}
             </p>
           </div>
           {onNavigateTab && (
             <button
               type="button"
               onClick={() => onNavigateTab('qr_scan')}
-              className="px-5 py-2.5 bg-[#03045E] text-white rounded-xl text-xs font-bold hover:bg-[#023E8A] transition-colors shadow-xs cursor-pointer"
+              className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-medium hover:bg-blue-700 transition-colors shadow-2xs cursor-pointer"
             >
-              Open QR Intake Terminal
+              Scan New Intake
             </button>
           )}
         </div>
@@ -606,10 +602,9 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
 
       {/* ── VIEW 1: SMART JOB CARDS (High-Action Cards) ── */}
       {!loading && viewMode === 'grid' && filteredOrders.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filteredOrders.map(order => {
             const step = getStepConfig(order.status);
-            const nextStatus = getNextStatus(order.status);
             const isUpdating = updatingOrderId === order.id;
             const isMenuOpen = stageMenuOpenOrderId === order.id;
             const stepIndex = WORKFLOW.findIndex(w => w.value === order.status);
@@ -617,19 +612,19 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
             return (
               <div
                 key={order.id}
-                className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4 relative group"
+                className="bg-white rounded-2xl p-5 border border-slate-100 shadow-2xs hover:border-slate-200 transition-all flex flex-col justify-between space-y-4"
               >
                 {/* Top Row: Order ID, QR Tag & Status */}
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono font-black text-sm text-[#03045E] tracking-tight">{order.id}</span>
-                      <span className="font-mono text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200/50">
+                      <span className="font-mono font-bold text-sm text-slate-900 tracking-tight">{order.id}</span>
+                      <span className="font-mono text-[10px] font-medium text-slate-500 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200/60">
                         {order.bagQr}
                       </span>
                     </div>
 
-                    <span className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold border flex items-center gap-1 ${step.badgeBg} ${step.badgeText}`}>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border flex items-center gap-1 ${step.badgeBg} ${step.badgeText}`}>
                       <span>{step.emoji}</span>
                       <span>{step.shortLabel}</span>
                     </span>
@@ -638,42 +633,38 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
                   {/* Customer & Service Info */}
                   <div>
                     <div className="flex items-center justify-between gap-1">
-                      <h3 className="font-extrabold text-sm text-slate-900 truncate">{order.customerName}</h3>
+                      <h3 className="font-bold text-sm text-slate-900 truncate">{order.customerName}</h3>
                       {order.customerPhone && (
-                        <span className="text-[11px] font-mono text-slate-400 font-medium shrink-0">{order.customerPhone}</span>
+                        <span className="text-[11px] font-mono text-slate-400 shrink-0">{order.customerPhone}</span>
                       )}
                     </div>
                     <p className="text-xs text-slate-500 font-medium truncate mt-0.5">
-                      {order.serviceType} • <span className="font-bold text-slate-700">{order.weightKg} kg</span> • {order.itemCount} piece(s)
+                      {order.serviceType} • <span className="font-semibold text-slate-700">{order.weightKg} kg</span> • {order.itemCount} piece(s)
                     </p>
                   </div>
 
                   {/* Surcharge alert chip if any */}
                   {order.hasPendingCharge && (
-                    <div className="p-2 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-1.5 text-[11px] font-bold text-amber-800">
+                    <div className="p-2 bg-amber-50 border border-amber-200/80 rounded-xl flex items-center gap-1.5 text-[11px] font-medium text-amber-800">
                       <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                      <span>Additional weight surcharge (+£{order.additionalChargeAmount?.toFixed(2)}) pending sign-off.</span>
+                      <span>Surcharge (+£{order.additionalChargeAmount?.toFixed(2)}) pending approval.</span>
                     </div>
                   )}
 
                   {/* Customer special instructions alert */}
                   {order.specialInstructions && (
-                    <div className="p-2 bg-blue-50/70 border border-blue-200/60 rounded-xl text-[11px] text-blue-900 font-medium line-clamp-1">
-                      <span className="font-bold">Note: </span>{order.specialInstructions}
+                    <div className="p-2 bg-blue-50/70 border border-blue-100 rounded-xl text-[11px] text-blue-900 font-medium line-clamp-1">
+                      <span className="font-semibold">Note: </span>{order.specialInstructions}
                     </div>
                   )}
 
-                  {/* Visual Step Progress Strip */}
-                  <div className="space-y-1 pt-1">
-                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-bold uppercase tracking-wider">
-                      <span>Workflow Progression</span>
-                      <span className="text-[#0077B6] font-mono">Step {stepIndex + 1} of {WORKFLOW.length}</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden flex gap-0.5">
+                  {/* Step Progress Bar */}
+                  <div className="pt-1">
+                    <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden flex gap-0.5">
                       {WORKFLOW.map((w, idx) => (
                         <div
                           key={w.value}
-                          className={`flex-1 h-full rounded-full transition-all ${idx <= stepIndex ? 'bg-[#0077B6]' : 'bg-slate-200'
+                          className={`flex-1 h-full rounded-full transition-all ${idx <= stepIndex ? 'bg-blue-600' : 'bg-slate-200'
                             }`}
                         />
                       ))}
@@ -681,77 +672,74 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
                   </div>
                 </div>
 
-                {/* Bottom Row: The Big Action Button + Utility Controls */}
+                {/* Bottom Row: Action Button + Utility Controls */}
                 <div className="pt-3 border-t border-slate-100 flex items-center gap-2">
                   {/* View Details Button */}
                   <button
                     type="button"
                     onClick={() => setDetailOrder(order)}
-                    className="p-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
-                    title="View Garment Manifest & Job Sheet"
+                    className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/60 transition-colors cursor-pointer"
+                    title="View Details"
                   >
                     <Eye className="w-4 h-4" />
                   </button>
 
-                  {/* The Single Big Next Action Button */}
+                  {/* Action Button */}
                   {order.status === 'ready_for_delivery' ? (
-                    <div className="flex-1 py-3 px-4 bg-emerald-50 text-emerald-800 rounded-2xl text-xs font-black flex items-center justify-center gap-2 border border-emerald-200">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                      <span>Ready for Driver Handover</span>
+                    <div className="flex-1 py-2 px-3 bg-emerald-50 text-emerald-800 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 border border-emerald-200/60">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Ready for Handover</span>
                     </div>
                   ) : order.status === 'quality_check' ? (
                     <button
                       type="button"
                       onClick={() => onNavigateTab && onNavigateTab('qc')}
-                      className="flex-1 py-3 px-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-2xl text-xs font-black shadow-md shadow-amber-500/20 transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-98"
+                      className="flex-1 py-2 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-98"
                     >
-                      <ShieldCheck className="w-4 h-4" />
-                      <span>Open in Quality Station</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      <span>Quality Check</span>
+                      <ArrowRight className="w-3 h-3" />
                     </button>
                   ) : (
                     <button
                       type="button"
                       disabled={isUpdating}
                       onClick={() => handleAdvanceStatus(order)}
-                      className="flex-1 py-3 px-4 bg-[#03045E] hover:bg-[#023E8A] disabled:opacity-50 text-white rounded-2xl text-xs font-black shadow-md shadow-[#03045E]/15 transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98"
+                      className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-98 shadow-2xs"
                     >
                       {isUpdating ? (
                         <>
-                          <Loader2 className="w-4 h-4 animate-spin text-[#48CAE4]" />
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
                           <span>Advancing...</span>
                         </>
                       ) : (
                         <>
                           <span>{step.nextStepLabel}</span>
-                          <ArrowRight className="w-4 h-4 text-[#48CAE4]" />
+                          <ArrowRight className="w-3.5 h-3.5" />
                         </>
                       )}
                     </button>
                   )}
 
-                  {/* Quick Stage Dropdown Menu */}
+                  {/* Quick Stage Override Menu */}
                   <div className="relative">
                     <button
                       type="button"
                       onClick={() => setStageMenuOpenOrderId(isMenuOpen ? null : order.id)}
-                      className="p-2.5 rounded-2xl border border-slate-200 hover:bg-slate-50 text-slate-600 transition-colors cursor-pointer"
-                      title="Jump or Override Stage"
+                      className="p-2 rounded-xl border border-slate-200/60 hover:bg-slate-50 text-slate-600 transition-colors cursor-pointer"
+                      title="Override Stage"
                     >
                       <ChevronDown className="w-4 h-4" />
                     </button>
 
                     {isMenuOpen && (
-                      <div className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-2xl shadow-xl border border-slate-100 p-1.5 z-30 space-y-0.5 animate-in fade-in zoom-in-95 duration-100 text-left">
-                        <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          Select Specific Stage:
-                        </div>
+                      <div className="absolute right-0 bottom-full mb-2 w-44 bg-white rounded-2xl shadow-xl border border-slate-100 p-1.5 z-30 space-y-0.5 animate-in fade-in zoom-in-95 duration-100 text-left">
                         {WORKFLOW.map(w => (
                           <button
                             key={w.value}
                             type="button"
                             onClick={() => executeStageTransition(order.id, w.value, order.bagQr)}
-                            className={`w-full text-left px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer ${order.status === w.value ? 'bg-[#03045E] text-white' : 'text-slate-700 hover:bg-slate-100'
+                            className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium flex items-center gap-2 transition-colors cursor-pointer ${order.status === w.value ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-slate-700 hover:bg-slate-50'
                               }`}
                           >
                             <span>{w.emoji}</span>
@@ -770,25 +758,22 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
 
       {/* ── VIEW 2: KANBAN PIPELINE BOARD ── */}
       {!loading && viewMode === 'kanban' && filteredOrders.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-start">
           {KANBAN_COLUMNS.map(col => {
             const columnOrders = filteredOrders.filter(o => col.statuses.includes(o.status));
             return (
-              <div key={col.id} className="bg-slate-100/70 rounded-3xl p-4 border border-slate-200/80 space-y-3 min-h-[500px]">
+              <div key={col.id} className="bg-slate-50/80 rounded-2xl p-3.5 border border-slate-100 space-y-3 min-h-[400px]">
                 <div className="flex items-center justify-between pb-1">
-                  <div>
-                    <h3 className="font-extrabold text-xs text-slate-900">{col.title}</h3>
-                    <p className="text-[10px] text-slate-400">{col.subtitle}</p>
-                  </div>
-                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-mono font-black border ${col.badgeColor}`}>
+                  <h3 className="font-bold text-xs text-slate-800">{col.title}</h3>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold border ${col.badgeColor}`}>
                     {columnOrders.length}
                   </span>
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   {columnOrders.length === 0 ? (
-                    <div className="py-12 text-center text-slate-400 text-xs border-2 border-dashed border-slate-200 rounded-2xl">
-                      Empty Lane
+                    <div className="py-10 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
+                      Empty
                     </div>
                   ) : (
                     columnOrders.map(order => {
@@ -798,17 +783,17 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
                       return (
                         <div
                           key={order.id}
-                          className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3 hover:shadow-sm transition-all"
+                          className="bg-white rounded-xl p-3 border border-slate-100 shadow-2xs space-y-2.5 hover:border-slate-200 transition-all"
                         >
                           <div className="flex items-center justify-between gap-1">
-                            <span className="font-mono font-black text-xs text-[#03045E]">{order.id}</span>
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${step.badgeBg} ${step.badgeText}`}>
+                            <span className="font-mono font-bold text-xs text-slate-900">{order.id}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${step.badgeBg} ${step.badgeText}`}>
                               {step.emoji} {step.shortLabel}
                             </span>
                           </div>
 
                           <div>
-                            <p className="font-extrabold text-xs text-slate-900 truncate">{order.customerName}</p>
+                            <p className="font-bold text-xs text-slate-900 truncate">{order.customerName}</p>
                             <p className="text-[11px] text-slate-500 truncate">{order.serviceType} · {order.weightKg} kg</p>
                           </div>
 
@@ -816,7 +801,7 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
                             <button
                               type="button"
                               onClick={() => setDetailOrder(order)}
-                              className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                              className="p-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs cursor-pointer border border-slate-200/60"
                               title="Details"
                             >
                               <Eye className="w-3.5 h-3.5" />
@@ -826,28 +811,28 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
                               <button
                                 type="button"
                                 onClick={() => onNavigateTab && onNavigateTab('qc')}
-                                className="flex-1 py-2 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1"
+                                className="flex-1 py-1.5 px-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center justify-center gap-1"
                               >
                                 <ShieldCheck className="w-3.5 h-3.5" />
-                                <span>Inspect QC</span>
+                                <span>QC</span>
                               </button>
                             ) : order.status === 'ready_for_delivery' ? (
-                              <div className="flex-1 py-2 px-2 bg-emerald-50 text-emerald-800 rounded-xl text-[11px] font-bold text-center border border-emerald-200">
-                                Dispatched
+                              <div className="flex-1 py-1.5 px-2 bg-emerald-50 text-emerald-800 rounded-lg text-[11px] font-medium text-center border border-emerald-200/60">
+                                Ready
                               </div>
                             ) : (
                               <button
                                 type="button"
                                 disabled={isUpdating}
                                 onClick={() => handleAdvanceStatus(order)}
-                                className="flex-1 py-2 px-3 bg-[#03045E] hover:bg-[#023E8A] text-white rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-1"
+                                className="flex-1 py-1.5 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center justify-center gap-1 shadow-2xs"
                               >
                                 {isUpdating ? (
                                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                 ) : (
                                   <>
                                     <span>Advance</span>
-                                    <ArrowRight className="w-3.5 h-3.5 text-[#48CAE4]" />
+                                    <ArrowRight className="w-3 h-3" />
                                   </>
                                 )}
                               </button>
@@ -864,99 +849,99 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
         </div>
       )}
 
-      {/* ── SLIDE-OVER DRAWER: Comprehensive Job Manifest & Sheet ── */}
+      {/* ── SLIDE-OVER DRAWER: Comprehensive Job Manifest ── */}
       {detailOrder && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-end bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          className="fixed inset-0 z-50 flex items-center justify-end bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-150"
           onClick={() => setDetailOrder(null)}
         >
           <div
-            className="w-full max-w-lg h-full bg-white shadow-2xl p-6 sm:p-7 space-y-6 overflow-y-auto animate-in slide-in-from-right duration-200 flex flex-col justify-between"
+            className="w-full max-w-md h-full bg-white shadow-xl p-6 space-y-5 overflow-y-auto animate-in slide-in-from-right duration-200 flex flex-col justify-between border-l border-slate-100"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="space-y-5">
+            <div className="space-y-4">
               {/* Header */}
-              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-mono font-black text-lg text-[#03045E]">{detailOrder.id}</span>
-                    <span className="font-mono text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-lg border border-slate-200">
+                    <span className="font-mono font-bold text-base text-slate-900">{detailOrder.id}</span>
+                    <span className="font-mono text-xs text-slate-500 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/60">
                       {detailOrder.bagQr}
                     </span>
                   </div>
-                  <h3 className="font-extrabold text-base text-slate-900 mt-1">{detailOrder.customerName}</h3>
+                  <h3 className="font-bold text-sm text-slate-900 mt-0.5">{detailOrder.customerName}</h3>
                 </div>
                 <button
                   type="button"
                   onClick={() => setDetailOrder(null)}
-                  className="p-2 rounded-xl text-slate-400 hover:text-slate-600 bg-slate-100 hover:bg-slate-200 cursor-pointer transition-colors"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer transition-colors"
                 >
-                  <X className="w-5 h-5" />
+                  <X className="w-4 h-4" />
                 </button>
               </div>
 
               {/* Status Banner */}
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex items-center justify-between">
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
                 <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Current Processing Stage</span>
-                  <span className="font-black text-sm text-[#03045E] mt-0.5 block">{getStepConfig(detailOrder.status).label}</span>
+                  <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Current Stage</span>
+                  <span className="font-bold text-xs text-slate-900 mt-0.5 block">{getStepConfig(detailOrder.status).label}</span>
                 </div>
-                <span className="text-2xl">{getStepConfig(detailOrder.status).emoji}</span>
+                <span className="text-xl">{getStepConfig(detailOrder.status).emoji}</span>
               </div>
 
               {/* Garment Details & Weight */}
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
-                  <span className="text-slate-400 font-bold uppercase text-[9px] block">Scale Weight</span>
-                  <span className="font-black text-sm text-slate-900 mt-0.5 block flex items-center gap-1">
-                    <Weight className="w-4 h-4 text-slate-500" /> {detailOrder.weightKg} kg
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 font-medium text-[10px] block">Weight</span>
+                  <span className="font-bold text-slate-900 mt-0.5 block flex items-center gap-1">
+                    <Weight className="w-3.5 h-3.5 text-slate-400" /> {detailOrder.weightKg} kg
                   </span>
                 </div>
-                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
-                  <span className="text-slate-400 font-bold uppercase text-[9px] block">Total Order Amount</span>
-                  <span className="font-black text-sm text-[#03045E] mt-0.5 block">£{detailOrder.total.toFixed(2)}</span>
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 font-medium text-[10px] block">Amount</span>
+                  <span className="font-bold text-slate-900 mt-0.5 block">£{detailOrder.total.toFixed(2)}</span>
                 </div>
               </div>
 
               {/* Customer Contact */}
               {detailOrder.customerPhone && (
-                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between text-xs">
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between text-xs">
                   <div>
-                    <span className="text-slate-400 font-bold uppercase text-[9px] block">Customer Phone</span>
-                    <span className="font-bold text-slate-900 mt-0.5 block">{detailOrder.customerPhone}</span>
+                    <span className="text-slate-400 font-medium text-[10px] block">Phone</span>
+                    <span className="font-semibold text-slate-900 mt-0.5 block">{detailOrder.customerPhone}</span>
                   </div>
                   <a
                     href={`tel:${detailOrder.customerPhone}`}
-                    className="p-2 rounded-xl bg-white hover:bg-slate-100 text-[#0077B6] border border-slate-200 cursor-pointer transition-colors"
+                    className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-blue-600 border border-slate-200/60 cursor-pointer transition-colors"
                   >
-                    <Phone className="w-4 h-4" />
+                    <Phone className="w-3.5 h-3.5" />
                   </a>
                 </div>
               )}
 
               {/* Customer Special Care Instructions */}
               {detailOrder.specialInstructions && (
-                <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-1 text-xs text-blue-900">
-                  <span className="font-bold uppercase text-[10px] tracking-wider block text-blue-700">Special Instructions</span>
-                  <p className="italic leading-relaxed">{detailOrder.specialInstructions}</p>
+                <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-xl text-xs text-blue-900">
+                  <span className="font-semibold block text-[10px] uppercase text-blue-700">Special Instructions</span>
+                  <p className="mt-0.5 leading-relaxed">{detailOrder.specialInstructions}</p>
                 </div>
               )}
 
               {/* Item Manifest Breakdown */}
-              <div className="space-y-2">
-                <span className="text-xs font-black uppercase tracking-wider text-slate-900 block">
-                  Garment Manifest Pieces ({detailOrder.rawItems?.length || detailOrder.itemCount})
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold text-slate-900 block">
+                  Items ({detailOrder.rawItems?.length || detailOrder.itemCount})
                 </span>
-                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
                   {detailOrder.rawItems && detailOrder.rawItems.length > 0 ? (
                     detailOrder.rawItems.map((it, idx) => (
-                      <div key={idx} className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/80 flex items-center justify-between text-xs">
-                        <span className="font-bold text-slate-800">{it.name || it.description || 'Garment Item'}</span>
-                        <span className="font-mono text-slate-500 font-bold">x{it.quantity || 1}</span>
+                      <div key={idx} className="p-2 bg-slate-50 rounded-lg border border-slate-100 flex items-center justify-between text-xs">
+                        <span className="font-medium text-slate-800">{it.name || it.description || 'Garment Item'}</span>
+                        <span className="font-mono text-slate-500 font-semibold">x{it.quantity || 1}</span>
                       </div>
                     ))
                   ) : (
-                    <div className="p-3 bg-slate-50 rounded-xl text-xs text-slate-500">
+                    <div className="p-2.5 bg-slate-50 rounded-lg text-xs text-slate-500">
                       Standard Laundry Bundle ({detailOrder.serviceType})
                     </div>
                   )}
@@ -965,13 +950,13 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
             </div>
 
             {/* Drawer Bottom Actions */}
-            <div className="pt-4 border-t border-slate-100 flex items-center gap-3">
+            <div className="pt-3 border-t border-slate-100 flex items-center gap-2.5">
               <button
                 type="button"
                 onClick={() => setDetailOrder(null)}
-                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl text-xs transition-colors cursor-pointer"
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors cursor-pointer"
               >
-                Close Drawer
+                Close
               </button>
               {detailOrder.status !== 'ready_for_delivery' && (
                 <button
@@ -980,10 +965,10 @@ export const ProcessorOrdersView: React.FC<ProcessorOrdersViewProps> = ({ onNavi
                     handleAdvanceStatus(detailOrder);
                     setDetailOrder(null);
                   }}
-                  className="flex-1 py-3 bg-[#03045E] hover:bg-[#023E8A] text-white font-black rounded-2xl text-xs transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5"
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-xs transition-all shadow-2xs cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   <span>{getStepConfig(detailOrder.status).nextStepLabel}</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-[#48CAE4]" />
+                  <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>

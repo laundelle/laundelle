@@ -24,7 +24,9 @@
       "@laundelle/validations": ["packages/validations/src/index.ts"],
       "@laundelle/validations/*": ["packages/validations/src/*"],
       "@laundelle/config": ["packages/config/src/index.ts"],
-      "@laundelle/config/*": ["packages/config/src/*"]
+      "@laundelle/config/*": ["packages/config/src/*"],
+      "@laundelle/ids": ["packages/ids/src/index.ts"],
+      "@laundelle/ids/*": ["packages/ids/src/*"]
     }
   },
   "exclude": ["node_modules", "apps/**/.next"]

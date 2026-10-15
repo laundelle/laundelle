@@ -1,5 +1,7 @@
 import { apiFetch } from '@laundelle/api-client';
 import React, { useState, useRef, useEffect } from 'react';
+import Image from 'next/image';
+import { LAUNDELLE_IMAGES, getOptimizedImageUrl } from '@laundelle/config';
 import {
   Sparkles,
   Paperclip,
@@ -415,10 +417,12 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
           <div className="flex items-start gap-2 sm:gap-3.5 max-w-full sm:max-w-3xl">
             {/* Laundellee Avatar: increased size for clear visibility */}
             <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-full overflow-hidden shrink-0 border border-white/90 shadow-xs relative bg-[#e0eeff] flex items-center justify-center">
-              <img
-                src="/Images/AI Girl Face.png"
+              <Image
+                src={getOptimizedImageUrl(LAUNDELLE_IMAGES.aiGirlFace, { width: 120, quality: 'auto', format: 'auto' })}
                 alt="Laundellee"
-                className="w-full h-full object-cover object-center scale-125"
+                fill
+                sizes="48px"
+                className="object-cover object-center scale-125"
               />
             </div>
 
@@ -487,10 +491,12 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
               <div key={msg.id} className="flex items-start gap-2 sm:gap-3.5 max-w-full pt-1">
                 {/* Laundellee Avatar: increased size for clear visibility */}
                 <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-full overflow-hidden shrink-0 border border-white/90 shadow-xs relative bg-[#e0eeff] flex items-center justify-center">
-                  <img
-                    src="/Images/AI Girl Face.png"
+                  <Image
+                    src={getOptimizedImageUrl(LAUNDELLE_IMAGES.aiGirlFace, { width: 120, quality: 'auto', format: 'auto' })}
                     alt="Laundellee"
-                    className="w-full h-full object-cover object-center scale-125"
+                    fill
+                    sizes="48px"
+                    className="object-cover object-center scale-125"
                   />
                 </div>
 
@@ -540,10 +546,12 @@ export const AIAssistantView: React.FC<AIAssistantViewProps> = ({
           {isTyping && (
             <div className="flex items-start gap-2 sm:gap-3.5 max-w-md pt-1">
               <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-full overflow-hidden shrink-0 border border-white/90 shadow-xs relative bg-[#e0eeff] flex items-center justify-center">
-                <img
-                  src="/Images/AI Girl Face.png"
+                <Image
+                  src={getOptimizedImageUrl(LAUNDELLE_IMAGES.aiGirlFace, { width: 120, quality: 'auto', format: 'auto' })}
                   alt="Laundellee"
-                  className="w-full h-full object-cover object-center scale-125"
+                  fill
+                  sizes="48px"
+                  className="object-cover object-center scale-125"
                 />
               </div>
               <div className="bg-[#f0f5ff] rounded-xl sm:rounded-[18px] rounded-tl-xs px-2.5 py-1.5 sm:px-4 sm:py-3 shadow-2xs flex items-center gap-1 text-[10px] sm:text-xs text-gray-500">

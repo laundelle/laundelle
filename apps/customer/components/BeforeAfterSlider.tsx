@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import Image from 'next/image';
 import {
   ArrowLeftRight,
   ArrowRight,
@@ -9,6 +10,7 @@ import {
   Leaf,
   Droplets
 } from 'lucide-react';
+import { LAUNDELLE_IMAGES, getOptimizedImageUrl } from '@laundelle/config';
 
 export interface BeforeAfterItem {
   id: string;
@@ -33,9 +35,9 @@ const DEFAULT_CASES: BeforeAfterItem[] = [
     subtitle: 'Defeats Tea, Coffee Stains',
     description: '100% stain lift and, crisp Indian cotton finish, bright optic white.',
     treatment: 'Eco-Enzyme Spotting + Steam Management',
-    beforeImage: '/assets/gallery-shirt-before.jpg',
-    afterImage: '/assets/gallery-shirt-after.jpg',
-    imageUrl: '/assets/gallery-shirt-after.jpg',
+    beforeImage: getOptimizedImageUrl(LAUNDELLE_IMAGES.galleryShirtBefore, { width: 900, quality: 'auto', format: 'auto' }),
+    afterImage: getOptimizedImageUrl(LAUNDELLE_IMAGES.galleryShirtAfter, { width: 900, quality: 'auto', format: 'auto' }),
+    imageUrl: getOptimizedImageUrl(LAUNDELLE_IMAGES.galleryShirtAfter, { width: 900, quality: 'auto', format: 'auto' }),
     fallbackUrl: 'https://images.unsplash.com/photo-1598033129183-c4f50c736f10?auto=format&fit=crop&w=1200&q=85',
     iconType: 'shirt',
     targetServiceName: 'Wash + Dry + Fold',
@@ -47,9 +49,9 @@ const DEFAULT_CASES: BeforeAfterItem[] = [
     subtitle: 'Defeats Street Grime & Oxidation',
     description: 'Ultrasonic sole clean, color brilliance revived, hydrophobic shield.',
     treatment: 'Ultrasonic Rush + Micro-Plush Treatment',
-    beforeImage: '/assets/gallery-sneakers-before.jpg',
-    afterImage: '/assets/gallery-sneakers-after.jpg',
-    imageUrl: '/assets/gallery-sneakers-after.jpg',
+    beforeImage: getOptimizedImageUrl(LAUNDELLE_IMAGES.gallerySneakersBefore, { width: 900, quality: 'auto', format: 'auto' }),
+    afterImage: getOptimizedImageUrl(LAUNDELLE_IMAGES.gallerySneakersAfter, { width: 900, quality: 'auto', format: 'auto' }),
+    imageUrl: getOptimizedImageUrl(LAUNDELLE_IMAGES.gallerySneakersAfter, { width: 900, quality: 'auto', format: 'auto' }),
     fallbackUrl: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=1200&q=85',
     iconType: 'sneaker',
     targetServiceName: 'Sneaker & Shoe Deep Clean',
@@ -61,9 +63,9 @@ const DEFAULT_CASES: BeforeAfterItem[] = [
     subtitle: 'Defeats Lipid & Sweat Rings',
     description: 'Silky tactile hand-feel, zero fiber bleed, fragrant hypoallergenic finish.',
     treatment: 'Hydrocarbon Wash + Hand Finish',
-    beforeImage: '/assets/gallery-silk-before.jpg',
-    afterImage: '/assets/gallery-silk-after.jpg',
-    imageUrl: '/assets/gallery-silk-after.jpg',
+    beforeImage: getOptimizedImageUrl(LAUNDELLE_IMAGES.gallerySilkBefore, { width: 900, quality: 'auto', format: 'auto' }),
+    afterImage: getOptimizedImageUrl(LAUNDELLE_IMAGES.gallerySilkAfter, { width: 900, quality: 'auto', format: 'auto' }),
+    imageUrl: getOptimizedImageUrl(LAUNDELLE_IMAGES.gallerySilkAfter, { width: 900, quality: 'auto', format: 'auto' }),
     fallbackUrl: 'https://images.unsplash.com/photo-1539533018447-63fcce2678e3?auto=format&fit=crop&w=1200&q=85',
     iconType: 'silk',
     targetServiceName: 'Silk & Delicates Care',
@@ -192,16 +194,13 @@ const BeforeAfterCard: React.FC<BeforeAfterCardProps> = ({ item, onBookPickup, o
         >
           {/* RIGHT SIDE (BASE LAYER) -> AFTER: FULL VIBRANT COLOUR */}
           <div className="absolute inset-0 w-full h-full">
-            <img
+            <Image
               src={afterSrc}
               alt={`${item.title} - After (Colour)`}
-              onError={(e) => {
-                const target = e.currentTarget as HTMLImageElement;
-                if (item.fallbackUrl && target.src !== item.fallbackUrl) {
-                  target.src = item.fallbackUrl;
-                }
-              }}
-              className="w-full h-full object-cover object-center pointer-events-none brightness-105 saturate-110"
+              fill
+              loading="lazy"
+              sizes="(max-width: 768px) 100vw, 33vw"
+              className="object-cover object-center pointer-events-none brightness-105 saturate-110"
               draggable={false}
             />
           </div>
@@ -213,16 +212,13 @@ const BeforeAfterCard: React.FC<BeforeAfterCardProps> = ({ item, onBookPickup, o
               clipPath: `polygon(0 0, ${sliderPosition}% 0, ${sliderPosition}% 100%, 0 100%)`,
             }}
           >
-            <img
+            <Image
               src={beforeSrc}
               alt={`${item.title} - Before (Grayscale)`}
-              onError={(e) => {
-                const target = e.currentTarget as HTMLImageElement;
-                if (item.fallbackUrl && target.src !== item.fallbackUrl) {
-                  target.src = item.fallbackUrl;
-                }
-              }}
-              className="w-full h-full object-cover object-center pointer-events-none filter contrast-125 brightness-85"
+              fill
+              loading="lazy"
+              sizes="(max-width: 768px) 100vw, 33vw"
+              className="object-cover object-center pointer-events-none filter contrast-125 brightness-85"
               draggable={false}
             />
             {/* Subtle multiply tint to accentuate stain depth */}

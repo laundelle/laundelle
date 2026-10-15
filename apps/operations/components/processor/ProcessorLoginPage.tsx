@@ -1,118 +1,135 @@
-import React, { useState } from 'react';
-import { Cpu, Lock, Mail, ArrowRight, ArrowLeft } from 'lucide-react';
-import { mongoSignIn } from '@laundelle/api-client';
+'use client';
+
+import React from 'react';
+import { useAuth0 } from '@auth0/auth0-react';
+import { Cpu, Lock, Mail, ArrowRight, ArrowLeft, Loader2, AlertCircle, LogOut } from 'lucide-react';
 
 interface ProcessorLoginPageProps {
-    onProcessorLoginSuccess: (email: string, name: string, role?: string) => void;
-    onNavigateToCustomer: () => void;
+  onProcessorLoginSuccess?: (email: string, name: string, role?: string) => void;
+  onNavigateToCustomer: () => void;
+  errorMessage?: string | null;
+  onAuth0Logout?: () => void;
 }
 
 export const ProcessorLoginPage: React.FC<ProcessorLoginPageProps> = ({
-    onProcessorLoginSuccess,
-    onNavigateToCustomer,
+  onNavigateToCustomer,
+  errorMessage,
+  onAuth0Logout,
 }) => {
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState<string | null>(null);
-    const [loading, setLoading] = useState(false);
+  const { loginWithRedirect, isLoading: isAuth0Loading, isAuthenticated: isAuth0Authenticated, logout } = useAuth0();
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setError(null);
-        setLoading(true);
-
-        try {
-            const res = await mongoSignIn(email.trim(), password);
-            setLoading(false);
-
-            if (res.error || !res.user) {
-                setError(res.error || 'Authentication failed.');
-                return;
-            }
-
-            const role = res.user.role;
-            if (role !== 'processor') {
-                setError('Access denied: This portal is for Processors only. Use the Staff/Manager portal for other roles.');
-                return;
-            }
-
-            onProcessorLoginSuccess(res.user.email, res.user.name, role);
-        } catch (err: any) {
-            setLoading(false);
-            setError(err?.message || 'A network error occurred.');
-        }
+  const handleAuth0Login = () => {
+    const authParams: any = {
+      prompt: 'login',
     };
+    const dbConnection = process.env.NEXT_PUBLIC_AUTH0_DB_CONNECTION || 'Username-Password-Authentication';
+    if (dbConnection) authParams.connection = dbConnection;
 
-    return (
-        <div className="w-full min-h-screen bg-[#0077B6] flex items-center justify-center p-4">
-            <div className="w-full max-w-sm bg-white rounded-3xl p-8 shadow-2xl space-y-6">
-                {/* Header */}
-                <div className="text-center space-y-3">
-                    <div className="w-16 h-16 bg-[#0077B6] text-white rounded-2xl flex items-center justify-center mx-auto shadow-lg">
-                        <Cpu className="w-8 h-8 animate-pulse" />
-                    </div>
-                    <div>
-                        <h1 className="text-2xl font-black text-[#0077B6]">Processor Portal</h1>
-                        <p className="text-xs text-gray-500 mt-1">Sign in with your processor credentials to view laundry queues and update processing stages.</p>
-                    </div>
-                </div>
+    loginWithRedirect({
+      appState: {
+        returnTo: '/processor',
+      },
+      authorizationParams: authParams,
+    }).catch(() => {
+      loginWithRedirect({
+        appState: {
+          returnTo: '/processor',
+        },
+        authorizationParams: {
+          prompt: 'login',
+        },
+      });
+    });
+  };
 
-                {error && (
-                    <div className="bg-red-50 text-red-700 p-3 rounded-xl text-center text-xs font-semibold border border-red-200 animate-in fade-in">
-                        {error}
-                    </div>
-                )}
+  const handleLogout = () => {
+    if (onAuth0Logout) {
+      onAuth0Logout();
+    } else {
+      logout({
+        logoutParams: {
+          returnTo: typeof window !== 'undefined' ? `${window.location.origin}/processor` : undefined,
+        },
+      });
+    }
+  };
 
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="block text-xs font-bold text-gray-700 mb-1">Processor Email</label>
-                        <div className="relative">
-                            <Mail className="w-4 h-4 text-gray-400 absolute left-3.5 top-3" />
-                            <input
-                                type="email"
-                                required
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                placeholder="processor@laundelle.co.uk"
-                                className="w-full pl-10 pr-4 py-2.5 bg-gray-50 rounded-xl text-xs focus:ring-2 focus:ring-[#0077B6] focus:outline-hidden"
-                            />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-gray-700 mb-1">Password</label>
-                        <div className="relative">
-                            <Lock className="w-4 h-4 text-gray-400 absolute left-3.5 top-3" />
-                            <input
-                                type="password"
-                                required
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                placeholder="••••••••"
-                                className="w-full pl-10 pr-4 py-2.5 bg-gray-50 rounded-xl text-xs focus:ring-2 focus:ring-[#0077B6] focus:outline-hidden"
-                            />
-                        </div>
-                    </div>
-
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full bg-[#0077B6] hover:bg-[#0096C7] text-white py-3.5 rounded-2xl text-sm font-extrabold flex items-center justify-center gap-2 shadow-md cursor-pointer transition-all disabled:opacity-50"
-                    >
-                        <span>{loading ? 'Signing in...' : 'Sign In to Processor Portal'}</span>
-                        <ArrowRight className="w-4 h-4" />
-                    </button>
-                </form>
-
-                <div className="pt-4 border-t border-gray-100 text-center">
-                    <button
-                        onClick={onNavigateToCustomer}
-                        className="text-xs font-bold text-gray-500 hover:text-[#0077B6] flex items-center justify-center gap-1 mx-auto cursor-pointer"
-                    >
-                        <ArrowLeft className="w-3.5 h-3.5" /> Back to Customer Site
-                    </button>
-                </div>
-            </div>
+  return (
+    <div className="w-full min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-white rounded-2xl p-7 shadow-2xs space-y-6 border border-slate-200/80 animate-in fade-in duration-200">
+        {/* Header */}
+        <div className="text-center space-y-1.5">
+          <div className="w-11 h-11 bg-blue-50 text-blue-600 rounded-xl flex items-center justify-center mx-auto mb-2 border border-blue-100">
+            <Cpu className="w-5 h-5 text-blue-600" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">Processor Portal</h1>
+            <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed mt-1">
+              Sign in to manage plant wash queues and quality checks.
+            </p>
+          </div>
         </div>
-    );
+
+        {errorMessage && (
+          <div className="bg-red-50 text-red-700 p-3 rounded-xl text-xs font-medium border border-red-200 flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
+            <div className="space-y-1">
+              <span>{errorMessage}</span>
+              {isAuth0Authenticated && (
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="block text-red-700 font-semibold underline hover:text-red-900 cursor-pointer text-[11px]"
+                >
+                  Log out of this Auth0 account
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-3 pt-1">
+          {isAuth0Authenticated && errorMessage ? (
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full bg-red-600 hover:bg-red-700 text-white py-3 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-2xs cursor-pointer transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Switch Account</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleAuth0Login}
+              disabled={isAuth0Loading}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-2xs cursor-pointer transition-colors disabled:opacity-60"
+            >
+              {isAuth0Loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Connecting to Auth0...</span>
+                </>
+              ) : (
+                <>
+                  <Mail className="w-4 h-4" />
+                  <span>Continue with Operator Email</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+          )}
+        </div>
+
+        <div className="pt-3 border-t border-slate-100 text-center">
+          <button
+            onClick={onNavigateToCustomer}
+            className="text-xs font-medium text-slate-500 hover:text-slate-800 flex items-center justify-center gap-1 mx-auto cursor-pointer transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Operations Home
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 };

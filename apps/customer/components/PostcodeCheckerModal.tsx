@@ -136,31 +136,6 @@ export const PostcodeCheckerModal: React.FC<PostcodeCheckerModalProps> = ({
                 </div>
               </div>
 
-              {/* Sample test shortcuts */}
-              <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
-                <span>Quick try:</span>
-                <button
-                  type="button"
-                  onClick={() => { setPostcode('SW1A 1AA'); setCheckedStatus('idle'); }}
-                  className="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700 cursor-pointer"
-                >
-                  SW1A (Available)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setPostcode('W1D 4FA'); setCheckedStatus('idle'); }}
-                  className="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700 cursor-pointer"
-                >
-                  W1D (Available)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setPostcode('OX1 2JD'); setCheckedStatus('idle'); }}
-                  className="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 rounded-md font-medium text-gray-700 cursor-pointer"
-                >
-                  OX1 (Waiting List)
-                </button>
-              </div>
             </form>
           )}
 

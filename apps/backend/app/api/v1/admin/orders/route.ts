@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuth, requireRole } from '@/lib/api';
+import { requireRoleAsync } from '@/lib/api';
 import { AdminService } from '@/services/AdminService';
 import { ManagerService } from '@/services/ManagerService';
 
 export async function GET(req: NextRequest) {
     try {
-        const session = await requireAuth(req);
-        requireRole(req, ['admin', 'super_admin', 'manager']);
+        const session = await requireRoleAsync(req, ['admin', 'super_admin', 'manager']);
         const url = new URL(req.url);
         const limit = parseInt(url.searchParams.get('limit') || '100', 10);
         const page = parseInt(url.searchParams.get('page') || '1', 10);

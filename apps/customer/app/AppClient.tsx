@@ -1,33 +1,44 @@
 'use client';
 
 import React, { useState } from 'react';
+import Image from 'next/image';
 import { ActiveTab, CartItem, ServiceItem, Order, UserProfile, CustomerNotification } from '@laundelle/types';
+import { LAUNDELLE_IMAGES, getOptimizedImageUrl } from '@laundelle/config';
 import { User } from 'lucide-react';
 
-import { SplashScreen } from '../components/SplashScreen';
+import dynamic from 'next/dynamic';
+
 import { Navbar } from '../components/Navbar';
 import { MobileNav } from '../components/MobileNav';
-import { CartDrawer } from '../components/CartDrawer';
-import { SchedulePickupModal } from '../components/SchedulePickupModal';
-import { PostcodeCheckerModal } from '../components/PostcodeCheckerModal';
-
 import { HomeView } from '../components/HomeView';
-import { ServicesView } from '../components/ServicesView';
-import { OrdersView } from '../components/OrdersView';
-import { InvoiceReceiptModal } from '../components/InvoiceReceiptModal';
-import { RescheduleCancelModal } from '../components/RescheduleCancelModal';
-import { AdditionalChargeModal } from '../components/AdditionalChargeModal';
-import { ServiceCustomizeModal } from '../components/ServiceCustomizeModal';
-import { SupportView } from '../components/SupportView';
-import { NotificationsView } from '../components/NotificationsView';
-import { AccountView } from '../components/AccountView';
-import { AIAssistantView } from '../components/AIAssistantView';
-import { PaymentStatus } from '../components/payment/PaymentStatus';
-import { useAuth0 } from '@auth0/auth0-react';
-import { CustomerAuthModal } from '../components/CustomerAuthModal';
-import { CompleteProfileModal } from '../components/CompleteProfileModal';
-import { parseCurrentRoute, navigateToRoute, AuthSession, UserRole } from '@laundelle/utils';
 import { Footer } from '../components/Footer';
+
+// Code-split secondary views (only loaded on navigation)
+const ServicesView = dynamic(() => import('../components/ServicesView').then((m) => m.ServicesView), {
+  loading: () => <div className="min-h-[400px] flex items-center justify-center"><div className="w-8 h-8 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" /></div>,
+});
+const OrdersView = dynamic(() => import('../components/OrdersView').then((m) => m.OrdersView), {
+  loading: () => <div className="min-h-[400px] flex items-center justify-center"><div className="w-8 h-8 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" /></div>,
+});
+const SupportView = dynamic(() => import('../components/SupportView').then((m) => m.SupportView));
+const NotificationsView = dynamic(() => import('../components/NotificationsView').then((m) => m.NotificationsView));
+const AccountView = dynamic(() => import('../components/AccountView').then((m) => m.AccountView));
+const AIAssistantView = dynamic(() => import('../components/AIAssistantView').then((m) => m.AIAssistantView));
+
+// Code-split modals and drawers (only loaded when triggered)
+const CartDrawer = dynamic(() => import('../components/CartDrawer').then((m) => m.CartDrawer));
+const SchedulePickupModal = dynamic(() => import('../components/SchedulePickupModal').then((m) => m.SchedulePickupModal));
+const PostcodeCheckerModal = dynamic(() => import('../components/PostcodeCheckerModal').then((m) => m.PostcodeCheckerModal));
+const CustomerAuthModal = dynamic(() => import('../components/CustomerAuthModal').then((m) => m.CustomerAuthModal));
+const CompleteProfileModal = dynamic(() => import('../components/CompleteProfileModal').then((m) => m.CompleteProfileModal));
+const InvoiceReceiptModal = dynamic(() => import('../components/InvoiceReceiptModal').then((m) => m.InvoiceReceiptModal));
+const OrderPlacedAnimationModal = dynamic(() => import('../components/OrderPlacedAnimationModal').then((m) => m.OrderPlacedAnimationModal));
+const RescheduleCancelModal = dynamic(() => import('../components/RescheduleCancelModal').then((m) => m.RescheduleCancelModal));
+const AdditionalChargeModal = dynamic(() => import('../components/AdditionalChargeModal').then((m) => m.AdditionalChargeModal));
+const ServiceCustomizeModal = dynamic(() => import('../components/ServiceCustomizeModal').then((m) => m.ServiceCustomizeModal));
+const PaymentStatus = dynamic(() => import('../components/payment/PaymentStatus').then((m) => m.PaymentStatus));
+import { useAuth0 } from '@auth0/auth0-react';
+import { parseCurrentRoute, navigateToRoute, AuthSession, UserRole } from '@laundelle/utils';
 import {
   getStoredSession,
   dbFetchProfile,
@@ -54,40 +65,30 @@ export default function App({ initialTab }: { initialTab?: string }) {
     isLoading: isAuth0Loading,
     error: auth0Error,
     loginWithRedirect,
+    getAccessTokenSilently,
+    getIdTokenClaims,
   } = useAuth0();
 
-  const [showSplash, setShowSplash] = useState(false);
-  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+  const [activeTab, setActiveTab] = useState<ActiveTab>((initialTab as ActiveTab) || 'home');
+
+  // Sync initial tab from URL on client mount without causing SSR mismatch
+  React.useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
-      if (params.has('payment')) return 'orders';
-      const p = window.location.pathname.replace(/^\//, '');
-      if (p === 'orders') return 'orders';
-      if (p === 'services') return 'services';
-      if (p === 'support') return 'support';
-      if (p === 'notifications') return 'notifications';
-      if (p === 'account') return 'account';
-      if (p === 'ai') return 'assistant';
-    }
-    return (initialTab as ActiveTab) || 'home';
-  });
-
-  // Only show splash screen once on the user's very first visit to the website
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const hasShown = localStorage.getItem('laundelle_splash_shown');
-      const params = new URLSearchParams(window.location.search);
-      const isPaymentRedirect = params.has('payment');
-      const isAuthRedirect = params.has('code') || params.has('state') || params.has('error');
-
-      if (!hasShown && !isPaymentRedirect && !isAuthRedirect) {
-        setShowSplash(true);
+      if (params.has('payment')) {
+        setActiveTab('orders');
+        return;
       }
-    } catch {
-      // storage unavailable
+      const p = window.location.pathname.replace(/^\//, '');
+      if (p === 'orders') setActiveTab('orders');
+      else if (p === 'services') setActiveTab('services');
+      else if (p === 'support') setActiveTab('support');
+      else if (p === 'notifications') setActiveTab('notifications');
+      else if (p === 'account') setActiveTab('account');
+      else if (p === 'ai') setActiveTab('assistant');
     }
   }, []);
+
 
   // Listen for custom tab navigation events (e.g. from post-Auth0 redirect)
   React.useEffect(() => {
@@ -110,14 +111,6 @@ export default function App({ initialTab }: { initialTab?: string }) {
 
 
 
-  const handleSplashComplete = () => {
-    setShowSplash(false);
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem('laundelle_splash_shown', 'true');
-      } catch { }
-    }
-  };
 
   const [services, setServices] = useState<ServiceItem[]>([]);
 
@@ -177,6 +170,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
     currency?: string;
     error?: string;
   } | null>(null);
+  const [placedOrderForModal, setPlacedOrderForModal] = useState<Order | null>(null);
 
   // Toast banner
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -291,7 +285,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
     if (typeof window !== 'undefined') {
       try {
         localStorage.removeItem('laundelle_user_cart');
-      } catch {}
+      } catch { }
     }
   };
 
@@ -299,13 +293,6 @@ export default function App({ initialTab }: { initialTab?: string }) {
     // Clear cart upon successful order placement
     handleClearCart();
 
-    // Ensure splash screen never shows after placing an order
-    setShowSplash(false);
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem('laundelle_splash_shown', 'true');
-      } catch { }
-    }
 
     setOrders((prev) => [newOrder, ...prev]);
     setSelectedTrackingOrderId(newOrder.id);
@@ -370,24 +357,32 @@ export default function App({ initialTab }: { initialTab?: string }) {
       if (typeof window !== 'undefined' && cartDrawerOpen) {
         localStorage.setItem('laundelle_open_cart', 'true');
       }
-    } catch {}
+    } catch { }
     setCustomerAuthOpen(true);
   };
 
-  const handleDirectAuth0Login = (screenHint?: 'signup') => {
+  const handleDirectAuth0Login = (connection?: string, screenHint?: 'signup') => {
     try {
       if (typeof window !== 'undefined' && cartDrawerOpen) {
         localStorage.setItem('laundelle_open_cart', 'true');
       }
-    } catch {}
+    } catch { }
+    const authParams: any = {};
+    if (connection) authParams.connection = connection;
+    if (screenHint) authParams.screen_hint = screenHint;
     loginWithRedirect({
       appState: {
         returnTo: typeof window !== 'undefined' && window.location.pathname !== '/' ? window.location.pathname : '/home',
         tab: activeTab,
       },
-      authorizationParams: {
-        screen_hint: screenHint,
-      },
+      authorizationParams: authParams,
+    }).catch(() => {
+      loginWithRedirect({
+        appState: {
+          returnTo: typeof window !== 'undefined' && window.location.pathname !== '/' ? window.location.pathname : '/home',
+          tab: activeTab,
+        },
+      });
     });
   };
 
@@ -403,10 +398,29 @@ export default function App({ initialTab }: { initialTab?: string }) {
         const picture = auth0User.picture;
 
         try {
-          const syncResult = await dbAuth0Sync({ email, name, sub, picture });
+          const idClaims = await getIdTokenClaims().catch(() => undefined);
+          const accessToken = idClaims?.__raw || (await getAccessTokenSilently().catch(() => undefined));
+          const syncResult = await dbAuth0Sync({ email, name, sub, picture, portal: 'customer' }, accessToken);
           if (isCancelled) return;
 
+          if (syncResult.error) {
+            console.error('[AppClient] Customer authentication restriction:', syncResult.error);
+            showToast(`⚠️ ${syncResult.error}`);
+            clearSession();
+            setAuthSession({ role: null, user: null, isAuthenticated: false });
+            return;
+          }
+
           if (syncResult.user && syncResult.token) {
+            const returnedRole = syncResult.user.role || 'customer';
+            if (['driver', 'processor', 'manager', 'plant_manager'].includes(returnedRole)) {
+              console.warn('[AppClient] Received operational staff role in Customer Portal:', returnedRole);
+              clearSession();
+              setAuthSession({ role: null, user: null, isAuthenticated: false });
+              showToast('⚠️ Operational staff accounts cannot be used in the Customer Portal.');
+              return;
+            }
+
             setAuthSession({
               role: 'customer',
               user: {
@@ -437,7 +451,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
               setCartDrawerOpen(true);
             }
           }
-        } catch {}
+        } catch { }
       }
     };
 
@@ -454,25 +468,24 @@ export default function App({ initialTab }: { initialTab?: string }) {
       const stored = getStoredSession();
       if (stored?.user) {
         const uRole = stored.user.role || 'customer';
-        const isStaff = uRole === 'admin' || uRole === 'super_admin';
-        const isManager = uRole === 'manager';
-        const isDriver = uRole === 'driver';
-        const isProcessor = uRole === 'processor';
+        // In the Customer portal, operational staff roles are not allowed.
+        // If an operational session leaked from cross-app development, purge it.
+        if (['driver', 'processor', 'manager', 'plant_manager'].includes(uRole)) {
+          console.warn('[AppClient] Operational staff session detected in Customer Portal. Purging to prevent portal glitching.');
+          clearSession();
+          setAuthSession({ role: null, user: null, isAuthenticated: false });
+          return;
+        }
 
-        let mappedRole: UserRole = 'customer';
-        if (isStaff) mappedRole = 'admin';
-        else if (isManager) mappedRole = 'manager';
-        else if (isDriver) mappedRole = 'driver';
-        else if (isProcessor) mappedRole = 'processor';
-
+        const isAdmin = uRole === 'admin' || uRole === 'super_admin';
         setAuthSession({
-          role: mappedRole,
+          role: isAdmin ? 'admin' : 'customer',
           user: {
             id: stored.user.id,
             name: stored.user.name || stored.user.email?.split('@')[0] || 'User',
             email: stored.user.email || '',
             role: uRole,
-            roleLabel: uRole === 'manager' ? 'Plant Manager' : uRole === 'super_admin' ? 'Super Admin' : uRole === 'admin' ? 'Administrator' : uRole === 'driver' ? 'Driver' : uRole === 'processor' ? 'Processor' : 'Customer Account',
+            roleLabel: isAdmin ? 'Administrator' : 'Customer Account',
           },
           isAuthenticated: true,
         });
@@ -492,22 +505,22 @@ export default function App({ initialTab }: { initialTab?: string }) {
   React.useEffect(() => {
     const syncData = async () => {
       const stored = getStoredSession();
-      if (authSession.isAuthenticated && authSession.role === 'customer' && authSession.user?.id && stored?.token) {
+      if (authSession.isAuthenticated && authSession.user?.id && stored?.token) {
         try {
           const userId = authSession.user.id;
-          const p = await dbFetchProfile(userId);
+          const [p, o, n] = await Promise.all([
+            dbFetchProfile(userId),
+            dbFetchOrders(userId),
+            dbFetchNotifications(userId),
+          ]);
           setProfile(p);
+          setOrders(o || []);
+          setNotifications(n || []);
 
           // Prompt user to complete profile if mobile number is missing in MongoDB
           if (p && (!p.phone || p.phone.trim() === '')) {
             setCompleteProfileModalOpen(true);
           }
-
-          const o = await dbFetchOrders(userId);
-          setOrders(o);
-
-          const n = await dbFetchNotifications(userId);
-          setNotifications(n);
         } catch (e) {
           console.error('[AppClient] Failed to load user data from MongoDB:', e);
         }
@@ -554,11 +567,6 @@ export default function App({ initialTab }: { initialTab?: string }) {
     //     of a flow that might bypass webhook verification in future code changes.
     // NEVER treat 'payment=success' as confirmation of payment.
     if (payment === 'verify') {
-      // Ensure splash screen is never shown after payment redirect
-      setShowSplash(false);
-      try {
-        localStorage.setItem('laundelle_splash_shown', 'true');
-      } catch { }
 
       // Immediately clean up sensitive query params from URL bar
       const cleanPath = window.location.pathname === '/' ? '/orders' : window.location.pathname;
@@ -604,10 +612,11 @@ export default function App({ initialTab }: { initialTab?: string }) {
           if (res.ok && data.confirmed && data.order) {
             // ✅ Webhook ran, order found in DB, payment confirmed
             setCart([]);
-            try { localStorage.removeItem('laundelle_user_cart'); } catch {}
+            try { localStorage.removeItem('laundelle_user_cart'); } catch { }
             const confirmedId = data.order.publicId || data.order.orderNumber || data.order.id || orderId;
             const confirmedTotal = data.order.total ?? (data.order as any).total_price ?? (data.order as any).amount;
             showToast(`💳 Payment confirmed! Order #${confirmedId} is placed.`);
+            setPlacedOrderForModal(data.order);
             setActiveTab('orders');
             setSelectedTrackingOrderId(data.order.id || data.order.publicId);
             setPaymentResult({ status: 'success', orderId: confirmedId, amount: confirmedTotal, currency: '£' });
@@ -653,10 +662,6 @@ export default function App({ initialTab }: { initialTab?: string }) {
       const checkoutId = params.get('checkoutId');
       const cleanPath = window.location.pathname === '/' ? '/orders' : window.location.pathname;
       window.history.replaceState({}, document.title, cleanPath);
-      setShowSplash(false);
-      try {
-        localStorage.setItem('laundelle_splash_shown', 'true');
-      } catch { }
 
       // Notify backend to mark the order as payment_failed in orders collection
       apiFetch('/api/stripe/cancel-session', {
@@ -711,8 +716,6 @@ export default function App({ initialTab }: { initialTab?: string }) {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-gray-900 font-sans flex flex-col antialiased selection:bg-[#CAF0F8] selection:text-[#03045E]">
-      {/* App Reload Splash Screen (shown once on first visit only) */}
-      {showSplash && <SplashScreen onComplete={handleSplashComplete} />}
 
       {/* Toast Notification Banner */}
       {toastMessage && (
@@ -779,29 +782,120 @@ export default function App({ initialTab }: { initialTab?: string }) {
               selectedOrderId={selectedTrackingOrderId}
             />
           ) : (
-            <div className="max-w-xl mx-auto px-4 py-20 text-center space-y-4">
-              <div className="w-16 h-16 bg-[#eff6ff] text-[#1d5bd8] rounded-full flex items-center justify-center mx-auto">
-                <User className="w-8 h-8" />
-              </div>
-              <h2 className="text-xl font-bold text-navy">Sign In to View Orders</h2>
-              <p className="text-xs text-gray-500 max-w-sm mx-auto">
-                Please sign in with your customer account to view your live orders, invoices, and active driver tracking.
-              </p>
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleDirectAuth0Login()}
-                  className="w-full sm:w-auto px-6 py-3 bg-[#082b78] hover:bg-[#072465] text-white text-xs font-bold rounded-2xl shadow-sm transition-all cursor-pointer"
+            <div className="w-full max-w-4xl mx-auto py-12 px-4 sm:px-6">
+              <div className="bg-white rounded-3xl p-6 sm:p-10 lg:p-12 shadow-sm border border-slate-200 relative overflow-hidden">
+                <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center">
+                  {/* Left Column: Avatar & Brand Hero */}
+                  <div className="flex flex-col items-center justify-center text-center">
+                    <div className="relative w-64 h-64 sm:w-72 sm:h-72 md:w-80 md:h-80 flex items-center justify-center">
+                      <Image
+                        src={getOptimizedImageUrl(LAUNDELLE_IMAGES.customerAuthHero, { width: 640, quality: 'auto', format: 'auto' })}
+                        alt="Laundelle Customer"
+                        fill
+                        sizes="(max-width: 768px) 288px, 320px"
+                        loading="lazy"
+                        className="relative z-10 object-contain rounded-full drop-shadow-md"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Right Column: Log in or create an account */}
+                  <div className="flex flex-col justify-center space-y-4">
+                    <div className="space-y-1">
+                      <h2 className="text-2xl sm:text-3xl font-heading font-black text-slate-900 tracking-tight">
+                        Log in or create an account
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        Sign in to track live orders, download receipts, and view courier arrival times.
+                      </p>
+                    </div>
+
+                    <div className="space-y-3 pt-2">
+                      {/* 1. Continue with Google */}
+                      <button
+                        type="button"
+                        onClick={() => handleDirectAuth0Login('google-oauth2')}
+                        className="w-full h-12 sm:h-13 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl px-5 flex items-center justify-start gap-3.5 text-sm font-semibold text-slate-800 shadow-2xs transition-all cursor-pointer active:scale-99"
+                      >
+                        <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                          <path
+                            fill="#4285F4"
+                            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                          />
+                          <path
+                            fill="#34A853"
+                            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                          />
+                          <path
+                            fill="#FBBC05"
+                            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                          />
+                          <path
+                            fill="#EA4335"
+                            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                          />
+                        </svg>
+                        <span>Continue with Google</span>
+                      </button>
+
+                      {/* 2. Continue with Apple */}
+                      <button
+                        type="button"
+                        onClick={() => handleDirectAuth0Login('apple')}
+                        className="w-full h-12 sm:h-13 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl px-5 flex items-center justify-start gap-3.5 text-sm font-semibold text-slate-800 shadow-2xs transition-all cursor-pointer active:scale-99"
+                      >
+                        <svg className="w-5 h-5 shrink-0 fill-current text-black" viewBox="0 0 24 24">
+                          <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.37c.62-.75 1.04-1.8 0.92-2.85-.9.04-2 .6-2.65 1.35-.58.67-1.09 1.74-.95 2.77.99.08 2.05-.51 2.68-1.27z" />
+                        </svg>
+                        <span>Continue with Apple</span>
+                      </button>
+
+                      {/* 3. Continue with Facebook */}
+                      <button
+                        type="button"
+                        onClick={() => handleDirectAuth0Login('facebook')}
+                        className="w-full h-12 sm:h-13 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl px-5 flex items-center justify-start gap-3.5 text-sm font-semibold text-slate-800 shadow-2xs transition-all cursor-pointer active:scale-99"
+                      >
+                        <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                          <path
+                            fill="#1877F2"
+                            d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"
+                          />
+                        </svg>
+                        <span>Continue with Facebook</span>
+                      </button>
+
+                      {/* 4. Continue with Email */}
+                      <button
+                        type="button"
+                        onClick={() => handleDirectAuth0Login()}
+                        className="w-full h-12 sm:h-13 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl px-5 flex items-center justify-start gap-3.5 text-sm font-semibold text-slate-800 shadow-2xs transition-all cursor-pointer active:scale-99"
+                      >
+                        <svg className="w-5 h-5 text-slate-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        <span>Continue with Email</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Decorative Wave structure inside the box */}
+                <svg
+                  className="absolute bottom-0 left-0 w-full h-24 sm:h-32 pointer-events-none z-0"
+                  viewBox="0 0 1440 200"
+                  preserveAspectRatio="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  aria-hidden="true"
                 >
-                  Sign In with Auth0
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleOpenCustomerAuth()}
-                  className="w-full sm:w-auto px-6 py-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-xs font-bold rounded-2xl transition-all cursor-pointer"
-                >
-                  Email & Password Login
-                </button>
+                  <path
+                    fill="#2563eb"
+                    d="M0,70 C180,170 360,10 540,70
+                       S900,170 1080,70
+                       S1260,10 1440,70
+                       L1440,200 L0,200 Z"
+                  />
+                </svg>
               </div>
             </div>
           )
@@ -866,31 +960,120 @@ export default function App({ initialTab }: { initialTab?: string }) {
               onNavigate={handleNavigate}
             />
           ) : (
-            <div className="min-h-screen bg-slate-50 flex items-center justify-center py-16 px-6">
-              <div className="bg-white max-w-md w-full rounded-[32px] p-8 text-center border border-slate-100 shadow-md space-y-6 animate-in fade-in zoom-in-95">
-                <div className="w-16 h-16 bg-[#CAF0F8] text-[#03045E] rounded-3xl flex items-center justify-center mx-auto shadow-sm">
-                  <User className="w-8 h-8 text-[#00B4D8]" />
+            <div className="w-full max-w-4xl mx-auto py-12 px-4 sm:px-6">
+              <div className="bg-white rounded-3xl p-6 sm:p-10 lg:p-12 shadow-sm border border-slate-200 relative overflow-hidden">
+                <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center">
+                  {/* Left Column: Avatar & Brand Hero */}
+                  <div className="flex flex-col items-center justify-center text-center">
+                    <div className="relative w-64 h-64 sm:w-72 sm:h-72 md:w-80 md:h-80 flex items-center justify-center">
+                      <Image
+                        src={getOptimizedImageUrl(LAUNDELLE_IMAGES.customerAuthHero, { width: 640, quality: 'auto', format: 'auto' })}
+                        alt="Laundelle Customer"
+                        fill
+                        sizes="(max-width: 768px) 288px, 320px"
+                        loading="lazy"
+                        className="relative z-10 object-contain rounded-full drop-shadow-md"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Right Column: Log in or create an account */}
+                  <div className="flex flex-col justify-center space-y-4">
+                    <div className="space-y-1">
+                      <h2 className="text-2xl sm:text-3xl font-heading font-black text-slate-900 tracking-tight">
+                        Log in or create an account
+                      </h2>
+                      <p className="text-xs text-slate-500">
+                        Choose your preferred method to access your account.
+                      </p>
+                    </div>
+
+                    <div className="space-y-3 pt-2">
+                      {/* 1. Continue with Google */}
+                      <button
+                        type="button"
+                        onClick={() => handleDirectAuth0Login('google-oauth2')}
+                        className="w-full h-12 sm:h-13 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl px-5 flex items-center justify-start gap-3.5 text-sm font-semibold text-slate-800 shadow-2xs transition-all cursor-pointer active:scale-99"
+                      >
+                        <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                          <path
+                            fill="#4285F4"
+                            d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                          />
+                          <path
+                            fill="#34A853"
+                            d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                          />
+                          <path
+                            fill="#FBBC05"
+                            d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                          />
+                          <path
+                            fill="#EA4335"
+                            d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                          />
+                        </svg>
+                        <span>Continue with Google</span>
+                      </button>
+
+                      {/* 2. Continue with Apple */}
+                      <button
+                        type="button"
+                        onClick={() => handleDirectAuth0Login('apple')}
+                        className="w-full h-12 sm:h-13 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl px-5 flex items-center justify-start gap-3.5 text-sm font-semibold text-slate-800 shadow-2xs transition-all cursor-pointer active:scale-99"
+                      >
+                        <svg className="w-5 h-5 shrink-0 fill-current text-black" viewBox="0 0 24 24">
+                          <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.37c.62-.75 1.04-1.8 0.92-2.85-.9.04-2 .6-2.65 1.35-.58.67-1.09 1.74-.95 2.77.99.08 2.05-.51 2.68-1.27z" />
+                        </svg>
+                        <span>Continue with Apple</span>
+                      </button>
+
+                      {/* 3. Continue with Facebook */}
+                      <button
+                        type="button"
+                        onClick={() => handleDirectAuth0Login('facebook')}
+                        className="w-full h-12 sm:h-13 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl px-5 flex items-center justify-start gap-3.5 text-sm font-semibold text-slate-800 shadow-2xs transition-all cursor-pointer active:scale-99"
+                      >
+                        <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                          <path
+                            fill="#1877F2"
+                            d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"
+                          />
+                        </svg>
+                        <span>Continue with Facebook</span>
+                      </button>
+
+                      {/* 4. Continue with Email */}
+                      <button
+                        type="button"
+                        onClick={() => handleDirectAuth0Login()}
+                        className="w-full h-12 sm:h-13 bg-white hover:bg-slate-50 border border-slate-300 hover:border-slate-400 rounded-xl px-5 flex items-center justify-start gap-3.5 text-sm font-semibold text-slate-800 shadow-2xs transition-all cursor-pointer active:scale-99"
+                      >
+                        <svg className="w-5 h-5 text-slate-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        <span>Continue with Email</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <h3 className="font-heading font-extrabold text-xl text-gray-900">Access Your Personal Portal</h3>
-                  <p className="text-xs text-gray-500 leading-relaxed">
-                    View profile details, saved addresses, custom wash preferences, and repeat previous orders in one place.
-                  </p>
-                </div>
-                <div className="flex flex-col gap-3">
-                  <button
-                    onClick={() => handleDirectAuth0Login()}
-                    className="w-full bg-[#03045E] hover:bg-[#023E8A] text-white py-4 rounded-2xl text-xs font-black shadow-xs cursor-pointer transition-colors"
-                  >
-                    Sign In with Auth0
-                  </button>
-                  <button
-                    onClick={() => handleOpenCustomerAuth()}
-                    className="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 py-3 rounded-2xl text-xs font-bold cursor-pointer transition-colors"
-                  >
-                    Sign In with Email / Register
-                  </button>
-                </div>
+
+                {/* Decorative Wave structure inside the box */}
+                <svg
+                  className="absolute bottom-0 left-0 w-full h-24 sm:h-32 pointer-events-none z-0"
+                  viewBox="0 0 1440 200"
+                  preserveAspectRatio="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  aria-hidden="true"
+                >
+                  <path
+                    fill="#2563eb"
+                    d="M0,70 C180,170 360,10 540,70
+                       S900,170 1080,70
+                       S1260,10 1440,70
+                       L1440,200 L0,200 Z"
+                  />
+                </svg>
               </div>
             </div>
           )
@@ -1008,7 +1191,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
               localStorage.removeItem('laundelle_open_cart');
               setCartDrawerOpen(true);
             }
-          } catch {}
+          } catch { }
         }}
         onClose={() => setCompleteProfileModalOpen(false)}
       />
@@ -1018,6 +1201,22 @@ export default function App({ initialTab }: { initialTab?: string }) {
         isOpen={!!activeInvoiceOrder}
         order={activeInvoiceOrder}
         onClose={() => setActiveInvoiceOrder(null)}
+      />
+
+      {/* Order Placed Success Celebration Modal with Pickup OTP */}
+      <OrderPlacedAnimationModal
+        isOpen={Boolean(placedOrderForModal)}
+        order={placedOrderForModal}
+        onClose={() => setPlacedOrderForModal(null)}
+        onTrackOrder={(orderId) => {
+          setPlacedOrderForModal(null);
+          setActiveTab('orders');
+          setSelectedTrackingOrderId(orderId);
+        }}
+        onCancelOrder={(orderId, reason) => {
+          handleOrderCancelled(orderId, reason);
+          setPlacedOrderForModal(null);
+        }}
       />
 
       {/* Reschedule/Cancel Modal */}

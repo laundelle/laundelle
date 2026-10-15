@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { CartItem, UserAddress, Order } from '@laundelle/types';
 import { generateOrderId } from '@laundelle/ids';
-import { dbCreateOrder, dbCreateAddress, dbFetchSlots, getStoredSession, apiFetch, authHeaders } from '@laundelle/api-client';
+import { dbCreateOrder, dbCreateAddress, dbFetchSlots, getStoredSession, apiFetch, authHeaders, dbFetchPricingCharges, dbValidateCoupon } from '@laundelle/api-client';
 import { AddAddressModal } from './AddAddressModal';
 import {
   ScheduleConfig,
@@ -329,10 +329,56 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   // -------------------------------------------------------------
   // SCREEN 3: REVIEW, PRICING & TIP STATE
   // -------------------------------------------------------------
+  const [pricingCharges, setPricingCharges] = useState<{
+    taxRate: number;
+    taxEnabled: boolean;
+    deliveryCharge: number;
+    freeDeliveryThreshold: number;
+    smallOrderFee: number;
+    smallOrderThreshold: number;
+    serviceFee: number;
+    otherCharges: any[];
+  }>({
+    taxRate: 20,
+    taxEnabled: false,
+    deliveryCharge: 0,
+    freeDeliveryThreshold: 20,
+    smallOrderFee: 3.5,
+    smallOrderThreshold: 20.0,
+    serviceFee: 3.49,
+    otherCharges: [],
+  });
+
+  // Fetch live pricing charges from platform
+  useEffect(() => {
+    let isMounted = true;
+    dbFetchPricingCharges()
+      .then((res) => {
+        if (isMounted && res) {
+          setPricingCharges({
+            taxRate: typeof res.taxRate === 'number' ? res.taxRate : 20,
+            taxEnabled: Boolean(res.taxEnabled),
+            deliveryCharge: typeof res.deliveryCharge === 'number' ? res.deliveryCharge : 0,
+            freeDeliveryThreshold: typeof res.freeDeliveryThreshold === 'number' ? res.freeDeliveryThreshold : 20,
+            smallOrderFee: typeof res.smallOrderFee === 'number' ? res.smallOrderFee : 3.5,
+            smallOrderThreshold: typeof res.smallOrderThreshold === 'number' ? res.smallOrderThreshold : 20.0,
+            serviceFee: typeof res.serviceFee === 'number' ? res.serviceFee : 3.49,
+            otherCharges: Array.isArray(res.otherCharges) ? res.otherCharges : [],
+          });
+        }
+      })
+      .catch((e) => console.error('Failed to load pricing charges:', e));
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const [couponCode, setCouponCode] = useState('');
   const [appliedDiscount, setAppliedDiscount] = useState<number>(0);
+  const [couponDiscountType, setCouponDiscountType] = useState<'percentage' | 'fixed'>('percentage');
   const [couponError, setCouponError] = useState('');
   const [couponSuccess, setCouponSuccess] = useState('');
+  const [couponApplying, setCouponApplying] = useState(false);
   const [driverTip, setDriverTip] = useState<number>(0);
 
   // Accordion Toggles
@@ -345,43 +391,105 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   }, [cart]);
 
   const discountAmount = useMemo(() => {
-    return Math.round((subtotal * appliedDiscount) / 100 * 100) / 100;
-  }, [subtotal, appliedDiscount]);
+    if (couponDiscountType === 'fixed') {
+      return Math.min(subtotal, appliedDiscount);
+    }
+    return Math.round(((subtotal * appliedDiscount) / 100) * 100) / 100;
+  }, [subtotal, appliedDiscount, couponDiscountType]);
 
-  // Small order fee: Minimum order value is £20.00.
-  // If subtotal is below £20.00, top it up to £20.00 with small order fee.
+  // Small order fee: Calculated against dynamic smallOrderThreshold
   const smallOrderFee = useMemo(() => {
     if (subtotal <= 0) return 0;
-    const threshold = 20.00;
+    const threshold = pricingCharges.smallOrderThreshold;
     if (subtotal < threshold) {
-      return Math.round((threshold - subtotal) * 100) / 100;
+      return pricingCharges.smallOrderFee > 0
+        ? pricingCharges.smallOrderFee
+        : Math.round((threshold - subtotal) * 100) / 100;
     }
     return 0;
-  }, [subtotal]);
+  }, [subtotal, pricingCharges]);
 
-  // Fixed Service Fee
-  const serviceFee = 3.49;
-  // Collection & Delivery is FREE
-  const collectionDeliveryFee = 0.00;
+  // Delivery fee: Free if at or above freeDeliveryThreshold, otherwise dynamic deliveryCharge
+  const collectionDeliveryFee = useMemo(() => {
+    if (subtotal <= 0) return 0;
+    if (subtotal >= pricingCharges.freeDeliveryThreshold) return 0;
+    return pricingCharges.deliveryCharge;
+  }, [subtotal, pricingCharges]);
+
+  // Fixed Platform Service Fee
+  const serviceFee = pricingCharges.serviceFee;
+
+  // Tax amount (VAT)
+  const taxAmount = useMemo(() => {
+    if (!pricingCharges.taxEnabled || pricingCharges.taxRate <= 0) return 0;
+    const taxableBase = Math.max(0, subtotal - discountAmount);
+    return Math.round(((taxableBase * pricingCharges.taxRate) / 100) * 100) / 100;
+  }, [subtotal, discountAmount, pricingCharges]);
+
+  // Other dynamic charges
+  const otherChargesTotal = useMemo(() => {
+    if (!pricingCharges.otherCharges || pricingCharges.otherCharges.length === 0) return 0;
+    return pricingCharges.otherCharges
+      .filter((c: any) => c.enabled)
+      .reduce((sum: number, c: any) => {
+        const val = c.type === 'percentage' ? (subtotal * c.amount) / 100 : c.amount;
+        return sum + (Number(val) || 0);
+      }, 0);
+  }, [subtotal, pricingCharges.otherCharges]);
 
   // Estimated Total
   const estimatedTotal = useMemo(() => {
-    return Math.max(0, subtotal - discountAmount + smallOrderFee + serviceFee + collectionDeliveryFee + driverTip);
-  }, [subtotal, discountAmount, smallOrderFee, serviceFee, collectionDeliveryFee, driverTip]);
+    return Math.max(
+      0,
+      Math.round(
+        (subtotal -
+          discountAmount +
+          smallOrderFee +
+          serviceFee +
+          collectionDeliveryFee +
+          taxAmount +
+          otherChargesTotal +
+          driverTip) *
+          100
+      ) / 100
+    );
+  }, [
+    subtotal,
+    discountAmount,
+    smallOrderFee,
+    serviceFee,
+    collectionDeliveryFee,
+    taxAmount,
+    otherChargesTotal,
+    driverTip,
+  ]);
 
-  const handleApplyCoupon = () => {
+  const handleApplyCoupon = async () => {
     setCouponError('');
     setCouponSuccess('');
     if (!couponCode.trim()) return;
 
-    if (couponCode.trim().toUpperCase() === 'WELCOME20') {
-      setAppliedDiscount(20);
-      setCouponSuccess('20% discount applied successfully!');
-    } else if (couponCode.trim().toUpperCase() === 'CLEAN10') {
-      setAppliedDiscount(10);
-      setCouponSuccess('10% discount applied successfully!');
-    } else {
-      setCouponError('Invalid promo code. Try WELCOME20 for 20% off items.');
+    setCouponApplying(true);
+    try {
+      const res = await dbValidateCoupon(couponCode.trim(), subtotal);
+      if (res.valid && res.coupon) {
+        setCouponDiscountType(res.coupon.discountType || 'percentage');
+        setAppliedDiscount(res.coupon.discountValue);
+        const discountText =
+          res.coupon.discountType === 'fixed'
+            ? `£${res.coupon.discountValue.toFixed(2)}`
+            : `${res.coupon.discountValue}%`;
+        setCouponSuccess(
+          res.message || `Promo code applied successfully (${discountText} off)!`
+        );
+      } else {
+        setAppliedDiscount(0);
+        setCouponError(res.message || 'Invalid or expired promo code.');
+      }
+    } catch (err: any) {
+      setCouponError(err.message || 'Failed to validate promo code.');
+    } finally {
+      setCouponApplying(false);
     }
   };
 
@@ -499,7 +607,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         itemCount: cart.reduce((acc, i) => acc + i.quantity, 0),
         subtotal,
         discount: discountAmount,
-        tax: 0,
+        tax: taxAmount,
         collectionFee: 0,
         deliveryFee: collectionDeliveryFee,
         expressFee: 0,
@@ -532,6 +640,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         status: 'pending_payment',
         statusLabel: 'Pending Payment Authorization',
         declaredItemCount: declaredItemCount ? parseInt(declaredItemCount, 10) || undefined : undefined,
+        couponCode: couponCode.trim() || undefined,
         coordinates: selectedAddr?.coordinates || (selectedAddr?.latitude && selectedAddr?.longitude ? { lat: selectedAddr.latitude, lng: selectedAddr.longitude } : undefined),
         timeline: [
           { status: 'booking_confirmed', label: 'Order Created', completed: true, current: true, time: 'Just now' },
@@ -552,8 +661,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         },
         body: JSON.stringify({
           amount: estimatedTotal,
+          couponCode: couponCode.trim() || undefined,
           customerEmail: email.trim() || session?.user?.email,
-          orderPayload: newOrder,
+          orderPayload: {
+            ...newOrder,
+            couponCode: couponCode.trim() || undefined,
+            coupon_code: couponCode.trim() || undefined,
+          },
           returnUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
           items: [
             ...cart.map((item) => ({
@@ -561,8 +675,15 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               price: item.price,
               quantity: item.quantity,
             })),
-            ...(smallOrderFee > 0 ? [{ name: 'Small Order Fee (Under £20 minimum)', price: smallOrderFee, quantity: 1 }] : []),
+            ...(collectionDeliveryFee > 0 ? [{ name: 'Delivery Fee', price: collectionDeliveryFee, quantity: 1 }] : []),
+            ...(smallOrderFee > 0 ? [{ name: `Small Order Fee (Under £${pricingCharges.smallOrderThreshold.toFixed(2)})`, price: smallOrderFee, quantity: 1 }] : []),
             { name: 'Service Fee', price: serviceFee, quantity: 1 },
+            ...(taxAmount > 0 ? [{ name: `VAT / Tax (${pricingCharges.taxRate}%)`, price: taxAmount, quantity: 1 }] : []),
+            ...(pricingCharges.otherCharges.filter((c: any) => c.enabled).map((c: any) => ({
+              name: c.name,
+              price: c.type === 'percentage' ? Math.round(((subtotal * c.amount) / 100) * 100) / 100 : c.amount,
+              quantity: 1,
+            }))),
             ...(driverTip > 0 ? [{ name: 'Driver Tip', price: driverTip, quantity: 1 }] : [])
           ],
         }),
@@ -1555,15 +1676,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     ))}
 
                     {/* Small Order Fee */}
-                    <div className="flex items-center justify-between text-gray-700">
-                      <div className="flex items-center gap-1.5">
-                        <span>Small order fee</span>
-                        <span title="Minimum order value is £20.00">
-                          <HelpCircle className="w-3.5 h-3.5 text-gray-400" />
-                        </span>
+                    {smallOrderFee > 0 && (
+                      <div className="flex items-center justify-between text-gray-700">
+                        <div className="flex items-center gap-1.5">
+                          <span>Small order fee</span>
+                          <span title={`Orders under £${pricingCharges.smallOrderThreshold.toFixed(2)}`}>
+                            <HelpCircle className="w-3.5 h-3.5 text-gray-400" />
+                          </span>
+                        </div>
+                        <span className="font-bold text-navy">£{smallOrderFee.toFixed(2)}</span>
                       </div>
-                      <span className="font-bold text-navy">£{smallOrderFee.toFixed(2)}</span>
-                    </div>
+                    )}
 
                     {/* Service Fee */}
                     <div className="flex items-center justify-between text-gray-700">
@@ -1574,8 +1697,33 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     {/* Collection & Delivery */}
                     <div className="flex items-center justify-between text-gray-700">
                       <span>Collection & Delivery</span>
-                      <span className="font-bold text-emerald-600 uppercase tracking-wider text-xs">FREE</span>
+                      {collectionDeliveryFee === 0 ? (
+                        <span className="font-bold text-emerald-600 uppercase tracking-wider text-xs">FREE</span>
+                      ) : (
+                        <span className="font-bold text-navy">£{collectionDeliveryFee.toFixed(2)}</span>
+                      )}
                     </div>
+
+                    {/* Taxes / VAT */}
+                    {taxAmount > 0 && (
+                      <div className="flex items-center justify-between text-gray-700">
+                        <span>VAT ({pricingCharges.taxRate}%)</span>
+                        <span className="font-bold text-navy">£{taxAmount.toFixed(2)}</span>
+                      </div>
+                    )}
+
+                    {/* Custom Extra Charges */}
+                    {pricingCharges.otherCharges
+                      ?.filter((c: any) => c.enabled)
+                      .map((c: any) => {
+                        const feeAmt = c.type === 'percentage' ? (subtotal * c.amount) / 100 : c.amount;
+                        return (
+                          <div key={c.id} className="flex items-center justify-between text-gray-700">
+                            <span>{c.name}</span>
+                            <span className="font-bold text-navy">£{Number(feeAmt).toFixed(2)}</span>
+                          </div>
+                        );
+                      })}
 
                     {/* Driver Tip */}
                     {driverTip > 0 && (
@@ -1588,7 +1736,13 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                     {/* Promo Discount */}
                     {discountAmount > 0 && (
                       <div className="flex items-center justify-between text-emerald-600">
-                        <span>Promo discount ({appliedDiscount}%)</span>
+                        <span>
+                          Promo discount (
+                          {couponDiscountType === 'fixed'
+                            ? `£${appliedDiscount.toFixed(2)}`
+                            : `${appliedDiscount}%`}
+                          )
+                        </span>
                         <span className="font-bold">-£{discountAmount.toFixed(2)}</span>
                       </div>
                     )}
@@ -1610,9 +1764,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       <button
                         type="button"
                         onClick={handleApplyCoupon}
-                        className="px-6 py-2.5 bg-navy hover:bg-[#072465] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer shrink-0"
+                        disabled={couponApplying}
+                        className="px-6 py-2.5 bg-navy hover:bg-[#072465] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer shrink-0 disabled:opacity-50"
                       >
-                        Enter
+                        {couponApplying ? 'Applying...' : 'Enter'}
                       </button>
                     </div>
                     {couponError && <p className="text-[11px] text-red-500 font-medium mt-1">{couponError}</p>}

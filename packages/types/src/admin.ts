@@ -10,6 +10,7 @@ export type AdminViewTab =
   | 'services'
   | 'areas'
   | 'finance'
+  | 'coupons_charges'
   | 'complaints'
   | 'reports'
   | 'settings'
@@ -17,6 +18,45 @@ export type AdminViewTab =
   | 'qc'
   | 'history'
   | 'profile';
+
+export interface Coupon {
+  id: string;
+  code: string;
+  description: string;
+  discountType: 'percentage' | 'fixed';
+  discountValue: number;
+  minOrderAmount: number;
+  maxDiscountAmount?: number;
+  expiresAt?: string | null;
+  usageLimit?: number | null;
+  usageCount: number;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CustomChargeItem {
+  id: string;
+  name: string;
+  type: 'fixed' | 'percentage';
+  amount: number;
+  enabled: boolean;
+  description?: string;
+}
+
+export interface PricingCharges {
+  id?: string;
+  taxRate: number; // percentage (e.g. 20 for 20% VAT)
+  taxEnabled: boolean;
+  deliveryCharge: number; // GBP
+  freeDeliveryThreshold: number; // GBP
+  smallOrderFee: number; // GBP
+  smallOrderThreshold: number; // GBP
+  serviceFee: number; // GBP
+  otherCharges: CustomChargeItem[];
+  updated_at?: string;
+  updated_by?: string;
+}
 
 export interface BusinessLocation {
   id: string;
@@ -276,6 +316,16 @@ export interface CustomerCRM {
   flagsCount: number;
   incidentsCount: number;
   internalNotesCount: number;
+  address?: string;
+  createdAt?: string;
+  recentOrders?: Array<{
+    id: string;
+    orderNumber?: string;
+    status: string;
+    total: number;
+    date?: string;
+    service?: string;
+  }>;
 }
 
 export interface CustomerFlag {

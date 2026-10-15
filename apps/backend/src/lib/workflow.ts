@@ -339,7 +339,14 @@ export function validateOtpAttempt(
         return { valid: false, error: 'OTP has expired. Please request a new one.' };
     }
 
-    if (submittedOtp.trim() !== expectedOtp.trim()) {
+    const subClean = submittedOtp ? submittedOtp.trim() : '';
+    const expClean = expectedOtp ? expectedOtp.trim() : '';
+
+    const subBuf = Buffer.from(subClean);
+    const expBuf = Buffer.from(expClean);
+    const isMatch = subBuf.length === expBuf.length && crypto.timingSafeEqual(subBuf, expBuf);
+
+    if (!isMatch) {
         const remaining = maxAttempts - (attempts + 1);
         return {
             valid: false,

@@ -6,7 +6,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET && process.env.NODE_ENV === 'production') {
     throw new Error('FATAL: JWT_SECRET environment variable is not set. Application cannot start securely.');
 }
-const SECRET = JWT_SECRET || 'laundry2u26-dev-fallback-secret-change-in-prod';
+const SECRET = JWT_SECRET || crypto.randomBytes(32).toString('hex');
 
 // ---------------------------------------------------------------------------
 // Cryptographic Password Hashing (OWASP-Compliant PBKDF2 with Per-User Salt)
@@ -88,12 +88,21 @@ function base64UrlDecode(str: string): string {
 
 export interface JwtPayload {
     sub: string;
+    auth0UserId?: string;
     email?: string;
+    name?: string;
     role?: string;
+    roles?: string[];
+    permissions?: string[];
     iat?: number;
     exp?: number;
+    iss?: string;
+    aud?: string | string[];
+    emailVerified?: boolean;
+    isLegacyToken?: boolean;
     [key: string]: any;
 }
+
 
 // ---------------------------------------------------------------------------
 // JWT Signing
@@ -245,58 +254,376 @@ export async function isTokenRevokedAsync(token: string): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// JWT Verification
+// Primary Auth0 JWKS Key Fetching & Caching (Production Authentication)
 // ---------------------------------------------------------------------------
 
+interface Auth0Jwk {
+    kty: string;
+    use?: string;
+    n: string;
+    e: string;
+    kid: string;
+    alg?: string;
+}
+
+interface Auth0JwksResponse {
+    keys: Auth0Jwk[];
+}
+
+interface CachedKey {
+    key: crypto.KeyObject;
+    fetchedAt: number;
+}
+
+const AUTH0_KEY_CACHE = new Map<string, CachedKey>();
+const AUTH0_KEY_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour key cache
+let lastJwksFetchTime = 0;
+const MIN_JWKS_FETCH_INTERVAL_MS = 10000; // Throttle JWKS network requests
+
+function getAuth0Domain(): string {
+    const raw = process.env.AUTH0_DOMAIN || process.env.NEXT_PUBLIC_AUTH0_DOMAIN || '';
+    return raw.replace(/^https?:\/\//, '').replace(/\/$/, '');
+}
+
 /**
- * Verifies a JWT and returns the decoded payload, or null if invalid, expired, or revoked.
+ * Fetches and caches the JSON Web Key Set (JWKS) from Auth0.
  */
-export function verifyJwt(token: string): JwtPayload | null {
+async function fetchAuth0Jwks(force = false): Promise<void> {
+    const domain = getAuth0Domain();
+    if (!domain) {
+        return;
+    }
+
+    const now = Date.now();
+    if (!force && now - lastJwksFetchTime < MIN_JWKS_FETCH_INTERVAL_MS) {
+        return;
+    }
+    lastJwksFetchTime = now;
+
+    const jwksUrl = `https://${domain}/.well-known/jwks.json`;
+
     try {
-        if (isTokenRevoked(token)) {
-            return null; // Revoked token
+        const res = await fetch(jwksUrl, {
+            headers: { 'User-Agent': 'Laundelle-Backend-Auth/1.0' },
+            cache: 'no-store'
+        });
+        if (!res.ok) {
+            console.error(`[Auth0 JWKS] Failed to fetch JWKS from ${jwksUrl}: HTTP ${res.status}`);
+            return;
         }
+        const data: Auth0JwksResponse = await res.json();
+        if (!Array.isArray(data?.keys)) return;
 
-        const parts = token.split('.');
-        if (parts.length !== 3) return null;
-
-        const [encodedHeader, encodedPayload, signature] = parts;
-        const signingInput = `${encodedHeader}.${encodedPayload}`;
-
-        const expectedSig = crypto
-            .createHmac('sha256', SECRET)
-            .update(signingInput)
-            .digest('base64url');
-
-        // Constant-time comparison to prevent timing attacks
-        const sigBuf = Buffer.from(signature);
-        const expBuf = Buffer.from(expectedSig);
-        if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
-            return null;
+        for (const jwk of data.keys) {
+            if (jwk.kty === 'RSA' && jwk.n && jwk.e && jwk.kid) {
+                try {
+                    const keyObject = crypto.createPublicKey({
+                        key: {
+                            kty: jwk.kty,
+                            n: jwk.n,
+                            e: jwk.e
+                        },
+                        format: 'jwk'
+                    });
+                    AUTH0_KEY_CACHE.set(jwk.kid, { key: keyObject, fetchedAt: now });
+                } catch (keyErr) {
+                    console.error(`[Auth0 JWKS] Failed to parse key for kid ${jwk.kid}:`, keyErr);
+                }
+            }
         }
+    } catch (err) {
+        console.error('[Auth0 JWKS] Network error fetching JWKS:', err);
+    }
+}
 
-        const payload: JwtPayload = JSON.parse(base64UrlDecode(encodedPayload));
-
-        // Check expiry
-        if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
-            return null; // Expired
+/**
+ * Retrieves an Auth0 RSA public key by key ID (kid).
+ */
+async function getAuth0PublicKey(kid?: string): Promise<crypto.KeyObject | null> {
+    if (!kid) {
+        if (AUTH0_KEY_CACHE.size === 0) {
+            await fetchAuth0Jwks(true);
         }
+        const first = AUTH0_KEY_CACHE.values().next().value;
+        return first ? first.key : null;
+    }
 
-        return payload;
+    const cached = AUTH0_KEY_CACHE.get(kid);
+    if (cached && Date.now() - cached.fetchedAt < AUTH0_KEY_CACHE_TTL_MS) {
+        return cached.key;
+    }
+
+    await fetchAuth0Jwks(true);
+    const updated = AUTH0_KEY_CACHE.get(kid);
+    return updated ? updated.key : null;
+}
+
+/**
+ * Synchronous cached key lookup (returns null if key not yet cached).
+ */
+function getAuth0PublicKeySync(kid?: string): crypto.KeyObject | null {
+    if (!kid) {
+        const first = AUTH0_KEY_CACHE.values().next().value;
+        return first ? first.key : null;
+    }
+    return AUTH0_KEY_CACHE.get(kid)?.key || null;
+}
+
+// ---------------------------------------------------------------------------
+// Token Parsing & Claim Normalization
+// ---------------------------------------------------------------------------
+
+interface DecodedTokenHeader {
+    alg: string;
+    typ?: string;
+    kid?: string;
+}
+
+function parseTokenParts(token: string): {
+    header: DecodedTokenHeader;
+    encodedHeader: string;
+    encodedPayload: string;
+    signature: string;
+    signingInput: string;
+} | null {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [encodedHeader, encodedPayload, signature] = parts;
+    try {
+        const header: DecodedTokenHeader = JSON.parse(base64UrlDecode(encodedHeader));
+        if (!header.alg) return null;
+        return {
+            header,
+            encodedHeader,
+            encodedPayload,
+            signature,
+            signingInput: `${encodedHeader}.${encodedPayload}`
+        };
     } catch {
         return null;
     }
 }
 
 /**
- * Asynchronously verifies a JWT with authoritative MongoDB token revocation checking.
+ * Normalizes an Auth0 decoded payload into Laundelle's standard JwtPayload.
+ */
+function normalizeAuth0Payload(raw: any): JwtPayload {
+    const roles: string[] = raw['https://laundelle.co.uk/roles'] || raw['https://laundelle/roles'] || raw.roles || [];
+    const permissions: string[] = raw.permissions || raw['https://laundelle.co.uk/permissions'] || [];
+    const directRole = roles[0] || raw['https://laundelle.co.uk/role'] || raw.role || 'customer';
+    const emailVerified = typeof raw.email_verified === 'boolean'
+        ? raw.email_verified
+        : (raw.email_verified !== undefined ? Boolean(raw.email_verified) : undefined);
+
+    return {
+        ...raw,
+        sub: raw.sub,
+        auth0UserId: raw.sub,
+        email: raw.email ? String(raw.email).toLowerCase().trim() : undefined,
+        name: raw.name || raw.nickname || (raw.email ? String(raw.email).split('@')[0] : 'User'),
+        role: directRole,
+        roles,
+        permissions,
+        emailVerified,
+        isLegacyToken: false
+    };
+}
+
+/**
+ * Primary Production Verification: Verifies Auth0 RS256 JWT using JWKS.
+ */
+async function verifyAuth0Rs256Async(token: string): Promise<JwtPayload | null> {
+    const parsed = parseTokenParts(token);
+    if (!parsed || parsed.header.alg !== 'RS256') return null;
+
+    try {
+        const publicKey = await getAuth0PublicKey(parsed.header.kid);
+        if (!publicKey) {
+            console.error('[Auth0 Verify] Public key not found for kid:', parsed.header.kid);
+            return null;
+        }
+
+        const isSignatureValid = crypto.verify(
+            'RSA-SHA256',
+            Buffer.from(parsed.signingInput, 'utf8'),
+            publicKey,
+            Buffer.from(parsed.signature, 'base64url')
+        );
+
+        if (!isSignatureValid) {
+            console.warn('[Auth0 Verify] Invalid RSA-SHA256 signature');
+            return null;
+        }
+
+        const rawPayload = JSON.parse(base64UrlDecode(parsed.encodedPayload));
+        const nowSec = Math.floor(Date.now() / 1000);
+
+        // Check expiration with 60-second clock skew tolerance
+        if (rawPayload.exp && nowSec > rawPayload.exp + 60) {
+            return null; // Expired
+        }
+
+        // Check not-before claim with 60-second clock skew tolerance
+        if (rawPayload.nbf && nowSec < rawPayload.nbf - 60) {
+            return null; // Not yet valid
+        }
+
+        // Validate issuer
+        const expectedDomain = getAuth0Domain();
+        if (rawPayload.iss) {
+            const normalizedIss = rawPayload.iss.replace(/^https?:\/\//, '').replace(/\/$/, '');
+            if (normalizedIss !== expectedDomain) {
+                console.warn(`[Auth0 Verify] Issuer mismatch: expected ${expectedDomain}, got ${normalizedIss}`);
+                return null;
+            }
+        }
+
+        // Validate audience against explicitly configured backend audiences.
+        // In Auth0 architecture:
+        // - Dedicated API access tokens carry the backend API identifier (AUTH0_AUDIENCE or AUTH0_API_IDENTIFIER).
+        // - Frontend SPA user tokens carry the client ID (AUTH0_CLIENT_ID or NEXT_PUBLIC_AUTH0_CLIENT_ID).
+        // Tokens issued for unrelated APIs or Auth0 Management API (/api/v2/) are strictly rejected.
+        const allowedAudiences = [
+            process.env.AUTH0_AUDIENCE,
+            process.env.AUTH0_API_IDENTIFIER,
+            process.env.AUTH0_CLIENT_ID,
+            process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID,
+        ].filter(Boolean) as string[];
+
+        if (allowedAudiences.length > 0) {
+            if (!rawPayload.aud) {
+                console.warn('[Auth0 Verify] Token is missing required audience claim');
+                return null;
+            }
+            const tokenAudiences = Array.isArray(rawPayload.aud) ? rawPayload.aud : [rawPayload.aud];
+            const hasValidAudience = tokenAudiences.some((aud: string) => allowedAudiences.includes(aud));
+            if (!hasValidAudience) {
+                console.warn(`[Auth0 Verify] Audience mismatch: token audience [${tokenAudiences.join(', ')}] does not match allowed audiences [${allowedAudiences.join(', ')}]`);
+                return null;
+            }
+        }
+
+        return normalizeAuth0Payload(rawPayload);
+    } catch (err) {
+        console.error('[Auth0 Verify] Verification error:', err);
+        return null;
+    }
+}
+
+/**
+ * @deprecated LEGACY HS256 VERIFICATION ONLY.
+ * Kept strictly for backwards compatibility during migration.
+ * Scheduled for removal once Phase 5 verification is complete.
+ */
+function verifyLegacyHs256(token: string): JwtPayload | null {
+    const parsed = parseTokenParts(token);
+    if (!parsed || parsed.header.alg !== 'HS256') return null;
+
+    if (process.env.NODE_ENV !== 'test') {
+        console.warn('[AUTH DEPRECATION] Received deprecated HS256 JWT. Migration to Auth0 RS256 is in progress.');
+    }
+
+    try {
+        const expectedSig = crypto
+            .createHmac('sha256', SECRET)
+            .update(parsed.signingInput)
+            .digest('base64url');
+
+        const sigBuf = Buffer.from(parsed.signature);
+        const expBuf = Buffer.from(expectedSig);
+        if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+            return null;
+        }
+
+        const payload: JwtPayload = JSON.parse(base64UrlDecode(parsed.encodedPayload));
+
+        if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
+            return null; // Expired
+        }
+
+        payload.isLegacyToken = true;
+        return payload;
+    } catch {
+        return null;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JWT Verification Interface
+// ---------------------------------------------------------------------------
+
+/**
+ * Primary Asynchronous Token Verification.
+ * Prioritizes Auth0 RS256 JWKS verification; falls back to legacy HS256 for backwards compatibility.
  */
 export async function verifyJwtAsync(token: string): Promise<JwtPayload | null> {
+    if (!token) return null;
+
     try {
         if (await isTokenRevokedAsync(token)) {
             return null;
         }
-        return verifyJwt(token);
+
+        const parsed = parseTokenParts(token);
+        if (!parsed) return null;
+
+        // 1. Primary path: Auth0 RS256 token
+        if (parsed.header.alg === 'RS256') {
+            return await verifyAuth0Rs256Async(token);
+        }
+
+        // 2. Legacy fallback path: deprecated HS256 token
+        if (parsed.header.alg === 'HS256') {
+            return verifyLegacyHs256(token);
+        }
+
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Synchronous Token Verification (Supports legacy HS256 and cached RS256 keys).
+ * For non-blocking endpoints or synchronous caller compatibility.
+ */
+export function verifyJwt(token: string): JwtPayload | null {
+    if (!token) return null;
+
+    try {
+        if (isTokenRevoked(token)) {
+            return null;
+        }
+
+        const parsed = parseTokenParts(token);
+        if (!parsed) return null;
+
+        // Try cached RS256 key if present
+        if (parsed.header.alg === 'RS256') {
+            const cachedKey = getAuth0PublicKeySync(parsed.header.kid);
+            if (cachedKey) {
+                const isValid = crypto.verify(
+                    'RSA-SHA256',
+                    Buffer.from(parsed.signingInput, 'utf8'),
+                    cachedKey,
+                    Buffer.from(parsed.signature, 'base64url')
+                );
+                if (isValid) {
+                    const rawPayload = JSON.parse(base64UrlDecode(parsed.encodedPayload));
+                    if (!rawPayload.exp || Math.floor(Date.now() / 1000) <= rawPayload.exp + 60) {
+                        return normalizeAuth0Payload(rawPayload);
+                    }
+                }
+            }
+            return null;
+        }
+
+        // Legacy fallback
+        if (parsed.header.alg === 'HS256') {
+            return verifyLegacyHs256(token);
+        }
+
+        return null;
     } catch {
         return null;
     }

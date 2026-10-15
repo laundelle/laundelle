@@ -16,7 +16,15 @@ export const GenerateQRModal: React.FC<GenerateQRModalProps> = ({ isOpen, onClos
     if (!isOpen || !order) return null;
 
     const orderId = order.id || order._id || order.orderCode || 'ORD-UNKNOWN';
-    const customerName = order.customer_name || order.customerName || order.user_name || 'Valued Customer';
+    const customerName = (order.customer_name && order.customer_name !== 'Valued Customer' && order.customer_name !== 'Customer')
+        ? order.customer_name
+        : (order.customerName && order.customerName !== 'Valued Customer' && order.customerName !== 'Customer')
+        ? order.customerName
+        : (order.contactDetails ? `${order.contactDetails.firstName || ''} ${order.contactDetails.lastName || ''}`.trim() : '')
+        || order.user_name
+        || order.customer?.name
+        || order.userName
+        || 'Customer';
     const serviceName = order.items?.[0]?.name || (order.service ? order.service : 'Laundry Service');
 
     const handlePrint = () => {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Leaf,
   Truck,
@@ -25,10 +25,20 @@ import {
   Tag
 } from 'lucide-react';
 import { ActiveTab, ServiceItem } from '@laundelle/types';
-import { BeforeAfterSlider } from './BeforeAfterSlider';
-import { AppDownloadBanner } from './AppDownloadBanner';
-import { checkPostcodeCoverage, joinWaitingList } from '@laundelle/api-client';
+import dynamic from 'next/dynamic';
+
+const BeforeAfterSlider = dynamic(
+  () => import('./BeforeAfterSlider').then((mod) => mod.BeforeAfterSlider),
+  { ssr: true }
+);
+const AppDownloadBanner = dynamic(
+  () => import('./AppDownloadBanner').then((mod) => mod.AppDownloadBanner),
+  { ssr: true }
+);
+import { checkPostcodeCoverage, joinWaitingList, dbFetchActiveDistricts } from '@laundelle/api-client';
 import { ScrollReveal } from '@laundelle/ui';
+import Image from 'next/image';
+import { LAUNDELLE_IMAGES, LAUNDELLE_SERVICE_IMAGES, getOptimizedImageUrl } from '@laundelle/config';
 
 interface HomeViewProps {
   onNavigate: (tab: ActiveTab) => void;
@@ -69,6 +79,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [waitlistEmail, setWaitlistEmail] = useState('');
   const [waitlistSubmitted, setWaitlistSubmitted] = useState(false);
   const [waitlistSubmitting, setWaitlistSubmitting] = useState(false);
+  const [activeDistricts, setActiveDistricts] = useState<string[]>([]);
+
+  useEffect(() => {
+    dbFetchActiveDistricts().then(districts => {
+      if (Array.isArray(districts) && districts.length > 0) {
+        setActiveDistricts(districts);
+      }
+    });
+  }, []);
 
   const handleCheckPostcode = async (codeToCheck?: string) => {
     const code = (codeToCheck !== undefined ? codeToCheck : postcodeQuery).trim();
@@ -219,26 +238,37 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
             {/* Mobile Hero Image Showcase (Visible only on mobile/tablet screens) */}
             <div className="block md:hidden mt-4 w-full rounded-2xl overflow-hidden shadow-md border border-gray-100 relative h-[210px] xs:h-[250px] sm:h-[300px]">
-              <img
-                src="/laundelle-hero-right.png"
-                alt="Laundelle specialist folding clean garments"
-                className="w-full h-full object-cover object-top"
+              <Image
+                src={getOptimizedImageUrl(LAUNDELLE_IMAGES.heroRight, { width: 750, quality: 'auto', format: 'auto' })}
+                alt={LAUNDELLE_IMAGES.heroRight.alt}
+                fill
+                priority
+                unoptimized
+                sizes="(max-width: 768px) 100vw, 50vw"
+                className="object-cover object-top"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent pointer-events-none" />
             </div>
           </div>
         </div>
 
-        {/* Desktop Hero Background Image (Visible on md and larger screens) with Left 10% Opacity Fade Effect */}
+        {/* Desktop Hero Image (Visible on md and larger screens) with Left 10% Opacity Fade Effect */}
         <div
-          className="hidden md:block absolute right-0 top-0 z-[2] h-full w-[58%] lg:w-[61%] bg-cover bg-center bg-no-repeat pointer-events-none"
+          className="hidden md:block absolute right-0 top-0 z-[2] h-full w-[58%] lg:w-[61%] overflow-hidden pointer-events-none"
           style={{
-            backgroundImage: "url('/laundelle-hero-right.png')",
             maskImage: 'linear-gradient(to right, rgba(0,0,0,0) 0%, rgba(0,0,0,0.18) 10%, rgba(0,0,0,0.85) 25%, rgba(0,0,0,1) 40%)',
             WebkitMaskImage: 'linear-gradient(to right, rgba(0,0,0,0) 0%, rgba(0,0,0,0.18) 10%, rgba(0,0,0,0.85) 25%, rgba(0,0,0,1) 40%)',
           }}
-          aria-label="Laundry professional handling freshly cleaned garments"
         >
+          <Image
+            src={getOptimizedImageUrl(LAUNDELLE_IMAGES.heroRight, { width: 1200, quality: 'auto', format: 'auto' })}
+            alt={LAUNDELLE_IMAGES.heroRight.alt}
+            fill
+            priority
+            unoptimized
+            sizes="(max-width: 1024px) 58vw, 61vw"
+            className="object-cover object-center pointer-events-none"
+          />
           {/* Linear fade overlay reinforcing lower opacity on left 10% */}
           <div className="absolute inset-0 bg-gradient-to-r from-[#f9fbff] via-[#f9fbff]/60 via-10% to-transparent pointer-events-none" />
         </div>
@@ -278,9 +308,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
               {/* Mobile Phone Only: 3D Delivery Driver Illustration ABOVE the Input Box */}
               <div className="block md:hidden my-6 w-full max-w-[320px] sm:max-w-[380px] mx-auto">
-                <img
-                  src="/postcode-driver-illustration.png"
-                  alt="Laundelle Delivery Driver and Van"
+                <Image
+                  src={getOptimizedImageUrl(LAUNDELLE_IMAGES.postcodeDriver)}
+                  alt={LAUNDELLE_IMAGES.postcodeDriver.alt}
+                  width={380}
+                  height={380}
+                  loading="lazy"
                   className="w-full h-auto object-contain select-none pointer-events-none drop-shadow-md"
                 />
               </div>
@@ -328,27 +361,32 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </div>
               </form>
 
-              {/* Supported Area Examples Directly Below Input */}
-              <div className="mt-5 sm:mt-6 flex items-center gap-2 flex-wrap text-xs sm:text-sm justify-center md:justify-start">
-                <span className="font-semibold text-gray-500">Supported Area Examples:</span>
-                {['SW1A 1AA', 'PR1 1AA', 'W1D 4AA', 'EC1A 1BB', 'B1 1AA'].map((sample) => (
-                  <button
-                    key={sample}
-                    type="button"
-                    onClick={() => handleCheckPostcode(sample)}
-                    className="px-3.5 sm:px-4 py-1.5 rounded-full bg-[#eaf2ff] hover:bg-[#d8e7ff] text-[#0066f5] font-bold text-xs sm:text-sm transition-colors cursor-pointer active:scale-95"
-                  >
-                    {sample}
-                  </button>
-                ))}
-              </div>
+              {/* Dynamically Loaded Supported Areas */}
+              {activeDistricts.length > 0 && (
+                <div className="mt-5 sm:mt-6 flex items-center gap-2 flex-wrap text-xs sm:text-sm justify-center md:justify-start">
+                  <span className="font-semibold text-gray-500">Active Coverage Areas:</span>
+                  {activeDistricts.slice(0, 6).map((district) => (
+                    <button
+                      key={district}
+                      type="button"
+                      onClick={() => handleCheckPostcode(district)}
+                      className="px-3.5 sm:px-4 py-1.5 rounded-full bg-[#eaf2ff] hover:bg-[#d8e7ff] text-[#0066f5] font-bold text-xs sm:text-sm transition-colors cursor-pointer active:scale-95"
+                    >
+                      {district}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Right Column: Tablets and Big Screens (PC & Laptop) Image on the Right Side Only */}
             <div className="hidden md:flex md:w-5/12 lg:w-2/5 justify-center items-center pl-2 lg:pl-6">
-              <img
-                src="/postcode-driver-illustration.png"
-                alt="Laundelle Delivery Driver and Van"
+              <Image
+                src={getOptimizedImageUrl(LAUNDELLE_IMAGES.postcodeDriver)}
+                alt={LAUNDELLE_IMAGES.postcodeDriver.alt}
+                width={520}
+                height={520}
+                loading="lazy"
                 className="w-full max-w-[420px] lg:max-w-[480px] xl:max-w-[520px] h-auto object-contain select-none pointer-events-none drop-shadow-xl"
               />
             </div>
@@ -439,10 +477,19 @@ export const HomeView: React.FC<HomeViewProps> = ({
                       >
                         <div className="space-y-1.5">
                           <div className="w-full h-20 rounded-xl bg-blue-50/50 overflow-hidden relative">
-                            <img
-                              src={svc.image || '/Images/Wash + Dry + Fold.png'}
+                            <Image
+                              src={
+                                svc.image && svc.image.startsWith('http')
+                                  ? svc.image
+                                  : getOptimizedImageUrl(
+                                      LAUNDELLE_SERVICE_IMAGES[svc.name] || LAUNDELLE_SERVICE_IMAGES['Wash + Dry + Fold']
+                                    )
+                              }
                               alt={svc.name}
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              fill
+                              sizes="160px"
+                              loading="lazy"
+                              className="object-cover group-hover:scale-105 transition-transform duration-300"
                             />
                           </div>
                           <div>
@@ -580,10 +627,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 className="w-full group bg-white rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col hover:-translate-y-1.5 border border-gray-100/80 h-full justify-between"
               >
                 <div className="h-48 sm:h-52 lg:h-44 xl:h-48 overflow-hidden relative shrink-0">
-                  <img
+                  <Image
                     src={service.image}
                     alt={service.name}
-                    className="w-full h-full object-cover group-hover:scale-108 transition-transform duration-500"
+                    fill
+                    loading="lazy"
+                    sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+                    className="object-cover group-hover:scale-108 transition-transform duration-500"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent opacity-70" />
                   {service.popular && (
@@ -761,10 +811,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
               {/* Main Image Card */}
               <div className="relative z-10 w-full max-w-[420px] rounded-3xl overflow-hidden shadow-2xl border-4 border-white ring-1 ring-gray-100 bg-white group">
                 <div className="w-full h-[360px] sm:h-[440px] relative overflow-hidden">
-                  <img
+                  <Image
                     src="https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&w=1000&q=80"
                     alt="Freshly Laundered Luxury Garments"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                    fill
+                    loading="lazy"
+                    sizes="(max-width: 768px) 100vw, 420px"
+                    className="object-cover group-hover:scale-105 transition-transform duration-700"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent pointer-events-none" />
 

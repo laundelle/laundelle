@@ -14,6 +14,9 @@ export interface AuthSession {
 }
 
 export function parseCurrentRoute(): { rolePath: string; subPath: string } {
+  if (typeof window === 'undefined') {
+    return { rolePath: 'customer', subPath: 'home' };
+  }
   const hash = window.location.hash.replace('#', '') || '/customer/home';
   const parts = hash.split('/').filter(Boolean);
 
@@ -24,5 +27,7 @@ export function parseCurrentRoute(): { rolePath: string; subPath: string } {
 }
 
 export function navigateToRoute(rolePath: string, subPath: string = 'home') {
-  window.location.hash = `/${rolePath}/${subPath}`;
+  if (typeof window !== 'undefined') {
+    window.location.hash = `/${rolePath}/${subPath}`;
+  }
 }

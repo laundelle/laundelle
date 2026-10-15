@@ -7,17 +7,20 @@
     "build": "next build",
     "start": "next start -p 4000",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "migrate:canonical": "npx tsx scripts/migrateCanonicalIds.ts",
+    "auth0:bootstrap-admin": "npx tsx scripts/bootstrap-super-admin.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
+    "@laundelle/auth": "workspace:*",
     "@laundelle/config": "workspace:*",
     "@laundelle/ids": "workspace:*",
     "@laundelle/types": "workspace:*",
     "@laundelle/utils": "workspace:*",
     "@laundelle/validations": "workspace:*",
     "mongodb": "^6.3.0",
-    "next": "^15.1.0",
+    "next": "^15.5.27",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "stripe": "^22.5.0",

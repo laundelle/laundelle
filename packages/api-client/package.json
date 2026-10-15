@@ -9,7 +9,8 @@
   },
   "dependencies": {
     "@laundelle/types": "workspace:*",
-    "@laundelle/auth": "workspace:*"
+    "@laundelle/auth": "workspace:*",
+    "@laundelle/config": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

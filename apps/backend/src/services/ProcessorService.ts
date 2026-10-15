@@ -10,18 +10,48 @@ import { BadRequestError, NotFoundError, ForbiddenError } from '@/lib/api';
 import { matchesPostcode, assertValidTransition } from '@/lib/workflow';
 import crypto from 'crypto';
 import { generateBagId, generateOrderItemId, buildEntityLookupQuery, generateId, generatePaymentId } from '@laundelle/ids';
+import { normalizeRole } from '@laundelle/auth';
+import { OrderCustomerEnrichmentService } from './OrderCustomerEnrichmentService';
 
 export class ProcessorService {
+    public static userFilter(userId: string) {
+        const idStr = String(userId || '').trim();
+        const orConditions: any[] = [
+            { _id: idStr },
+            { id: idStr },
+            { publicId: idStr },
+            { staffId: idStr },
+            { email: idStr.toLowerCase() },
+            { auth0UserId: idStr },
+            { auth0_sub: idStr }
+        ];
+        if (ObjectId.isValid(idStr)) {
+            orConditions.push({ _id: new ObjectId(idStr) });
+        }
+        return { $or: orConditions };
+    }
+
+    public static async findProcessorUser(processorId: string) {
+        if (!processorId) return null;
+        const db = await getDb();
+        return await db.collection('users').findOne(this.userFilter(processorId));
+    }
+
+    public static isAuthorizedProcessorRole(role?: string | null): boolean {
+        const norm = normalizeRole(role);
+        return norm === 'processor' || norm === 'plant_manager' || norm === 'super_admin';
+    }
+
     static async getJobs(processorId: string) {
         const db = await getDb();
-        const processor = await db.collection('users').findOne({ _id: (ObjectId.isValid(processorId) ? new ObjectId(processorId) : processorId) as any });
+        const processor = await this.findProcessorUser(processorId);
         
-        if (!processor || (processor.role !== 'processor' && processor.role !== 'admin' && processor.role !== 'super_admin')) {
+        if (!processor || !this.isAuthorizedProcessorRole(processor.role)) {
             throw new ForbiddenError('Access denied: Processor account required.');
         }
 
-        const isProcessor = processor.role === 'processor';
-        let plantId = processor.plant_id;
+        const isProcessor = normalizeRole(processor.role) === 'processor';
+        let plantId = processor.plantId || processor.plant_id;
 
         if (isProcessor && !plantId) {
             throw new ForbiddenError('Access denied: Processor is not assigned to any laundry plant. Please contact your Plant Manager.');
@@ -103,30 +133,7 @@ export class ProcessorService {
 
         // Enrich customer names and redact sensitive OTPs
         const enrichOrders = async (ordersList: any[]) => {
-            const missingCustomerIds = ordersList
-                .filter(o => (!o.customerName || o.customerName === 'Customer' || o.customerName === 'Valued Customer') && o.customer_id)
-                .map(o => o.customer_id);
-
-            if (missingCustomerIds.length > 0) {
-                const uniqueIds = Array.from(new Set(missingCustomerIds));
-                const customers = await db.collection('users').find({
-                    _id: { $in: uniqueIds.map((cid: string) => ObjectId.isValid(cid) ? new ObjectId(cid) : cid) as any }
-                }).project({ _id: 1, full_name: 1, email: 1, phone: 1 }).toArray();
-
-                const customerMap = new Map();
-                customers.forEach(c => {
-                    customerMap.set(String(c._id), c);
-                });
-
-                ordersList.forEach(o => {
-                    if (o.customer_id && customerMap.has(String(o.customer_id))) {
-                        const cust = customerMap.get(String(o.customer_id));
-                        o.customerName = cust.full_name || o.customerName || 'Valued Customer';
-                        o.customerEmail = cust.email || o.customerEmail;
-                        o.customerPhone = cust.phone || o.customerPhone;
-                    }
-                });
-            }
+            await OrderCustomerEnrichmentService.enrichOrders(ordersList, db);
 
             // Redact OTPs and PINs from processor views
             ordersList.forEach(o => {
@@ -165,15 +172,15 @@ export class ProcessorService {
 
     static async updateAvailability(processorId: string, availability: 'available' | 'busy' | 'offline') {
         const db = await getDb();
-        const processor = await db.collection('users').findOne({ _id: (ObjectId.isValid(processorId) ? new ObjectId(processorId) : processorId) as any });
+        const processor = await this.findProcessorUser(processorId);
         
-        if (!processor || processor.role !== 'processor') {
+        if (!processor || normalizeRole(processor.role) !== 'processor') {
             throw new Error('Access denied: Processor account required.');
         }
 
         const now = new Date().toISOString();
         await db.collection('users').updateOne(
-            { _id: (ObjectId.isValid(processorId) ? new ObjectId(processorId) : processorId) as any },
+            { _id: processor._id },
             { $set: { availability, updated_at: now } }
         );
 
@@ -297,17 +304,9 @@ export class ProcessorService {
         }
 
         if (order) {
+            await OrderCustomerEnrichmentService.enrichOrder(order, db);
             let customerName = order.customerName || order.customer_name;
-            let customerPhone = order.customerPhone || order.phone;
-            if ((!customerName || customerName === 'Customer') && order.customer_id) {
-                const cust = await db.collection('users').findOne({
-                    _id: (ObjectId.isValid(order.customer_id) ? new ObjectId(order.customer_id) : order.customer_id) as any
-                });
-                if (cust) {
-                    customerName = cust.full_name || customerName;
-                    customerPhone = cust.phone || customerPhone;
-                }
-            }
+            let customerPhone = order.customerPhone || order.customer_phone || order.phone;
 
             // Resolve plant information
             let orderPlantName = order.plantName || order.plant_name || '';
@@ -323,20 +322,23 @@ export class ProcessorService {
             let processorPlantName = '';
 
             if (processorId) {
-                const processor = await db.collection('users').findOne({
-                    _id: (ObjectId.isValid(processorId) ? new ObjectId(processorId) : processorId) as any
-                });
+                const processor = await this.findProcessorUser(processorId);
                 if (processor) {
-                    processorPlantId = processor.plant_id ? String(processor.plant_id) : null;
-                    if (processor.plant_id) {
+                    processorPlantId = processor.plantId ? String(processor.plantId) : (processor.plant_id ? String(processor.plant_id) : null);
+                    if (processorPlantId) {
                         const procPlant = await db.collection('plants').findOne({
-                            _id: (ObjectId.isValid(processor.plant_id) ? new ObjectId(processor.plant_id) : processor.plant_id) as any
+                            $or: [
+                                { _id: processorPlantId as any },
+                                { id: processorPlantId },
+                                ...(ObjectId.isValid(processorPlantId) ? [{ _id: new ObjectId(processorPlantId) }] : [])
+                            ]
                         });
                         if (procPlant) processorPlantName = procPlant.name;
                     }
 
                     // Check if order is assigned to a different plant
-                    if (processor.role === 'processor' && processorPlantId && order.plant_id) {
+                    const normRole = normalizeRole(processor.role);
+                    if (normRole === 'processor' && processorPlantId && order.plant_id) {
                         if (String(order.plant_id).trim() !== String(processorPlantId).trim()) {
                             plantMismatch = true;
                         }
@@ -384,7 +386,7 @@ export class ProcessorService {
                 processorPlantName: processorPlantName || processorPlantId || 'Current Facility',
                 order: {
                     id: order.id || order._id?.toString(),
-                    customerName: customerName || 'Valued Customer',
+                    customerName: customerName || 'Customer',
                     customerPhone: customerPhone || '',
                     service: order.items?.[0]?.name || order.service || 'Laundry Service',
                     items: order.items || [],
@@ -397,7 +399,7 @@ export class ProcessorService {
                     address: order.address || '',
                     plant_id: order.plant_id ? String(order.plant_id) : null,
                     plantName: orderPlantName || order.plant_id || '',
-                    bagQr: order.package?.qr_code || order.qr_code || order.qr_tracking?.qrTagId || (order.id ? `BAG-${order.id}` : clean)
+                    bagQr: order.package?.qr_code || order.qr_code || order.qr_tracking?.qrTagId || order.bag_id || order.publicId || order.id || clean
                 }
             };
         }
@@ -416,12 +418,12 @@ export class ProcessorService {
         garmentItems?: Partial<OrderItem>[]
     ) {
         const db = await getDb();
-        const processor = await db.collection('users').findOne({ _id: (ObjectId.isValid(processorId) ? new ObjectId(processorId) : processorId) as any });
+        const processor = await this.findProcessorUser(processorId);
         
-        if (!processor || (processor.role !== 'processor' && processor.role !== 'admin' && processor.role !== 'super_admin' && processor.role !== 'manager')) {
+        if (!processor || !this.isAuthorizedProcessorRole(processor.role)) {
             throw new Error('Access denied: Processor or facility manager account required.');
         }
-        if (processor.is_active === false) throw new Error('Access denied: Processor is inactive.');
+        if (processor.is_active === false || processor.status === 'suspended') throw new Error('Access denied: Processor is inactive.');
 
         // 1. Clean and sanitize orderId
         let cleanOrderId = (orderId || '').trim();
@@ -439,42 +441,8 @@ export class ProcessorService {
 
         const now = new Date().toISOString();
 
-        // 3. Auto-seed if it's a driver reference/demo order
         if (!order) {
-            const demoJobs: Record<string, any> = {
-                'LD4582': { customerName: 'Sarah Mitchell', customerPhone: '+44 7700 900123', address: '12 Grove Road, Fulham, London, SW6 1AA', items: [{ name: 'Mixed Wash & Fold (10kg)', quantity: 2, price: 15.0 }], weightKg: 7.5 },
-                'LD4583': { customerName: 'James Carter', customerPhone: '+44 7700 900456', address: '88 Clapham High Street, London, SW4 7UG', items: [{ name: 'Delicates & Silks', quantity: 3, price: 18.0 }], weightKg: 4.0 },
-                'LD4584': { customerName: 'Emma Williams', customerPhone: '+44 7700 900789', address: '27 Richmond Avenue, London, TW9 2NA', items: [{ name: 'Family Wash (15kg)', quantity: 3, price: 22.0 }], weightKg: 12.0 },
-                'LD4585': { customerName: 'Daniel Thompson', customerPhone: '+44 7700 900321', address: '14 Kingston Road, London, SW15 3DW', items: [{ name: 'Business Suits (Steam Pressed)', quantity: 4, price: 25.0 }], weightKg: 5.0 },
-                'LD4586': { customerName: 'Sophia Davis', customerPhone: '+44 7700 900654', address: '52 Wimbledon Hill Road, London, SW19 7PA', items: [{ name: 'Evening Dresses', quantity: 2, price: 30.0 }], weightKg: 3.5 }
-            };
-
-            const demoInfo = demoJobs[cleanOrderId] || {
-                customerName: 'Driver Handover Customer',
-                customerPhone: '+44 7700 900000',
-                address: '12 Grove Road, Fulham, London',
-                items: [{ name: 'Standard Laundry Bag', quantity: 1, price: 20.0 }],
-                weightKg: 5.0
-            };
-
-            const newOrderDoc: any = {
-                id: cleanOrderId,
-                orderCode: cleanOrderId,
-                customerName: demoInfo.customerName,
-                customerPhone: demoInfo.customerPhone,
-                address: demoInfo.address,
-                items: demoInfo.items,
-                weightKg: demoInfo.weightKg,
-                total: 28.50,
-                status: 'driver_assigned',
-                statusLabel: 'Driver Assigned',
-                plant_id: processor.plant_id || null,
-                createdAt: now,
-                updated_at: now
-            };
-            const insertResult = await db.collection('orders').insertOne(newOrderDoc);
-            newOrderDoc._id = insertResult.insertedId;
-            order = newOrderDoc;
+            throw new NotFoundError(`Order #${cleanOrderId} not found or invalid barcode/QR code.`);
         }
 
         // Rule 1: Driver pickup and OTP verification check
@@ -509,24 +477,17 @@ export class ProcessorService {
         }
 
         // Enforce plant assignment: Reject intake if order is assigned to a different plant
-        if (processor.role === 'processor' && order.plant_id && processor.plant_id && String(order.plant_id).trim() !== String(processor.plant_id).trim()) {
+        const processorPlantId = processor.plantId || processor.plant_id;
+        const normRole = normalizeRole(processor.role);
+        if (normRole === 'processor' && order.plant_id && processorPlantId && String(order.plant_id).trim() !== String(processorPlantId).trim()) {
             throw new Error(`Order #${cleanOrderId} is assigned to a different plant (${order.plantName || order.plant_id}). Cannot intake at this facility.`);
         }
-        if (!order.plant_id && processor.plant_id) {
-            order.plant_id = processor.plant_id;
+        if (!order.plant_id && processorPlantId) {
+            order.plant_id = processorPlantId;
         }
 
         // Enrich customer name if missing or null in order document
-        if ((!order.customerName || order.customerName === 'Customer') && order.customer_id) {
-            const cust = await db.collection('users').findOne({
-                _id: (ObjectId.isValid(order.customer_id) ? new ObjectId(order.customer_id) : order.customer_id) as any
-            });
-            if (cust) {
-                order.customerName = cust.full_name;
-                order.customerPhone = cust.phone || order.customerPhone;
-                order.customerEmail = cust.email || order.customerEmail;
-            }
-        }
+        await OrderCustomerEnrichmentService.enrichOrder(order, db);
 
         const estimatedWeight = order.weightKg || 0;
         const weightDiff = actualWeightKg - estimatedWeight;
@@ -742,12 +703,12 @@ export class ProcessorService {
         machineInfo?: { machineId: string; cycleType?: string; temperature?: string }
     ) {
         const db = await getDb();
-        const processor = await db.collection('users').findOne({ _id: (ObjectId.isValid(processorId) ? new ObjectId(processorId) : processorId) as any });
+        const processor = await this.findProcessorUser(processorId);
         
-        if (!processor || (processor.role !== 'processor' && processor.role !== 'admin' && processor.role !== 'super_admin' && processor.role !== 'manager')) {
+        if (!processor || !this.isAuthorizedProcessorRole(processor.role)) {
             throw new Error('Access denied: Processor, manager, or admin account required.');
         }
-        if (processor.is_active === false) throw new Error('Access denied: Processor is inactive.');
+        if (processor.is_active === false || processor.status === 'suspended') throw new Error('Access denied: Processor is inactive.');
 
         let cleanOrderId = (orderId || '').trim();
         try {
@@ -908,12 +869,12 @@ export class ProcessorService {
         itemChecks?: Array<{ itemId: string; passed: boolean; rewashRequired: boolean; notes?: string; reason?: string }>
     ) {
         const db = await getDb();
-        const processor = await db.collection('users').findOne({ _id: (ObjectId.isValid(processorId) ? new ObjectId(processorId) : processorId) as any });
+        const processor = await this.findProcessorUser(processorId);
         
-        if (!processor || (processor.role !== 'processor' && processor.role !== 'admin' && processor.role !== 'super_admin' && processor.role !== 'manager')) {
+        if (!processor || !this.isAuthorizedProcessorRole(processor.role)) {
             throw new Error('Access denied: Processor, manager, or admin account required.');
         }
-        if (processor.is_active === false) throw new Error('Access denied: Processor is inactive.');
+        if (processor.is_active === false || processor.status === 'suspended') throw new Error('Access denied: Processor is inactive.');
 
         let cleanOrderId = (orderId || '').trim();
         try {
@@ -934,13 +895,14 @@ export class ProcessorService {
         }
         let order: any = await db.collection('orders').findOne({ $or: queryList });
         if (!order) throw new Error('Order not found.');
-        if (order.plant_id && processor.plant_id && String(order.plant_id) !== String(processor.plant_id)) {
-            order.plant_id = processor.plant_id;
+        const processorPlantId = processor.plantId || processor.plant_id;
+        if (order.plant_id && processorPlantId && String(order.plant_id) !== String(processorPlantId)) {
+            order.plant_id = processorPlantId;
         }
 
         const now = new Date().toISOString();
         const targetProcessorId = order.assigned_processor_id || processorId;
-        const processorUser = await db.collection('users').findOne({ _id: (ObjectId.isValid(targetProcessorId) ? new ObjectId(targetProcessorId) : targetProcessorId) as any });
+        const processorUser = await this.findProcessorUser(targetProcessorId);
 
         let nextAvailability = 'available';
         if (processorUser && processorUser.role === 'processor') {

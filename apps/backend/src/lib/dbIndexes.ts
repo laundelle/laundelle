@@ -3,6 +3,33 @@ import { getDb } from './mongodb';
 let indexesEnsured = false;
 
 /**
+ * Safely creates or upgrades a unique index on a string field using partialFilterExpression.
+ * Unlike standard sparse indexes which fail if multiple documents possess an explicit null value ({ field: null }),
+ * partialFilterExpression strictly indexes only non-null string values, fully immunizing against
+ * duplicate null collisions on legacy or unpopulated records.
+ */
+async function ensureSafeUniqueStringIndex(collection: any, field: string, indexName?: string) {
+  const name = indexName || `${field}_1`;
+  const existingIndexes = await collection.indexes().catch(() => []);
+  const existing = existingIndexes.find((idx: any) => idx.name === name);
+
+  if (existing && (!existing.partialFilterExpression || !existing.unique)) {
+    // Drop outdated sparse or non-partial index so it upgrades cleanly to partialFilterExpression
+    await collection.dropIndex(name).catch(() => {});
+  }
+
+  await collection.createIndex(
+    { [field]: 1 },
+    {
+      unique: true,
+      partialFilterExpression: { [field]: { $type: 'string' } },
+      background: true,
+      name
+    }
+  );
+}
+
+/**
  * Ensures optimal MongoDB database indexes for production performance,
  * concurrency safety, and fast query execution across all collections.
  */
@@ -13,11 +40,9 @@ export async function ensureDatabaseIndexes() {
 
     // 1. Orders collection
     await Promise.all([
-      db.collection('orders').createIndex({ publicId: 1 }, { unique: true, sparse: true, background: true }),
-      db.collection('orders').createIndex({ id: 1 }, { unique: true, background: true }),
-      // Stripe can retry and multiple servers can receive a delivery concurrently.
-      // The session ID must map to at most one official order.
-      db.collection('orders').createIndex({ stripe_session_id: 1 }, { unique: true, sparse: true, background: true }),
+      ensureSafeUniqueStringIndex(db.collection('orders'), 'publicId'),
+      ensureSafeUniqueStringIndex(db.collection('orders'), 'id'),
+      ensureSafeUniqueStringIndex(db.collection('orders'), 'stripe_session_id'),
       db.collection('orders').createIndex({ customer_id: 1, status: 1 }, { background: true }),
       db.collection('orders').createIndex({ customerId: 1, status: 1 }, { background: true }),
       db.collection('orders').createIndex({ plant_id: 1, status: 1 }, { background: true }),
@@ -208,49 +233,84 @@ export async function ensureDatabaseIndexes() {
 
     // 26. Users (Canonical Customer & Staff Identity)
     await Promise.all([
-      db.collection('users').createIndex({ publicId: 1 }, { unique: true, sparse: true, background: true }),
-      db.collection('users').createIndex({ customerId: 1 }, { unique: true, sparse: true, background: true }),
-      db.collection('users').createIndex({ staffId: 1 }, { unique: true, sparse: true, background: true }),
-      db.collection('users').createIndex({ email: 1 }, { unique: true, sparse: true, background: true }),
+      ensureSafeUniqueStringIndex(db.collection('users'), 'auth0UserId'),
+      ensureSafeUniqueStringIndex(db.collection('users'), 'auth0_sub'),
+      ensureSafeUniqueStringIndex(db.collection('users'), 'publicId'),
+      ensureSafeUniqueStringIndex(db.collection('users'), 'customerId'),
+      ensureSafeUniqueStringIndex(db.collection('users'), 'staffId'),
+      ensureSafeUniqueStringIndex(db.collection('users'), 'email'),
       db.collection('users').createIndex({ role: 1 }, { background: true })
     ]);
 
+
     // 27. Plants & Facilities
     await Promise.all([
-      db.collection('plants').createIndex({ publicId: 1 }, { unique: true, sparse: true, background: true }),
-      db.collection('plants').createIndex({ code: 1 }, { unique: true, sparse: true, background: true })
+      ensureSafeUniqueStringIndex(db.collection('plants'), 'publicId'),
+      ensureSafeUniqueStringIndex(db.collection('plants'), 'code')
     ]);
 
     // 28. Payments
     await Promise.all([
-      db.collection('payments').createIndex({ publicId: 1 }, { unique: true, sparse: true, background: true }),
+      ensureSafeUniqueStringIndex(db.collection('payments'), 'publicId'),
       db.collection('payments').createIndex({ orderId: 1 }, { background: true }),
       db.collection('payments').createIndex({ customerId: 1 }, { background: true })
     ]);
 
     // 29. Incidents & Disputes
     await Promise.all([
-      db.collection('incidents').createIndex({ publicId: 1 }, { unique: true, sparse: true, background: true }),
+      ensureSafeUniqueStringIndex(db.collection('incidents'), 'publicId'),
       db.collection('incidents').createIndex({ orderId: 1 }, { background: true }),
       db.collection('incidents').createIndex({ plant_id: 1 }, { background: true })
     ]);
 
     // 30. Support Tickets
     await Promise.all([
-      db.collection('tickets').createIndex({ publicId: 1 }, { unique: true, sparse: true, background: true }),
-      db.collection('tickets').createIndex({ ticketId: 1 }, { unique: true, sparse: true, background: true })
+      ensureSafeUniqueStringIndex(db.collection('tickets'), 'publicId'),
+      ensureSafeUniqueStringIndex(db.collection('tickets'), 'ticketId')
     ]);
 
     // 31. Services Catalog
     await Promise.all([
-      db.collection('services').createIndex({ publicId: 1 }, { unique: true, sparse: true, background: true }),
-      db.collection('services').createIndex({ id: 1 }, { unique: true, background: true })
+      ensureSafeUniqueStringIndex(db.collection('services'), 'publicId'),
+      ensureSafeUniqueStringIndex(db.collection('services'), 'id')
     ]);
 
     // 32. Booking Slots
     await Promise.all([
-      db.collection('booking_slots').createIndex({ publicId: 1 }, { unique: true, sparse: true, background: true }),
-      db.collection('booking_slots').createIndex({ id: 1 }, { unique: true, background: true })
+      ensureSafeUniqueStringIndex(db.collection('booking_slots'), 'publicId'),
+      ensureSafeUniqueStringIndex(db.collection('booking_slots'), 'id')
+    ]);
+
+    // 33. Coupon Redemptions Collection (Strict concurrency and webhook idempotency)
+    const redemptionsColl = db.collection('coupon_redemptions');
+    const duplicateRedemptions = await redemptionsColl.aggregate([
+      { $match: { orderId: { $ne: null }, code: { $ne: null } } },
+      { $group: { _id: { orderId: '$orderId', code: '$code' }, count: { $sum: 1 }, ids: { $push: '$_id' } } },
+      { $match: { count: { $gt: 1 } } }
+    ]).toArray();
+
+    if (duplicateRedemptions.length > 0) {
+      const summary = duplicateRedemptions.map((d: any) => `${d._id.orderId}:${d._id.code} (${d.count} occurrences)`).join(', ');
+      throw new Error(`[Laundelle DB FATAL] Cannot create unique index on coupon_redemptions: found ${duplicateRedemptions.length} duplicate (orderId, code) record set(s): [${summary}]. Action required: Deduplicate records before applying unique constraint.`);
+    }
+
+    await Promise.all([
+      redemptionsColl.createIndex(
+        { orderId: 1, code: 1 },
+        { unique: true, background: true, name: 'uniq_coupon_redemptions_orderId_code' }
+      ),
+      redemptionsColl.createIndex(
+        { stripeSessionId: 1, code: 1 },
+        { sparse: true, background: true, name: 'idx_coupon_redemptions_stripeSession_code' }
+      ),
+      redemptionsColl.createIndex(
+        { code: 1, redeemedAt: -1 },
+        { background: true, name: 'idx_coupon_redemptions_code_redeemedAt' }
+      ),
+      db.collection('coupons').createIndex(
+        { code: 1 },
+        { unique: true, background: true, name: 'uniq_coupons_code' }
+      )
     ]);
 
     indexesEnsured = true;
@@ -265,6 +325,36 @@ export async function ensureDatabaseIndexes() {
       console.warn('[Laundelle DB] Canonical ID migration notice:', migErr.message);
     }
   } catch (err: any) {
-    console.warn('[Laundelle DB] Index initialization warning:', err.message);
+    indexesEnsured = false;
+    console.error('[Laundelle DB FATAL] Index initialization error:', err.message);
+    throw err;
   }
+}
+
+/**
+ * Verification procedure to confirm the unique index on coupon_redemptions exists in MongoDB.
+ */
+export async function verifyCouponRedemptionsIndex(): Promise<{
+  verified: boolean;
+  name?: string;
+  unique?: boolean;
+  key?: Record<string, number>;
+}> {
+  const db = await getDb();
+  const indexes = await db.collection('coupon_redemptions').indexes();
+  const matched = indexes.find((idx: any) => {
+    const key = idx.key || {};
+    return key.orderId === 1 && key.code === 1;
+  });
+
+  if (!matched) {
+    return { verified: false };
+  }
+
+  return {
+    verified: Boolean(matched.unique),
+    name: matched.name,
+    unique: Boolean(matched.unique),
+    key: matched.key as Record<string, number>
+  };
 }

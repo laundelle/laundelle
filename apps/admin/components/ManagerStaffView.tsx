@@ -64,7 +64,6 @@ export const ManagerStaffView: React.FC = () => {
   const [editAvailability, setEditAvailability] = useState<'available' | 'busy' | 'offline'>('available');
   const [editVehicle, setEditVehicle] = useState('');
   const [editPostcodes, setEditPostcodes] = useState('');
-  const [editPassword, setEditPassword] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Add Staff Modal State
@@ -73,7 +72,6 @@ export const ManagerStaffView: React.FC = () => {
   const [newEmail, setNewEmail] = useState('');
   const [newPhoneCountryCode, setNewPhoneCountryCode] = useState('+44');
   const [newPhone, setNewPhone] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [newVehicle, setNewVehicle] = useState('');
   const [newRole, setNewRole] = useState<'driver' | 'processor'>('driver');
   const [adding, setAdding] = useState(false);
@@ -112,7 +110,6 @@ export const ManagerStaffView: React.FC = () => {
     setEditVehicle(staff.vehicle || '');
     const postcodes = staff.assigned_postcodes || staff.assignedSectors || [];
     setEditPostcodes(postcodes.join(', '));
-    setEditPassword('');
     setEditModalOpen(true);
   };
 
@@ -136,15 +133,6 @@ export const ManagerStaffView: React.FC = () => {
       payload.vehicle = editVehicle.trim();
     }
 
-    if (editPassword.trim().length > 0) {
-      if (editPassword.trim().length < 6) {
-        showNotification('error', 'Password must be at least 6 characters.');
-        setSaving(false);
-        return;
-      }
-      payload.password = editPassword.trim();
-    }
-
     const result = await dbManagerUpdateStaff(editingStaff._id, payload);
     setSaving(false);
 
@@ -161,12 +149,8 @@ export const ManagerStaffView: React.FC = () => {
   // Submit Add Staff (Driver or Processor)
   const handleAddStaff = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newName.trim() || !newEmail.trim() || !newPassword.trim()) {
-      showNotification('error', 'Name, email, and password are required.');
-      return;
-    }
-    if (newPassword.trim().length < 6) {
-      showNotification('error', 'Password must be at least 6 characters.');
+    if (!newName.trim() || !newEmail.trim()) {
+      showNotification('error', 'Name and email are required.');
       return;
     }
 
@@ -177,7 +161,6 @@ export const ManagerStaffView: React.FC = () => {
       full_name: newName.trim(),
       email: newEmail.trim(),
       phone: fullNewPhone,
-      password: newPassword.trim(),
       role: newRole,
       is_active: true,
       availability: 'available',
@@ -188,22 +171,23 @@ export const ManagerStaffView: React.FC = () => {
       payload.vehicle = newVehicle.trim() || 'Logistics Van';
     }
 
-
     const result = await dbManagerCreateStaff(payload);
     setAdding(false);
 
     if (result.success) {
-      showNotification('success', `${newRole === 'driver' ? 'Driver' : 'Processor'} ${newName} added and assigned to your facility!`);
+      showNotification('success', 'User created successfully. An onboarding invitation has been generated.');
       setAddModalOpen(false);
       setNewName('');
       setNewEmail('');
       setNewPhone('');
-      setNewPassword('');
       setNewVehicle('');
       setNewRole('driver');
       loadStaff();
     } else {
-      showNotification('error', result.error || 'Failed to add staff member.');
+      const displayError = typeof result.error === 'string' && !result.error.includes('{')
+        ? result.error
+        : 'Failed to add staff member.';
+      showNotification('error', displayError);
     }
   };
 
@@ -717,21 +701,6 @@ export const ManagerStaffView: React.FC = () => {
                 </>
               )}
 
-              {/* Reset Password */}
-              <div className="pt-2 border-t border-gray-100">
-                <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5 mb-1">
-                  <Lock className="w-3.5 h-3.5 text-gray-400" />
-                  <span>Reset Staff Password (Optional)</span>
-                </label>
-                <input
-                  type="password"
-                  placeholder="Enter new password to reset, or leave blank to keep current"
-                  value={editPassword}
-                  onChange={(e) => setEditPassword(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-[#0077B6] focus:bg-white"
-                />
-              </div>
-
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100">
                 <button
                   type="button"
@@ -864,16 +833,14 @@ export const ManagerStaffView: React.FC = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-gray-700 block mb-1">Initial Password</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Minimum 6 characters"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:outline-hidden focus:border-[#0077B6] focus:bg-white"
-                />
+              <div className="bg-blue-50/80 border border-blue-200/80 rounded-xl p-3 text-xs text-blue-900 flex items-start gap-2.5">
+                <Mail className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">Password Setup via Auth0</p>
+                  <p className="text-blue-700 mt-0.5 leading-relaxed">
+                    An invitation email will be sent to the new user so they can set their password.
+                  </p>
+                </div>
               </div>
 
               {/* Driver-specific fields */}
@@ -890,8 +857,6 @@ export const ManagerStaffView: React.FC = () => {
                 </div>
               )}
 
-
-
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100">
                 <button
                   type="button"
@@ -907,7 +872,7 @@ export const ManagerStaffView: React.FC = () => {
                   className="px-5 py-2.5 rounded-xl bg-[#023E8A] hover:bg-[#03045E] text-white text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer transition-colors disabled:opacity-50"
                 >
                   {adding && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                  <span>{adding ? 'Registering...' : `Add ${newRole === 'driver' ? 'Driver' : 'Processor'}`}</span>
+                  <span>{adding ? 'Creating user...' : `Add ${newRole === 'driver' ? 'Driver' : 'Processor'}`}</span>
                 </button>
               </div>
             </form>

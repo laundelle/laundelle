@@ -33,6 +33,8 @@ export function isValidCanonicalId(id: unknown, expectedPrefix?: IdPrefix): bool
   return true;
 }
 
+export const isValidId = isValidCanonicalId;
+
 // Entity-Specific Validators
 export const isCustomerId = (id: unknown) => isValidCanonicalId(id, ID_PREFIXES.CUSTOMER);
 export const isStaffId = (id: unknown) => isValidCanonicalId(id, ID_PREFIXES.STAFF);

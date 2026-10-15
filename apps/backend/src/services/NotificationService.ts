@@ -1,4 +1,5 @@
 import { getDb } from '@/lib/mongodb';
+import { ObjectId } from 'mongodb';
 import { NotificationChannel, NotificationRecord, NotificationStatus, NotificationTemplate } from '@laundelle/types';
 import crypto from 'crypto';
 import { generateNotificationId, generateExceptionId } from '@laundelle/ids';
@@ -395,7 +396,7 @@ export class NotificationService {
         title: compiledTitle,
         body: compiledBody,
         status: 'SENT',
-        provider: channel === 'in_app' ? 'local' : `mock_${channel}_provider`,
+        provider: channel === 'in_app' ? 'local' : (process.env.NOTIFICATION_PROVIDER || 'system'),
         providerMessageId: `msg_${crypto.randomBytes(6).toString('hex')}`,
         attemptCount: 1,
         maxAttempts: 3,
@@ -505,22 +506,31 @@ export class NotificationService {
     const skip = (Math.max(1, page) - 1) * safeLimit;
 
     // Resolve possible IDs for user
-    const possibleIds = new Set<string>([userId]);
+    const cleanId = (userId || '').trim();
+    const possibleIds = new Set<string>([cleanId]);
     try {
-      const userDoc = await db.collection('users').findOne({
-        $or: [
-          { _id: userId as any },
-          { id: userId },
-          { customerId: userId },
-          { publicId: userId },
-          { auth0_sub: userId }
-        ]
-      });
+      const orQueries: any[] = [
+        { _id: cleanId as any },
+        { id: cleanId },
+        { customerId: cleanId },
+        { publicId: cleanId },
+        { auth0_sub: cleanId },
+        { auth0UserId: cleanId },
+        { email: cleanId.toLowerCase() }
+      ];
+      if (typeof cleanId === 'string' && ObjectId.isValid(cleanId) && cleanId.length === 24) {
+        try {
+          orQueries.push({ _id: new ObjectId(cleanId) as any });
+        } catch {}
+      }
+      const userDoc = await db.collection('users').findOne({ $or: orQueries });
       if (userDoc) {
         if (userDoc._id) possibleIds.add(String(userDoc._id));
         if (userDoc.customerId) possibleIds.add(String(userDoc.customerId));
         if (userDoc.publicId) possibleIds.add(String(userDoc.publicId));
         if (userDoc.id) possibleIds.add(String(userDoc.id));
+        if (userDoc.auth0_sub) possibleIds.add(String(userDoc.auth0_sub));
+        if (userDoc.auth0UserId) possibleIds.add(String(userDoc.auth0UserId));
       }
     } catch {}
 

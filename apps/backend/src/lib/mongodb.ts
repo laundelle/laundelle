@@ -38,3 +38,7 @@ export async function getDb(dbName = 'Laundry'): Promise<Db> {
     const cp = await getClientPromise();
     return cp.db(dbName);
 }
+
+export async function getMongoClient(): Promise<MongoClient> {
+    return getClientPromise();
+}

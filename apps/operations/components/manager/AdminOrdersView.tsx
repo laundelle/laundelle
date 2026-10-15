@@ -124,20 +124,28 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
   const isManager = session?.user?.role === 'manager';
 
   const getCustomerName = (ord: any) => {
-    if (ord.customer_name) return ord.customer_name;
-    if (ord.customerName) return ord.customerName;
+    if (ord.customer_name && ord.customer_name !== 'Valued Customer' && ord.customer_name !== 'Customer') return ord.customer_name;
+    if (ord.customerName && ord.customerName !== 'Valued Customer' && ord.customerName !== 'Customer') return ord.customerName;
+    if (ord.contactDetails) {
+      const cName = `${ord.contactDetails.firstName || ''} ${ord.contactDetails.lastName || ''}`.trim();
+      if (cName) return cName;
+    }
     if (ord.customer && (ord.customer.full_name || ord.customer.name)) {
       return ord.customer.full_name || ord.customer.name;
     }
-    if (ord.userName) return ord.userName;
-    if (ord.user_name) return ord.user_name;
+    if (ord.userName && ord.userName !== 'Customer') return ord.userName;
+    if (ord.user_name && ord.user_name !== 'Customer') return ord.user_name;
     if (ord.user && (ord.user.full_name || ord.user.name)) {
       return ord.user.full_name || ord.user.name;
+    }
+    if (ord.customerEmail || ord.email) {
+      const email = ord.customerEmail || ord.email;
+      return email.split('@')[0];
     }
     if (ord.addressLabel && !['Home', 'Work', 'Office', 'Apartment'].some(k => (ord.addressLabel || '').includes(k))) {
       return ord.addressLabel;
     }
-    return 'Customer';
+    return ord.customer_name || ord.customerName || 'Customer';
   };
 
   React.useEffect(() => {
@@ -240,48 +248,48 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
   };
 
   return (
-    <div className="w-full space-y-4 md:space-y-6 p-4 sm:p-8 pb-24 md:pb-8">
+    <div className="w-full space-y-4 md:space-y-5 p-4 sm:p-8 pb-20 md:pb-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl md:text-2xl font-heading font-extrabold text-[#03045E] leading-tight">Order Management</h1>
-          <p className="text-xs text-gray-500">Monitor active orders, inspect audit evidence chains, and assign logistics drivers.</p>
+          <h1 className="text-xl md:text-2xl font-bold text-slate-900 tracking-tight">Order Management</h1>
+          <p className="text-xs text-slate-500 mt-0.5">Live order tracking, logistics dispatch, and status inspection.</p>
         </div>
 
         <div className="flex items-center gap-2">
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="p-2.5 bg-white border border-gray-200 hover:bg-gray-50 text-[#03045E] rounded-2xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+            className="px-3.5 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
             title="Refresh Live Orders"
           >
-            <RefreshCw className={`w-4 h-4 text-[#0077B6] ${refreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${refreshing ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">{refreshing ? 'Refreshing...' : 'Refresh Orders'}</span>
           </button>
-          <span className="text-xs font-bold text-gray-500">Filtered:</span>
-          <span className="px-3 py-1 bg-[#CAF0F8] text-[#03045E] rounded-full text-xs font-extrabold">
+          <span className="text-xs font-semibold text-slate-500">Orders:</span>
+          <span className="px-2.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-100/60 rounded-full text-xs font-bold">
             {filteredOrders.length}
           </span>
         </div>
       </div>
 
       {/* Multi-Criteria Filters Top Bar */}
-      <div className="bg-white rounded-3xl p-5 shadow-xs border border-gray-100 space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="bg-white rounded-2xl p-4 shadow-xs border border-slate-100 space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5">
           {/* Search Input */}
           <div className="relative">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-3" />
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Order #, address, driver, customer..."
-              className="w-full pl-10 pr-4 py-2.5 bg-gray-50 rounded-xl text-xs focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+              placeholder="Order #, customer, address..."
+              className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-xs font-medium focus:bg-white focus:border-blue-500 focus:outline-hidden"
             />
             {searchTerm && (
               <button
                 onClick={() => setSearchTerm('')}
-                className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 cursor-pointer"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -293,7 +301,7 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full px-3 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden cursor-pointer"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-xs font-medium text-slate-700 focus:bg-white focus:border-blue-500 focus:outline-hidden cursor-pointer"
             >
               <option value="all">All Order Statuses</option>
               <option value="booking_confirmed">Booking Confirmed</option>
@@ -313,7 +321,7 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
             <select
               value={paymentFilter}
               onChange={(e) => setPaymentFilter(e.target.value)}
-              className="w-full px-3 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden cursor-pointer"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-xs font-medium text-slate-700 focus:bg-white focus:border-blue-500 focus:outline-hidden cursor-pointer"
             >
               <option value="all">All Payment Statuses</option>
               <option value="paid">Paid</option>
@@ -328,7 +336,7 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
             <select
               value={areaFilter}
               onChange={(e) => setAreaFilter(e.target.value)}
-              className="w-full px-3 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden cursor-pointer"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-xs font-medium text-slate-700 focus:bg-white focus:border-blue-500 focus:outline-hidden cursor-pointer"
             >
               <option value="all">All Sector Areas</option>
               {availableAreas.map((area) => (
@@ -346,7 +354,7 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
             <select
               value={dateFilter}
               onChange={(e) => setDateFilter(e.target.value)}
-              className="w-full px-3 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden cursor-pointer"
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-xs font-medium text-slate-700 focus:bg-white focus:border-blue-500 focus:outline-hidden cursor-pointer"
             >
               <option value="all">All Order Dates</option>
               <option value="today">Today</option>
@@ -357,9 +365,9 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
         </div>
 
         {(searchTerm || statusFilter !== 'all' || paymentFilter !== 'all' || areaFilter !== 'all' || dateFilter !== 'all') && (
-          <div className="flex items-center justify-between pt-2 border-t border-gray-100 text-xs">
-            <span className="text-gray-500 font-medium">
-              Showing <strong className="text-gray-900">{filteredOrders.length}</strong> of {internalOrders.length} orders
+          <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+            <span className="text-slate-500 font-medium">
+              Showing <strong className="text-slate-900">{filteredOrders.length}</strong> of {internalOrders.length} orders
             </span>
             <button
               onClick={() => {
@@ -369,20 +377,20 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
                 setAreaFilter('all');
                 setDateFilter('all');
               }}
-              className="text-[#0077B6] hover:text-[#03045E] font-bold cursor-pointer transition-colors"
+              className="text-blue-600 hover:text-blue-700 font-semibold cursor-pointer transition-colors"
             >
-              Reset All Filters
+              Reset Filters
             </button>
           </div>
         )}
       </div>
 
-      {/* Full-Length Orders Table */}
-      <div className="w-full bg-white rounded-3xl shadow-xs border border-gray-100 overflow-hidden flex flex-col justify-between">
+      {/* Orders Box - Fixed Sized with Vertical Scroll */}
+      <div className="w-full bg-white rounded-2xl shadow-xs border border-slate-100 overflow-hidden flex flex-col h-[calc(100vh-275px)] min-h-[460px]">
         {filteredOrders.length === 0 ? (
-          <div className="p-12 text-center text-gray-500">
-            <p className="text-sm font-semibold text-gray-700">No orders found</p>
-            <p className="text-xs text-gray-400 mt-1">
+          <div className="m-auto p-12 text-center text-slate-400">
+            <p className="text-sm font-semibold text-slate-700">No orders found</p>
+            <p className="text-xs text-slate-400 mt-1">
               {searchTerm || statusFilter !== 'all' || paymentFilter !== 'all'
                 ? 'Try adjusting your search query or filters.'
                 : 'There are currently no active orders to display.'}
@@ -390,7 +398,7 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
             <button
               onClick={handleRefresh}
               disabled={refreshing}
-              className="mt-4 px-4 py-2 bg-[#0077B6] hover:bg-[#03045E] text-white text-xs font-semibold rounded-xl transition cursor-pointer"
+              className="mt-4 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition cursor-pointer"
             >
               {refreshing ? 'Refreshing...' : 'Refresh Orders'}
             </button>
@@ -398,7 +406,7 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
         ) : (
           <>
             {/* Mobile View: Cards */}
-            <div className="md:hidden p-4 space-y-4">
+            <div className="md:hidden p-4 space-y-3 flex-1 overflow-y-auto">
               {filteredOrders.map((ord) => {
                 return (
                   <div
@@ -407,36 +415,36 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
                       setSelectedOrder(ord);
                       setIsDetailsModalOpen(true);
                     }}
-                    className="bg-gray-50 rounded-2xl p-4 border border-gray-200 hover:border-[#0077B6] transition-colors cursor-pointer space-y-3"
+                    className="bg-white rounded-xl p-3.5 border border-slate-100 hover:border-blue-200 transition-colors cursor-pointer space-y-2.5 shadow-2xs"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-mono font-bold text-[#03045E] text-sm">{ord.publicId || ord.orderNumber || ord.id}</span>
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-[#CAF0F8] text-[#03045E]">
+                      <span className="font-mono font-bold text-slate-900 text-xs">{ord.publicId || ord.orderNumber || ord.id}</span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-100/60">
                         {ord.statusLabel}
                       </span>
                     </div>
-                    <div className="space-y-1">
-                      <span className="block font-medium text-gray-800 text-xs">
+                    <div className="space-y-0.5">
+                      <span className="block font-medium text-slate-800 text-xs">
                         {formatAddress(ord.addressLabel || ord.address)}
                       </span>
-                      <span className="text-[10px] text-gray-400 block">{ord.pickupDate} • {(ord.items || []).length} items</span>
+                      <span className="text-[10px] text-slate-400 block">{ord.pickupDate} • {(ord.items || []).length} items</span>
                     </div>
-                    <div className="flex items-center justify-between pt-2 border-t border-gray-200">
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                       <span
-                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                           ord.paymentStatus === 'Paid'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-amber-100 text-amber-800'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-100/60'
+                            : 'bg-amber-50 text-amber-700 border border-amber-100/60'
                         }`}
                       >
                         {ord.paymentStatus}
                       </span>
                       <div className="flex items-center gap-2">
-                        <span className="font-extrabold text-gray-900 text-sm">
+                        <span className="font-bold text-slate-900 text-xs">
                           £{formatTotal(ord.total)}
                         </span>
-                        <span className="p-1 bg-[#CAF0F8] text-[#03045E] rounded-lg">
-                          <Eye className="w-3.5 h-3.5 text-[#0077B6]" />
+                        <span className="p-1 text-slate-400 hover:text-blue-600 rounded-lg">
+                          <Eye className="w-3.5 h-3.5" />
                         </span>
                       </div>
                     </div>
@@ -445,32 +453,32 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
               })}
             </div>
 
-            {/* Desktop View: Full-Length Table */}
-            <div className="hidden md:block overflow-x-auto">
+            {/* Desktop View: Table scrolling vertically inside fixed box */}
+            <div className="hidden md:block flex-1 overflow-y-auto overflow-x-auto">
               <table className="w-full text-left text-xs">
-                <thead className="bg-[#f8fafc] text-gray-500 font-bold border-b border-gray-100 uppercase tracking-wider text-[10px]">
+                <thead className="sticky top-0 z-10 bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-[10px]">
                   {isManager ? (
                     <tr>
-                      <th className="py-4 px-5">Order ID</th>
-                      <th className="py-4 px-5">Customer Name</th>
-                      <th className="py-4 px-5">Operational Status</th>
-                      <th className="py-4 px-5">Payment</th>
-                      <th className="py-4 px-5">Total</th>
+                      <th className="py-3 px-4">Order ID</th>
+                      <th className="py-3 px-4">Customer Name</th>
+                      <th className="py-3 px-4">Operational Status</th>
+                      <th className="py-3 px-4">Payment</th>
+                      <th className="py-3 px-4">Total</th>
                     </tr>
                   ) : (
                     <tr>
-                      <th className="py-4 px-5">Order ID</th>
-                      <th className="py-4 px-5">Customer & Delivery Address</th>
-                      <th className="py-4 px-5">Pickup / Delivery Slot</th>
-                      <th className="py-4 px-5">Items Breakdown</th>
-                      <th className="py-4 px-5">Operational Status</th>
-                      <th className="py-4 px-5">Payment</th>
-                      <th className="py-4 px-5">Total</th>
-                      <th className="py-4 px-5 text-right">Actions</th>
+                      <th className="py-3 px-4">Order ID</th>
+                      <th className="py-3 px-4">Customer & Address</th>
+                      <th className="py-3 px-4">Slot</th>
+                      <th className="py-3 px-4">Items</th>
+                      <th className="py-3 px-4">Status</th>
+                      <th className="py-3 px-4">Payment</th>
+                      <th className="py-3 px-4">Total</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
                   )}
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-slate-100">
                   {filteredOrders.map((ord) => {
                     const custName = getCustomerName(ord);
                     return (
@@ -480,85 +488,85 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
                           setSelectedOrder(ord);
                           setIsDetailsModalOpen(true);
                         }}
-                        className="hover:bg-[#CAF0F8]/30 transition-colors cursor-pointer group"
+                        className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
                       >
-                        <td className="py-4 px-5 font-mono font-bold text-[#03045E]">
+                        <td className="py-3 px-4 font-mono font-semibold text-slate-900">
                           {ord.publicId || ord.orderNumber || ord.id}
                         </td>
 
                         {isManager ? (
                           <>
-                            <td className="py-4 px-5 font-bold text-gray-900">
+                            <td className="py-3 px-4 font-semibold text-slate-900">
                               {custName}
                             </td>
-                            <td className="py-4 px-5">
-                              <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-[#CAF0F8] text-[#03045E]">
+                            <td className="py-3 px-4">
+                              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-100/60">
                                 {ord.statusLabel || ord.status}
                               </span>
                             </td>
-                            <td className="py-4 px-5">
+                            <td className="py-3 px-4">
                               <span
-                                className={`px-3 py-1 rounded-full text-[11px] font-bold ${
+                                className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium ${
                                   (ord.paymentStatus || (ord as any).payment_status) === 'Paid'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-amber-100 text-amber-800'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-100/60'
+                                    : 'bg-amber-50 text-amber-700 border border-amber-100/60'
                                 }`}
                               >
                                 {ord.paymentStatus || (ord as any).payment_status || 'Pending'}
                               </span>
                             </td>
-                            <td className="py-4 px-5 font-extrabold text-gray-900 text-sm">
+                            <td className="py-3 px-4 font-bold text-slate-900 text-sm">
                               £{formatTotal(ord.total)}
                             </td>
                           </>
                         ) : (
                           <>
-                            <td className="py-4 px-5 space-y-0.5 max-w-xs">
-                              <span className="block font-bold text-gray-900 truncate">
+                            <td className="py-3 px-4 space-y-0.5 max-w-xs">
+                              <span className="block font-semibold text-slate-900 truncate">
                                 {custName}
                               </span>
-                              <span className="text-[11px] text-gray-500 block truncate">{formatAddress(ord.address)}</span>
+                              <span className="text-[11px] text-slate-400 block truncate">{formatAddress(ord.address)}</span>
                             </td>
-                            <td className="py-4 px-5 space-y-0.5">
-                              <span className="font-bold text-gray-800 block">{ord.pickupDate}</span>
-                              <span className="text-[10px] text-gray-400 block font-medium">Slot: {ord.pickupSlot || 'Standard Slot'}</span>
+                            <td className="py-3 px-4 space-y-0.5">
+                              <span className="font-medium text-slate-700 block">{ord.pickupDate}</span>
+                              <span className="text-[10px] text-slate-400 block font-normal">{ord.pickupSlot || 'Standard'}</span>
                             </td>
-                            <td className="py-4 px-5">
-                              <span className="px-2.5 py-1 rounded-xl bg-gray-100 font-semibold text-gray-700 text-[11px]">
+                            <td className="py-3 px-4">
+                              <span className="px-2 py-0.5 rounded-md bg-slate-100 font-medium text-slate-600 text-[11px]">
                                 {(ord.items || []).length} items
                               </span>
                             </td>
-                            <td className="py-4 px-5">
-                              <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-[#CAF0F8] text-[#03045E]">
+                            <td className="py-3 px-4">
+                              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-100/60">
                                 {ord.statusLabel || ord.status}
                               </span>
                             </td>
-                            <td className="py-4 px-5">
+                            <td className="py-3 px-4">
                               <span
-                                className={`px-3 py-1 rounded-full text-[11px] font-bold ${
+                                className={`px-2.5 py-0.5 rounded-full text-[11px] font-medium ${
                                   (ord.paymentStatus || (ord as any).payment_status) === 'Paid'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-amber-100 text-amber-800'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-100/60'
+                                    : 'bg-amber-50 text-amber-700 border border-amber-100/60'
                                 }`}
                               >
                                 {ord.paymentStatus || (ord as any).payment_status || 'Pending'}
                               </span>
                             </td>
 
-                            <td className="py-4 px-5 font-extrabold text-gray-900 text-sm">
+                            <td className="py-3 px-4 font-bold text-slate-900 text-sm">
                               £{formatTotal(ord.total)}
                             </td>
-                            <td className="py-4 px-5 text-right">
+                            <td className="py-3 px-4 text-right">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setSelectedOrder(ord);
                                   setIsDetailsModalOpen(true);
                                 }}
-                                className="px-3 py-1.5 bg-[#CAF0F8] hover:bg-[#ADE8F4] text-[#03045E] rounded-xl text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1.5 shadow-2xs group-hover:bg-[#03045E] group-hover:text-white"
+                                className="px-3 py-1 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-medium transition-all cursor-pointer inline-flex items-center gap-1.5 shadow-2xs group-hover:border-slate-300"
                               >
-                                <Eye className="w-3.5 h-3.5 text-[#0077B6] group-hover:text-[#48CAE4]" />
-                                <span>View Order</span>
+                                <Eye className="w-3.5 h-3.5 text-blue-600" />
+                                <span>View</span>
                               </button>
                             </td>
                           </>
@@ -768,8 +776,12 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({
 
               const bagQrCode = o?.evidence?.bagQrCode ||
                 o?.qr_tracking?.qrTagId ||
+                o?.package?.qr_code ||
                 o?.qr_code ||
-                (selectedOrder.publicId ? `BAG-${selectedOrder.publicId}` : `BAG-${selectedOrder.id}`);
+                o?.bag_id ||
+                o?.bagId ||
+                selectedOrder.publicId ||
+                selectedOrder.id;
 
               const isPickedUp = [
                 'laundry_collected', 'received_at_facility', 'sorting', 'washing',

@@ -180,15 +180,24 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
               : (o.items && o.items.length > 0 ? o.items : [{ name: o.service || 'Laundry Garments', quantity: 1 }]);
             return {
               id: o.publicId || o.orderNumber || o.id || o._id?.toString(),
-              customerName: o.customerName || o.customer_name || 'Valued Customer',
-              customerPhone: o.customerPhone || o.phone || o.customer?.phone || o.customer_phone || '',
-              customerEmail: o.customerEmail || o.email || o.customer?.email || (o.customerName && o.customerName !== 'Valued Customer' ? `${o.customerName.toLowerCase().replace(/[^a-z0-9]/g, '.')}@client.laundelle.com` : ''),
+              customerName: (o.customerName && o.customerName !== 'Valued Customer' && o.customerName !== 'Customer')
+                ? o.customerName
+                : (o.customer_name && o.customer_name !== 'Valued Customer' && o.customer_name !== 'Customer')
+                ? o.customer_name
+                : (o.contactDetails ? `${o.contactDetails.firstName || ''} ${o.contactDetails.lastName || ''}`.trim() : '')
+                || o.customer?.full_name
+                || o.customer?.name
+                || o.user_name
+                || (o.customerEmail ? o.customerEmail.split('@')[0] : '')
+                || 'Customer',
+              customerPhone: o.customerPhone || o.phone || o.customer?.phone || o.contactDetails?.phone || o.customer_phone || '',
+              customerEmail: o.customerEmail || o.email || o.contactDetails?.email || o.customer?.email || '',
               customerAddress: o.address || o.customerAddress || o.deliveryAddress?.street || (typeof o.deliveryAddress === 'string' ? o.deliveryAddress : '') || 'Plant Bay Lon-01 Delivery Area',
               serviceType: o.items?.[0]?.name || o.service || 'Laundry Service',
               itemCount: rawItems.length,
               processorName: o.processor?.name || 'Processing Line',
               completionTime: o.updated_at ? new Date(o.updated_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '--:--',
-              bagQr: o.package?.qr_code || o.qr_code || o.qr_tracking?.qrTagId || (o.publicId ? `BAG-${o.publicId}` : `BAG-${o.id}`),
+              bagQr: o.package?.qr_code || o.qr_code || o.qr_tracking?.qrTagId || o.bag_id || o.bagId || o.publicId || o.id,
               plantId: o.plant_id || o.plantId || 'PLANT-LON-01',
               specialInstructions: o.specialInstructions || '',
               hasRewash: o.status === 'rewash_required',
@@ -484,41 +493,42 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
       )}
 
       {/* ── Page Header & Controls ── */}
-      <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/80 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className='flex items-center justify-between w-full'>
-            <h1 className="text-xl sm:text-2xl font-black text-[#03045E] tracking-tight">
-              Quality Inspection
-            </h1>
-            <button
-              type="button"
-              onClick={() => loadQCOrders(true)}
-              className="p-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
-              title="Refresh Queue"
-            >
-              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-[#0077B6]' : ''}`} />
-            </button>
-          </div>
+      <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-100 shadow-2xs flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 tracking-tight">
+            Quality Inspection
+          </h1>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Verify washed laundry batches before dispatch handover.
+          </p>
         </div>
+        <button
+          type="button"
+          onClick={() => loadQCOrders(true)}
+          className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/60 transition-colors cursor-pointer"
+          title="Refresh Queue"
+        >
+          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
+        </button>
       </div>
 
-      {/* ── Sticky Search Toolbar (Fixed on top once scrolled) ── */}
-      <div className="sticky top-16 md:top-[68px] z-10 py-2.5 -my-2.5 bg-[#f8fafc]/95 backdrop-blur-md">
-        <div className="bg-white rounded-2xl md:rounded-3xl p-3 sm:p-3.5 border border-slate-200/80 shadow-xs flex items-center gap-2.5">
+      {/* ── Sticky Search Toolbar ── */}
+      <div className="sticky top-16 md:top-[68px] z-10 py-2.5 -my-2.5 bg-slate-50/95 backdrop-blur-md">
+        <div className="bg-white rounded-2xl p-3 border border-slate-100 shadow-2xs flex items-center gap-2.5">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by Order ID, Name, Mobile Number..."
-              className="w-full pl-10 pr-9 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-[#0077B6] focus:bg-white transition-all"
+              placeholder="Search by Order ID, Name, Phone..."
+              className="w-full pl-10 pr-9 py-2 bg-slate-50 border border-slate-200/80 rounded-xl text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 text-xs font-semibold cursor-pointer"
               >
                 Clear
               </button>
@@ -527,100 +537,95 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
         </div>
       </div>
 
-      {/* ── Orders Listing in Clean Customer-Portal Style ── */}
+      {/* ── Orders Listing ── */}
       {loading ? (
-        <div className="py-24 text-center text-slate-400 space-y-3 bg-white rounded-3xl border border-slate-200">
-          <div className="w-8 h-8 border-3 border-[#0077B6] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-bold text-slate-600">Loading quality inspection queue...</p>
+        <div className="py-20 text-center text-slate-400 space-y-3 bg-white rounded-2xl border border-slate-100 shadow-2xs">
+          <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs font-medium text-slate-500">Loading inspection queue...</p>
         </div>
       ) : filteredOrders.length === 0 ? (
-        <div className="bg-white rounded-3xl p-16 text-center border-2 border-dashed border-slate-200 space-y-4">
-          <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-3xl flex items-center justify-center mx-auto border border-emerald-100">
-            <CheckCircle2 className="w-8 h-8" />
+        <div className="bg-white rounded-2xl p-12 text-center border border-slate-100 shadow-2xs space-y-3">
+          <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center mx-auto border border-emerald-100">
+            <CheckCircle2 className="w-6 h-6" />
           </div>
-          <div className="max-w-md mx-auto space-y-1">
-            <h3 className="text-base font-black text-slate-900">Inspection Queue Clear</h3>
+          <div className="max-w-md mx-auto space-y-0.5">
+            <h3 className="text-sm font-bold text-slate-900">Inspection Queue Clear</h3>
             <p className="text-xs text-slate-500">
               {searchQuery
-                ? `No orders matching "${searchQuery}". Try clearing your search query.`
-                : 'All washed batches have passed inspection and are ready for delivery dispatch.'}
+                ? `No orders matching "${searchQuery}".`
+                : 'All completed batches have passed inspection.'}
             </p>
           </div>
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery('')}
-              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-medium cursor-pointer transition-colors"
             >
               Clear Search
             </button>
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4 md:gap-5 w-full min-w-0">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full min-w-0">
           {filteredOrders.map((order, idx) => {
             const isRewash = order.hasRewash;
             return (
               <article
                 key={order.id || idx}
                 onClick={() => handleOpenQCModal(order)}
-                className={`order-card w-full min-w-0 rounded-2xl md:rounded-3xl border bg-white p-3.5 sm:p-4 md:p-5 shadow-xs hover:shadow-lg transition-all cursor-pointer select-none group box-border flex items-center justify-between gap-3 sm:gap-4 ${isRewash
-                  ? 'border-purple-200/90 hover:border-purple-400'
-                  : 'border-[#e7eaf2] hover:border-[#102e78]/40'
+                className={`w-full min-w-0 rounded-2xl border bg-white p-4 shadow-2xs hover:border-slate-200 transition-all cursor-pointer select-none group flex items-center justify-between gap-3 ${isRewash
+                  ? 'border-purple-200/90'
+                  : 'border-slate-100'
                   }`}
               >
-                <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
-                  {/* Dynamic Status Icon */}
-                  <div className={`flex h-11 w-11 sm:h-12 sm:w-12 md:h-13 md:w-13 shrink-0 items-center justify-center rounded-xl md:rounded-2xl transition-transform group-hover:scale-105 ${isRewash ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-[#0077B6]'
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  {/* Status Icon */}
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-transform group-hover:scale-105 ${isRewash ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600'
                     }`}>
                     {isRewash ? (
-                      <RotateCcw className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2]" />
+                      <RotateCcw className="w-5 h-5" />
                     ) : (
-                      <ClipboardCheck className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2]" />
+                      <ClipboardCheck className="w-5 h-5" />
                     )}
                   </div>
 
                   {/* Content */}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                        <h3 className="text-sm sm:text-base md:text-[17px] font-bold text-[#071844] group-hover:text-[#102e78] transition-colors truncate">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors truncate">
                           #{order.id}
                         </h3>
-                        <span className={`text-[9px] sm:text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${isRewash
-                          ? 'bg-purple-100 text-purple-800'
-                          : 'bg-amber-50 text-amber-800 border border-amber-200'
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${isRewash
+                          ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
+                          : 'bg-amber-50 text-amber-800 border border-amber-200/60'
                           }`}>
-                          {isRewash ? 'Rewash' : 'Ready for QC'}
+                          {isRewash ? 'Rewash' : 'Ready'}
                         </span>
                       </div>
-                      <span className="text-xs sm:text-sm md:text-base font-extrabold text-[#071844] shrink-0">
-                        {order.itemCount} {order.itemCount === 1 ? 'Item' : 'Items'}
+                      <span className="text-xs font-semibold text-slate-700 shrink-0">
+                        {order.itemCount} {order.itemCount === 1 ? 'item' : 'items'}
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-[13px] text-[#536486] truncate mt-1">
+                    <div className="flex items-center gap-1.5 text-xs text-slate-500 truncate mt-1">
                       <span className="truncate font-medium text-slate-700">{order.customerName}</span>
                       {order.customerPhone && (
                         <>
                           <span className="text-slate-300 shrink-0">•</span>
-                          <span className="truncate text-slate-500 font-mono text-[11px] sm:text-xs">{order.customerPhone}</span>
+                          <span className="truncate text-slate-400 font-mono text-[11px]">{order.customerPhone}</span>
                         </>
                       )}
                       <span className="text-slate-300 shrink-0">•</span>
-                      <span className="truncate text-slate-500">{order.serviceType}</span>
-                      <span className="text-slate-300 shrink-0">•</span>
-                      <span className="text-slate-400 shrink-0 text-[10px] sm:text-[11px] font-mono">
+                      <span className="truncate text-slate-400 text-[10px] font-mono">
                         {order.bagQr}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Right side: Chevron */}
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <ChevronRight className="w-4 h-4 md:w-5 md:h-5 text-gray-400 group-hover:text-[#102e78] group-hover:translate-x-1 transition-all" />
-                </div>
+                <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all shrink-0" />
               </article>
             );
           })}
@@ -690,7 +695,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                   <button
                     type="button"
                     onClick={() => handleSelectAllChecks(!allChecksPassed)}
-                    className="text-xs text-[#0077B6] hover:underline font-semibold cursor-pointer"
+                    className="text-xs text-blue-600 hover:underline font-semibold cursor-pointer"
                   >
                     {allChecksPassed ? 'Clear All' : 'Select All'}
                   </button>
@@ -719,7 +724,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                               type="checkbox"
                               checked={isChecked}
                               onChange={() => { }}
-                              className="w-3.5 h-3.5 rounded text-[#0077B6] accent-[#0077B6] cursor-pointer shrink-0"
+                              className="w-3.5 h-3.5 rounded text-blue-600 accent-blue-600 cursor-pointer shrink-0"
                             />
                             <span className="truncate leading-tight">{step.title}</span>
                           </label>
@@ -750,7 +755,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                               type="checkbox"
                               checked={isChecked}
                               onChange={() => { }}
-                              className="w-3.5 h-3.5 rounded text-[#0077B6] accent-[#0077B6] cursor-pointer shrink-0"
+                              className="w-3.5 h-3.5 rounded text-blue-600 accent-blue-600 cursor-pointer shrink-0"
                             />
                             <span className="truncate leading-tight">{step.title}</span>
                           </label>
@@ -763,7 +768,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
             </div>
 
             {/* Footer - Minimal, clean, required controls only */}
-            <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+            <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-3">
               <span className="text-xs text-slate-500">
                 {checkedCount === TOTAL_CHECKLIST_COUNT ? 'All 10 checks verified' : `${checkedCount} of 10 checks verified`}
               </span>
@@ -773,7 +778,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                   type="button"
                   disabled={isSubmitting}
                   onClick={() => submitQC('reprocess')}
-                  className="px-4 py-2 border border-slate-300 hover:bg-slate-100 rounded-xl text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
+                  className="px-4 py-2 border border-slate-200/80 hover:bg-slate-100 rounded-xl text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
                 >
                   Route to Rewash
                 </button>
@@ -782,9 +787,9 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                   type="button"
                   disabled={isSubmitting}
                   onClick={() => submitQC('passed')}
-                  className={`px-5 py-2 rounded-xl text-xs font-semibold text-white transition-colors cursor-pointer ${allChecksPassed
+                  className={`px-5 py-2 rounded-xl text-xs font-semibold text-white transition-colors cursor-pointer shadow-2xs ${allChecksPassed
                     ? 'bg-emerald-600 hover:bg-emerald-700'
-                    : 'bg-[#03045E] hover:bg-[#023E8A]'
+                    : 'bg-blue-600 hover:bg-blue-700'
                     }`}
                 >
                   Pass Quality Check
@@ -881,13 +886,13 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
           >
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-[#0077B6]/10 text-[#0077B6] flex items-center justify-center">
+                <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
                   <Wrench className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-black text-sm text-slate-900">Plant Machinery Assignment</h3>
+                  <h3 className="font-bold text-sm text-slate-900">Plant Machinery Assignment</h3>
                   <p className="text-[11px] text-slate-500">
-                    {selectedOrder ? `Assign batch for Order #${selectedOrder.id}` : 'Plant Lon-01 Equipment'}
+                    {selectedOrder ? `Assign batch for Order #${selectedOrder.id}` : 'Plant Equipment'}
                   </p>
                 </div>
               </div>
@@ -902,11 +907,11 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
 
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Available Washer / Dryer Unit</label>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Available Washer / Dryer Unit</label>
                 <select
                   value={selectedMachineId}
                   onChange={(e) => setSelectedMachineId(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-[#0077B6]"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="WASHER-01">Washer #1 — Miele Professional 18kg (Active / Available)</option>
                   <option value="WASHER-02">Washer #2 — Primus Heavy Load 24kg (Active / Available)</option>
@@ -917,11 +922,11 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Processing Program</label>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">Processing Program</label>
                 <select
                   value={cycleType}
                   onChange={(e) => setCycleType(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-[#0077B6]"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="Intensive Stain Removal 60°C">Intensive Stain Removal 60°C (Recommended for Rewash)</option>
                   <option value="Eco Wash 40°C">Eco Wash 40°C (Standard)</option>
@@ -971,7 +976,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                 type="button"
                 onClick={handleStartMachineRun}
                 disabled={machineRunSubmitting}
-                className="flex-1 py-2.5 bg-[#03045E] hover:bg-[#023E8A] disabled:opacity-50 text-white font-black rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 shadow-2xs cursor-pointer"
               >
                 {machineRunSubmitting ? 'Starting...' : 'Start Cycle on Machine'}
               </button>
@@ -981,57 +986,9 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
               <button
                 type="button"
                 onClick={() => setIsFaultModalOpen(true)}
-                className="text-[11px] text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
+                className="text-[11px] text-rose-600 hover:text-rose-800 font-semibold hover:underline cursor-pointer"
               >
-                ⚠️ Report Breakdown / Fault for {selectedMachineId}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── MODAL: Report Mechanical Fault ── */}
-      {isFaultModalOpen && (
-        <div
-          className="fixed inset-0 z-70 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
-          onClick={() => setIsFaultModalOpen(false)}
-        >
-          <div
-            className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-rose-100 space-y-4 animate-in zoom-in-95 duration-150"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-2.5 text-rose-600">
-              <AlertTriangle className="w-5 h-5" />
-              <h4 className="font-extrabold text-sm text-slate-900">Report Mechanical Fault</h4>
-            </div>
-
-            <p className="text-xs text-slate-600">
-              Reporting breakdown for <span className="font-bold text-slate-900">{selectedMachineId}</span>. This will notify plant management and take the unit offline.
-            </p>
-
-            <textarea
-              value={faultReason}
-              onChange={(e) => setFaultReason(e.target.value)}
-              placeholder="Describe issue: e.g. Water inlet solenoid leak or motor imbalance..."
-              rows={3}
-              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-rose-500 focus:outline-hidden"
-            />
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsFaultModalOpen(false)}
-                className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={!faultReason.trim()}
-                onClick={handleReportMachineFault}
-                className="flex-1 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition-colors cursor-pointer"
-              >
-                Submit Alert
+                Report Breakdown / Fault for {selectedMachineId}
               </button>
             </div>
           </div>
@@ -1045,39 +1002,39 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
           onClick={() => setDeliverySuccessModal(null)}
         >
           <div
-            className="relative w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-slate-100 text-center space-y-4 animate-in zoom-in-95 duration-150 overflow-hidden"
+            className="relative w-full max-w-md bg-white rounded-2xl p-6 shadow-2xl border border-slate-100 text-center space-y-4 animate-in zoom-in-95 duration-150 overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-emerald-500 via-[#00B4D8] to-[#03045E]" />
+            <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
 
-            <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-3xl flex items-center justify-center mx-auto shadow-inner mt-2 border border-emerald-100">
-              <Truck className="w-8 h-8 text-emerald-600" />
+            <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto shadow-2xs mt-2 border border-emerald-100">
+              <Truck className="w-7 h-7 text-emerald-600" />
             </div>
 
             <div>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200/60">
                 QC Passed • Dispatched for Delivery
               </span>
-              <h3 className="text-lg font-black text-[#03045E] mt-1.5 tracking-tight">
+              <h3 className="text-base font-bold text-slate-900 mt-2 tracking-tight">
                 Package Sealed & Ready for Driver
               </h3>
               <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                Order <span className="font-mono font-bold text-slate-800">{deliverySuccessModal.orderId}</span> has passed all quality checkpoints and is waiting at the collection bay.
+                Order <span className="font-mono font-bold text-slate-800">{deliverySuccessModal.orderId}</span> has passed quality inspection.
               </p>
             </div>
 
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-left space-y-2 text-xs">
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-left space-y-2 text-xs">
               <div className="flex items-center justify-between">
-                <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Customer</span>
-                <span className="font-bold text-slate-900">{deliverySuccessModal.customerName}</span>
+                <span className="text-slate-400 font-semibold uppercase text-[9px] tracking-wider">Customer</span>
+                <span className="font-semibold text-slate-900">{deliverySuccessModal.customerName}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Bag QR Tag</span>
-                <span className="font-mono font-bold text-[#0077B6]">{deliverySuccessModal.bagQr}</span>
+                <span className="text-slate-400 font-semibold uppercase text-[9px] tracking-wider">Bag QR Tag</span>
+                <span className="font-mono font-semibold text-blue-600">{deliverySuccessModal.bagQr}</span>
               </div>
               <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
-                <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Assigned Driver</span>
-                <span className="font-black text-emerald-700 flex items-center gap-1">
+                <span className="text-slate-400 font-semibold uppercase text-[9px] tracking-wider">Assigned Driver</span>
+                <span className="font-bold text-emerald-700 flex items-center gap-1">
                   <CheckCircle2 className="w-3.5 h-3.5" /> {deliverySuccessModal.driverName || 'Driver Dispatched'}
                 </span>
               </div>
@@ -1087,7 +1044,7 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
               <button
                 type="button"
                 onClick={() => setDeliverySuccessModal(null)}
-                className="flex-1 py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-2xl text-xs font-black transition-all cursor-pointer"
+                className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
               >
                 Inspect Next Order
               </button>
@@ -1098,9 +1055,9 @@ export const ProcessorQCView: React.FC<ProcessorQCViewProps> = ({ onNavigateTab 
                     setDeliverySuccessModal(null);
                     onNavigateTab('orders');
                   }}
-                  className="flex-1 py-3 px-4 bg-[#03045E] hover:bg-[#023E8A] text-white rounded-2xl text-xs font-black transition-all shadow-md shadow-[#03045E]/20 cursor-pointer flex items-center justify-center gap-1.5"
+                  className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold transition-colors shadow-2xs cursor-pointer flex items-center justify-center gap-1.5"
                 >
-                  <ShoppingBag className="w-3.5 h-3.5 text-[#48CAE4]" />
+                  <ShoppingBag className="w-3.5 h-3.5" />
                   <span>Processing Board</span>
                 </button>
               )}

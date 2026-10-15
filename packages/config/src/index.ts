@@ -91,3 +91,5 @@ export const API_ENDPOINTS = {
   MANAGER: '/api/v1/manager',
   ADMIN: '/api/v1/admin',
 } as const;
+
+export * from './images';

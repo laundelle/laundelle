@@ -1,6 +1,6 @@
 {
   "metadata.json": {
-    "mtime": 1786635920.0,
+    "mtime": 1786635920,
     "seen": 1789154989.3733294,
     "ast_hash": "2fc76e80e0a9c45cff8065b0d177a433",
     "semantic_hash": "2fc76e80e0a9c45cff8065b0d177a433"
@@ -869,12 +869,6 @@
     "ast_hash": "a831cf3669f1e6ab85d8a80ebe655f99",
     "semantic_hash": ""
   },
-  "README.md": {
-    "mtime": 1786635920.0,
-    "seen": 1789071297.2667265,
-    "ast_hash": "3d1f8262c0d8e9baf1a65ec431f79e83",
-    "semantic_hash": ""
-  },
   "public/Images/AI Chatbot Girl.png": {
     "mtime": 1788458364.9642615,
     "seen": 1789071297.2667277,
@@ -1079,22 +1073,10 @@
     "ast_hash": "34fd7bab616c0ae5c8bc20c6e82923bb",
     "semantic_hash": ""
   },
-  "test/test-order-pin.ts": {
-    "mtime": 1789243224.2104003,
-    "seen": 1789243464.0478377,
-    "ast_hash": "c7ad4d0c14d26a653139d0c8c3d91bd0",
-    "semantic_hash": ""
-  },
   "src/lib/scheduleValidation.ts": {
     "mtime": 1789980691.8546913,
     "seen": 1789981366.6809187,
     "ast_hash": "7914601be03ae9f1f76ac6f038eb7a85",
-    "semantic_hash": ""
-  },
-  "test/test-schedule-validation.ts": {
-    "mtime": 1789244016.5921834,
-    "seen": 1789244287.4967031,
-    "ast_hash": "1c43cc883e7c2873227390c115ffb5fa",
     "semantic_hash": ""
   },
   "src/components/OrderPlacedAnimationModal.tsx": {
@@ -1341,12 +1323,6 @@
     "mtime": 1790123203.4307349,
     "seen": 1790123423.8232384,
     "ast_hash": "f7b10a7ba140b7d2616c049544ba58bd",
-    "semantic_hash": ""
-  },
-  "PROJECT_DOCUMENTATION.md": {
-    "mtime": 1790093092.9970856,
-    "seen": 1790123423.823252,
-    "ast_hash": "c58ee5719a88e6f7a84f5c9f00a53f00",
     "semantic_hash": ""
   },
   "public/assets/gallery-shirt-after.jpg": {

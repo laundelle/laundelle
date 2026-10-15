@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, MapPin, Calendar, Bell, Shield, ArrowLeft, ChevronDown, Check, AlertTriangle } from 'lucide-react';
 import { AdminRole, SystemAlert } from '@laundelle/types';
-import { apiFetch } from '@laundelle/api-client';
+import { apiFetch, dbFetchPlants } from '@laundelle/api-client';
 
 interface AdminTopbarProps {
   currentRole: AdminRole;
@@ -10,6 +10,10 @@ interface AdminTopbarProps {
   onChangeLocation: (loc: string) => void;
   dateFilter: string;
   onChangeDateFilter: (df: string) => void;
+  customStartDate?: string;
+  onChangeCustomStartDate?: (date: string) => void;
+  customEndDate?: string;
+  onChangeCustomEndDate?: (date: string) => void;
   onOpenGlobalSearch: () => void;
   onExitAdmin: () => void;
 }
@@ -21,12 +25,17 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
   onChangeLocation,
   dateFilter,
   onChangeDateFilter,
+  customStartDate,
+  onChangeCustomStartDate,
+  customEndDate,
+  onChangeCustomEndDate,
   onOpenGlobalSearch,
   onExitAdmin,
 }) => {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const [alerts, setAlerts] = useState<SystemAlert[]>([]);
+  const [plants, setPlants] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchAlerts = async () => {
@@ -42,159 +51,153 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
             setAlerts(json.data.alerts);
           }
         }
-      } catch {}
+      } catch { }
     };
+
+    const fetchAllPlants = async () => {
+      try {
+        const data = await dbFetchPlants();
+        const safe = Array.isArray(data) ? data : ((data as any)?.plants || []);
+        setPlants(safe);
+      } catch { }
+    };
+
     fetchAlerts();
+    fetchAllPlants();
+
+    window.addEventListener('l2u_plants_changed', fetchAllPlants);
+    return () => {
+      window.removeEventListener('l2u_plants_changed', fetchAllPlants);
+    };
   }, []);
 
   const unresolvedAlerts = alerts.filter(a => a.status === 'unresolved');
 
   return (
-    <header className="w-full bg-white border-b border-gray-200 px-4 sm:px-8 py-3.5 flex items-center justify-between gap-4 sticky top-0 z-30 shadow-xs">
-      {/* Global Search Bar Button */}
+    <header className="w-full bg-white border-b border-slate-100 px-4 sm:px-8 py-3 flex items-center justify-between gap-4 sticky top-0 z-30">
+      {/* Top Left Section: Plant Location Dropdown + Global Search Bar */}
       <div className="flex items-center gap-3 flex-1 max-w-xl">
-        <button
-          onClick={onOpenGlobalSearch}
-          className="w-full bg-gray-50 hover:bg-gray-100/80 border border-gray-200 rounded-2xl px-4 py-2.5 flex items-center justify-between text-xs text-gray-500 transition-all cursor-pointer shadow-2xs"
-        >
-          <div className="flex items-center gap-2 overflow-hidden whitespace-nowrap text-ellipsis">
-            <Search className="w-4 h-4 text-[#0077B6] shrink-0" />
-            <span className="truncate">Search Order #, Customer, Bag...</span>
-          </div>
-          <kbd className="hidden sm:inline-block px-2 py-0.5 bg-white border border-gray-200 rounded-md text-[10px] font-mono text-gray-400">
-            Ctrl + K
-          </kbd>
-        </button>
-      </div>
-
-      {/* Control Tools Right Side */}
-      <div className="flex items-center gap-1.5 md:gap-3 shrink-0">
-        {/* Location Selector */}
-        <div className="relative hidden md:block">
-          <div className="flex items-center gap-1.5 bg-[#CAF0F8]/50 text-[#03045E] px-3 py-1.5 rounded-xl text-xs font-bold border border-[#ADE8F4]">
-            <MapPin className="w-3.5 h-3.5 text-[#0077B6]" />
+        {/* Plant Location Selector (Top Left) */}
+        <div className="relative shrink-0">
+          <div className="flex items-center gap-1.5 bg-slate-50/90 hover:bg-slate-100 text-slate-800 px-3 py-2 rounded-xl text-xs font-bold border border-slate-200/90 hover:border-slate-300 transition-colors shadow-2xs">
+            <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
             <select
               value={selectedLocation}
               onChange={(e) => onChangeLocation(e.target.value)}
-              className="bg-transparent focus:outline-hidden font-bold cursor-pointer text-xs pr-2"
+              className="bg-transparent focus:outline-hidden font-bold cursor-pointer text-xs pr-1 text-slate-800"
+              title="Select plant location"
             >
               <option value="All Locations">All Locations</option>
-              <option value="Preston Operations Hub">Preston Hub</option>
-              <option value="Blackburn Facility Center">Blackburn Plant</option>
-              <option value="Bolton Logistics Hub">Bolton Hub</option>
-              <option value="Chorley Service Station">Chorley Station</option>
+              {plants.map((plant: any) => (
+                <option key={plant._id || plant.id} value={plant.name}>
+                  {plant.name} {plant.code ? `(${plant.code})` : ''}
+                </option>
+              ))}
             </select>
           </div>
         </div>
 
-        {/* Date Filter */}
-        <div className="hidden md:flex items-center gap-1.5 bg-gray-100 text-gray-700 px-3 py-1.5 rounded-xl text-xs font-semibold">
-          <Calendar className="w-3.5 h-3.5 text-[#0077B6]" />
-          <select
-            value={dateFilter}
-            onChange={(e) => onChangeDateFilter(e.target.value)}
-            className="bg-transparent focus:outline-hidden font-semibold cursor-pointer text-xs"
+        {/* Global Search Bar Button */}
+        <div className="flex-1 min-w-0">
+          <button
+            onClick={onOpenGlobalSearch}
+            className="w-full bg-slate-50/70 hover:bg-slate-100/70 border border-slate-200/70 rounded-xl px-3.5 py-2 flex items-center justify-between text-xs text-slate-400 transition-all cursor-pointer"
           >
-            <option value="Today">Today</option>
-            <option value="Tomorrow">Tomorrow</option>
-            <option value="This Week">This Week</option>
-            <option value="Custom">Custom Range</option>
-          </select>
+            <div className="flex items-center gap-2 overflow-hidden whitespace-nowrap text-ellipsis">
+              <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="truncate">Search orders, customers, staff, audit...</span>
+            </div>
+            <kbd className="hidden sm:inline-block px-1.5 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-mono text-slate-400">
+              Ctrl K
+            </kbd>
+          </button>
+        </div>
+      </div>
+
+      {/* Control Tools Right Side: Date Filter + Alerts */}
+      <div className="flex items-center gap-2 md:gap-3 shrink-0">
+        {/* Real-Time Date Range Filter */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-white text-slate-700 px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 hover:border-slate-300 transition-colors shadow-2xs">
+            <Calendar className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <select
+              value={dateFilter}
+              onChange={(e) => onChangeDateFilter(e.target.value)}
+              className="bg-transparent focus:outline-hidden font-semibold cursor-pointer text-xs pr-1"
+            >
+              <option value="Today">Today</option>
+              <option value="Yesterday">Yesterday</option>
+              <option value="This Week">This Week</option>
+              <option value="Custom Range">Custom Range</option>
+            </select>
+          </div>
+
+          {(dateFilter === 'Custom' || dateFilter === 'Custom Range') && (
+            <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200 text-xs shadow-2xs animate-in fade-in duration-150">
+              <input
+                type="date"
+                value={customStartDate || ''}
+                onChange={(e) => onChangeCustomStartDate?.(e.target.value)}
+                className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer"
+                title="Start Date"
+              />
+              <span className="text-slate-400 font-bold text-[10px]">to</span>
+              <input
+                type="date"
+                value={customEndDate || ''}
+                onChange={(e) => onChangeCustomEndDate?.(e.target.value)}
+                className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer"
+                title="End Date"
+              />
+            </div>
+          )}
         </div>
 
         {/* Notifications Dropdown */}
         <div className="relative">
           <button
             onClick={() => setNotificationsOpen(!notificationsOpen)}
-            className="p-2 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 relative cursor-pointer transition-colors"
+            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-50 relative cursor-pointer transition-colors border border-transparent hover:border-slate-100"
             title="System Alerts"
           >
-            <Bell className="w-4 h-4 text-[#03045E]" />
+            <Bell className="w-4 h-4 text-slate-600" />
             {unresolvedAlerts.length > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center animate-pulse">
-                {unresolvedAlerts.length}
-              </span>
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-600 rounded-full" />
             )}
           </button>
 
           {notificationsOpen && (
-            <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-white rounded-2xl shadow-xl border border-gray-200 p-4 space-y-3 z-50 animate-in fade-in zoom-in duration-150">
-              <div className="flex items-center justify-between pb-2 border-b border-gray-100">
-                <span className="text-xs font-bold text-[#03045E]">Operations Alerts</span>
-                <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">
+            <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-white rounded-2xl shadow-xl border border-slate-100 p-4 space-y-3 z-50 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <span className="text-xs font-bold text-slate-900">Operations Alerts</span>
+                <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-semibold">
                   {unresolvedAlerts.length} Active
                 </span>
               </div>
 
               <div className="space-y-2 max-h-64 overflow-y-auto">
-                {unresolvedAlerts.map((alt) => (
-                  <div key={alt.id} className="p-2.5 bg-red-50/70 border border-red-100 rounded-xl space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-red-900 flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
-                        {alt.title}
-                      </span>
-                      <span className="text-[9px] font-semibold text-red-600">{alt.createdAt.slice(11, 16)}</span>
+                {unresolvedAlerts.length === 0 ? (
+                  <p className="text-xs text-slate-400 py-3 text-center">No active alerts</p>
+                ) : (
+                  unresolvedAlerts.map((alt) => (
+                    <div key={alt.id} className="p-2.5 bg-slate-50 rounded-xl space-y-1 border border-slate-100">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                          {alt.title}
+                        </span>
+                        <span className="text-[9px] font-medium text-slate-400">{alt.createdAt.slice(11, 16)}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 leading-snug">{alt.message}</p>
                     </div>
-                    <p className="text-[11px] text-red-800 leading-snug">{alt.message}</p>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           )}
         </div>
-
-        {/* Role Switcher */}
-        <div className="relative">
-          <button
-            onClick={() => setRoleDropdownOpen(!roleDropdownOpen)}
-            className="flex items-center gap-1.5 bg-[#03045E] text-white px-2.5 py-1.5 md:px-3.5 rounded-xl text-xs font-bold cursor-pointer hover:bg-[#023E8A] transition-all"
-          >
-            <Shield className="w-3.5 h-3.5 text-[#48CAE4] shrink-0" />
-            <span className="capitalize hidden sm:inline">{currentRole.replace('_', ' ')}</span>
-            <ChevronDown className="w-3.5 h-3.5 opacity-70 shrink-0" />
-          </button>
-
-          {roleDropdownOpen && (
-            <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-gray-200 p-2 z-50 space-y-1 animate-in fade-in zoom-in duration-150">
-              <span className="block px-3 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                Switch Portal Role
-              </span>
-              {[
-                { role: 'super_admin', label: 'Super Admin' },
-                { role: 'admin', label: 'Admin / Ops' },
-                { role: 'manager', label: 'Plant Manager' },
-                { role: 'driver', label: 'Driver Portal (Mobile)' },
-                { role: 'processor', label: 'Processor Station' },
-              ].map((item) => (
-                <button
-                  key={item.role}
-                  onClick={() => {
-                    onChangeRole(item.role as AdminRole);
-                    setRoleDropdownOpen(false);
-                  }}
-                  className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer flex items-center justify-between transition-colors ${
-                    currentRole === item.role ? 'bg-[#CAF0F8] text-[#03045E]' : 'hover:bg-gray-100 text-gray-700'
-                  }`}
-                >
-                  <span>{item.label}</span>
-                  {currentRole === item.role && <Check className="w-3.5 h-3.5 text-[#0077B6]" />}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Exit Admin Portal -> Customer Website */}
-        <button
-          onClick={onExitAdmin}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
-          title="Back to Customer Portal"
-        >
-          <ArrowLeft className="w-3.5 h-3.5 text-[#0077B6]" />
-          <span className="hidden sm:inline">Customer Site</span>
-        </button>
       </div>
     </header>
   );
 };
+

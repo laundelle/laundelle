@@ -31,6 +31,9 @@ export type {
   IncidentStatus,
   IncidentRecord,
   Machine as AdminFacilityMachine,
+  Coupon,
+  CustomChargeItem,
+  PricingCharges,
 } from './admin';
 
 export * as AdminTypes from './admin';

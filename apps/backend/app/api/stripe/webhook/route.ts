@@ -16,7 +16,8 @@ export async function POST(req: NextRequest) {
         // Invalid signatures and payloads are permanent client errors. Any internal
         // processing error must be a 5xx so Stripe retries the verified event.
         const status = err instanceof BadRequestError ? err.status : 500;
-        return new NextResponse(`Webhook error: ${err.message}`, { status });
+        const message = status === 500 ? 'Internal webhook processing error' : `Webhook error: ${err.message}`;
+        return new NextResponse(message, { status });
     }
 }
 
