@@ -63,7 +63,14 @@ export default function AdminPage() {
         const picture = auth0User.picture;
 
         try {
-          const idClaims = await getIdTokenClaims().catch(() => undefined);
+          const nowSec = Math.floor(Date.now() / 1000);
+          let idClaims = await getIdTokenClaims().catch(() => undefined);
+          if (!idClaims?.__raw || !idClaims.exp || idClaims.exp <= nowSec + 60) {
+            try {
+              await getAccessTokenSilently({ cacheMode: 'off' });
+              idClaims = await getIdTokenClaims().catch(() => undefined);
+            } catch {}
+          }
           const accessToken = idClaims?.__raw || (await getAccessTokenSilently().catch(() => undefined));
           const syncResult = await dbAuth0Sync({ email, name, sub, picture, portal: 'admin' }, accessToken);
           if (cancelled) return;

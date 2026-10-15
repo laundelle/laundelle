@@ -460,6 +460,7 @@ async function verifyAuth0Rs256Async(token: string): Promise<JwtPayload | null> 
 
         // Check expiration with 60-second clock skew tolerance
         if (rawPayload.exp && nowSec > rawPayload.exp + 60) {
+            console.warn(`[Auth0 Verify] Token expired: exp=${rawPayload.exp}, nowSec=${nowSec}, expired ${nowSec - rawPayload.exp}s ago`);
             return null; // Expired
         }
 

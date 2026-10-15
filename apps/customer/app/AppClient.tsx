@@ -65,6 +65,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
     isLoading: isAuth0Loading,
     error: auth0Error,
     loginWithRedirect,
+    logout: auth0Logout,
     getAccessTokenSilently,
     getIdTokenClaims,
   } = useAuth0();
@@ -398,16 +399,58 @@ export default function App({ initialTab }: { initialTab?: string }) {
         const picture = auth0User.picture;
 
         try {
-          const idClaims = await getIdTokenClaims().catch(() => undefined);
-          const accessToken = idClaims?.__raw || (await getAccessTokenSilently().catch(() => undefined));
-          const syncResult = await dbAuth0Sync({ email, name, sub, picture, portal: 'customer' }, accessToken);
+          const nowSec = Math.floor(Date.now() / 1000);
+          let idClaims = await getIdTokenClaims().catch(() => undefined);
+
+          // If the cached ID token claims are missing or expired (with 60s buffer),
+          // refresh silently to fetch renewed tokens from Auth0.
+          if (!idClaims?.__raw || !idClaims.exp || idClaims.exp <= nowSec + 60) {
+            try {
+              await getAccessTokenSilently({ cacheMode: 'off' });
+              idClaims = await getIdTokenClaims().catch(() => undefined);
+            } catch (silentErr) {
+              console.warn('[AppClient] Silent token refresh attempt:', silentErr);
+            }
+          }
+
+          let accessToken = idClaims?.__raw || (await getAccessTokenSilently().catch(() => undefined));
+          let syncResult = await dbAuth0Sync({ email, name, sub, picture, portal: 'customer' }, accessToken);
+          if (isCancelled) return;
+
+          // If backend rejected token as expired or invalid, try a force refresh recovery once
+          if (syncResult.error && (syncResult.error.toLowerCase().includes('expired') || syncResult.error.toLowerCase().includes('invalid'))) {
+            try {
+              await getAccessTokenSilently({ cacheMode: 'off' });
+              const freshClaims = await getIdTokenClaims().catch(() => undefined);
+              if (freshClaims?.__raw && freshClaims.exp && freshClaims.exp > nowSec + 60) {
+                syncResult = await dbAuth0Sync({ email, name, sub, picture, portal: 'customer' }, freshClaims.__raw);
+              }
+            } catch {
+              // Forced refresh failed
+            }
+          }
+
           if (isCancelled) return;
 
           if (syncResult.error) {
-            console.error('[AppClient] Customer authentication restriction:', syncResult.error);
-            showToast(`⚠️ ${syncResult.error}`);
+            console.warn('[AppClient] Customer authentication synchronization warning:', syncResult.error);
             clearSession();
             setAuthSession({ role: null, user: null, isAuthenticated: false });
+
+            // If token has expired and cannot be renewed, purge stale Auth0 local tokens so the user is not stuck
+            if (syncResult.error.toLowerCase().includes('expired') || syncResult.error.toLowerCase().includes('invalid')) {
+              try {
+                if (typeof window !== 'undefined') {
+                  Object.keys(localStorage).forEach(k => {
+                    if (k.startsWith('@@auth0spajs@@')) localStorage.removeItem(k);
+                  });
+                }
+                auth0Logout?.({ logoutParams: { returnTo: typeof window !== 'undefined' ? window.location.origin : undefined } });
+              } catch {}
+              showToast('ℹ️ Your session has expired. Please sign in again.');
+            } else {
+              showToast(`⚠️ ${syncResult.error}`);
+            }
             return;
           }
 

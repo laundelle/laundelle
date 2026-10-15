@@ -16,7 +16,6 @@ export function sanitizeIdInput(input: unknown): string {
   return str.replace(/^["']|["']$/g, '').trim();
 }
 
-declare const require: any;
 declare const process: any;
 
 function tryGetObjectId(id: string, customConverter?: (val: string) => any): any {
@@ -24,20 +23,34 @@ function tryGetObjectId(id: string, customConverter?: (val: string) => any): any
     try { return customConverter(id); } catch {}
   }
   if (typeof id === 'string' && id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id)) {
+    // In browser / client bundles, never attempt to load native MongoDB driver
+    if (typeof window !== 'undefined') {
+      return null;
+    }
     try {
-      if (typeof require !== 'undefined') {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const mongodb = require('mongodb');
-        const OId = mongodb.ObjectId || mongodb.default?.ObjectId;
-        if (OId) return new OId(id);
-      }
-    } catch {}
-    try {
-      if (typeof require !== 'undefined') {
-        const path = require('path');
-        const resolved = require(path.resolve(process.cwd(), 'apps/backend/node_modules/mongodb'));
-        const OId = resolved.ObjectId || resolved.default?.ObjectId;
-        if (OId) return new OId(id);
+      // Use dynamic runtime resolution so bundlers (Webpack / Next.js / Vite) do not statically trace and bundle 'mongodb' into client builds
+      const runtimeRequire =
+        typeof (globalThis as any).__non_webpack_require__ === 'function'
+          ? (globalThis as any).__non_webpack_require__
+          : typeof eval === 'function'
+            ? eval('require')
+            : null;
+
+      if (runtimeRequire) {
+        try {
+          const mongodb = runtimeRequire('mongodb');
+          const OId = mongodb.ObjectId || mongodb.default?.ObjectId;
+          if (OId) return new OId(id);
+        } catch {}
+
+        try {
+          const path = runtimeRequire('path');
+          if (typeof process !== 'undefined' && process.cwd) {
+            const resolved = runtimeRequire(path.resolve(process.cwd(), 'apps/backend/node_modules/mongodb'));
+            const OId = resolved.ObjectId || resolved.default?.ObjectId;
+            if (OId) return new OId(id);
+          }
+        } catch {}
       }
     } catch {}
   }
