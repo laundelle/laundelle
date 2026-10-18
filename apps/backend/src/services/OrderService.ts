@@ -11,6 +11,7 @@ import {
     matchesPostcode, 
     assertValidTransition 
 } from '@/lib/workflow';
+import { isPostcodeInServiceArea } from '@laundelle/utils';
 import {
     generateSecureNumericPin,
     generatePinSalt,
@@ -35,26 +36,15 @@ function generateOrderNumber(): string {
 
 // Locate the appropriate Plant, Plant Manager, and Driver for a given postcode and address
 export async function locatePlantAndDriverForOrder(db: any, rawPostcode: string, address: string, now: string) {
-    let candidatePostcode = (rawPostcode || '').trim().toUpperCase();
-    if (!candidatePostcode && address) {
-        const fullMatch = address.match(/[A-Z]{1,2}[0-9][A-Z0-9]?\s?[0-9][A-Z]{2}/i);
-        if (fullMatch) {
-            candidatePostcode = fullMatch[0].trim().toUpperCase();
-        } else {
-            const outwardMatch = address.match(/\b([A-Z]{1,2}[0-9][A-Z0-9]?)\b/i);
-            if (outwardMatch) {
-                candidatePostcode = outwardMatch[0].trim().toUpperCase();
-            }
-        }
-    }
-
-    const normalizedPostcode = normalizeUkPostcode(candidatePostcode);
+    const parsed = parseUkPostcode(rawPostcode || address);
+    const candidatePostcode = parsed ? parsed.full : (rawPostcode || '').trim().toUpperCase();
+    const normalizedPostcode = parsed ? parsed.full : normalizeUkPostcode(candidatePostcode);
 
     // 1. Fetch all active plants
-    const activePlants = await db.collection('plants').find({ status: 'ACTIVE' }).toArray();
+    const activePlants = await db.collection('plants').find({ status: { $in: ['ACTIVE', 'active'] } }).toArray();
     let selectedPlant: any = null;
 
-    // A. Match against plant.service_pincodes (exact, prefix, or matchesPostcode)
+    // A. Match against plant.service_pincodes using exact district/service area matching
     for (const plant of activePlants) {
         const pincodes: string[] = Array.isArray(plant.service_pincodes)
             ? plant.service_pincodes
@@ -62,56 +52,38 @@ export async function locatePlantAndDriverForOrder(db: any, rawPostcode: string,
 
         if (pincodes.length === 0) continue;
 
-        // Check if normalizedPostcode matches via workflow helper
-        if (normalizedPostcode && matchesPostcode(normalizedPostcode, pincodes)) {
+        if (isPostcodeInServiceArea(candidatePostcode, pincodes)) {
             selectedPlant = plant;
             break;
-        }
-
-        // Check if candidatePostcode or normalizedPostcode starts with any pincode (e.g. "PR3 2AB" starts with "PR3")
-        const cleanPostcode = (normalizedPostcode || candidatePostcode).replace(/\s+/g, '');
-        const hasPrefixMatch = pincodes.some((pin: string) => {
-            const cleanPin = pin.replace(/\s+/g, '');
-            return cleanPin && (cleanPostcode === cleanPin || cleanPostcode.startsWith(cleanPin));
-        });
-        if (hasPrefixMatch) {
-            selectedPlant = plant;
-            break;
-        }
-
-        // Check if address explicitly contains any of the plant's service_pincodes as a word boundary
-        if (address) {
-            const hasAddressMatch = pincodes.some((pin: string) => {
-                const escaped = pin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const regex = new RegExp(`\\b${escaped}\\b`, 'i');
-                return regex.test(address);
-            });
-            if (hasAddressMatch) {
-                selectedPlant = plant;
-                break;
-            }
         }
     }
 
     // B. Match via postcode_sectors collection if still not found
-    if (!selectedPlant && normalizedPostcode) {
-        const parsed = derivePostcodeSector(normalizedPostcode);
-        if (parsed) {
-            const pcDoc = await db.collection('postcode_sectors').findOne({
-                district: parsed.district,
-                sector: parsed.sector,
+    if (!selectedPlant && parsed) {
+        const sectorDigit = parsed.inward ? parsed.inward.charAt(0) : '';
+        let pcDoc: any = null;
+
+        if (sectorDigit) {
+            pcDoc = await db.collection('postcode_sectors').findOne({
+                district: parsed.outward,
+                sector: sectorDigit,
                 is_active: true
             });
-            if (pcDoc?.plant_id) {
-                selectedPlant = activePlants.find((pl: any) => String(pl._id) === String(pcDoc.plant_id));
-            }
+        }
+
+        if (!pcDoc) {
+            pcDoc = await db.collection('postcode_sectors').findOne({
+                district: parsed.outward,
+                is_active: true
+            });
+        }
+
+        if (pcDoc?.plant_id) {
+            selectedPlant = activePlants.find((pl: any) => String(pl._id) === String(pcDoc.plant_id) || pl.id === pcDoc.plant_id);
         }
     }
 
-    // C. Fallback: if unserviced area, pick first active plant
-    if (!selectedPlant && activePlants.length > 0) {
-        selectedPlant = activePlants[0];
-    }
+    // Note: Do NOT fallback to an arbitrary plant. If unserviced, selectedPlant remains null.
 
     // 2. Locate the Plant Manager assigned to this Plant
     let managerId: string | null = selectedPlant?.manager_id || null;
@@ -125,8 +97,13 @@ export async function locatePlantAndDriverForOrder(db: any, rawPostcode: string,
         }
         if (!managerId) {
             const mgr = await db.collection('users').findOne({
-                role: 'manager',
-                plant_id: selectedPlant._id,
+                role: { $in: ['manager', 'plant_manager'] },
+                $or: [
+                    { plant_id: selectedPlant._id },
+                    { plant_id: String(selectedPlant._id) },
+                    { plantId: selectedPlant._id },
+                    { plantId: String(selectedPlant._id) }
+                ],
                 is_active: true
             });
             if (mgr) {
@@ -136,63 +113,40 @@ export async function locatePlantAndDriverForOrder(db: any, rawPostcode: string,
         }
     }
 
-    // 3. Automatically locate Driver
+    // 3. Automatically locate Driver strictly isolated to this Plant
     let selectedDriver: any = null;
-    const allDrivers = await db.collection('users').find({
-        role: 'driver',
-        is_active: true
-    }).toArray();
+    if (selectedPlant) {
+        const plantIdStr = String(selectedPlant._id);
+        const managerIdStr = managerId ? String(managerId) : null;
 
-    const plantIdStr = selectedPlant ? String(selectedPlant._id) : null;
-    const managerIdStr = managerId ? String(managerId) : null;
+        const plantDrivers = await db.collection('users').find({
+            role: 'driver',
+            is_active: true,
+            $or: [
+                { plant_id: plantIdStr },
+                { plant_id: selectedPlant._id },
+                { plantId: plantIdStr },
+                { plantId: selectedPlant._id },
+                ...(managerIdStr ? [{ manager_id: managerIdStr }, { manager_id: managerId }, { plantManagerId: managerIdStr }] : [])
+            ]
+        }).toArray();
 
-    // A. Priority 1: Drivers covering the specific postcode
-    const coveringDrivers = allDrivers.filter((d: any) => {
-        const assigned = d.assigned_postcodes || d.assignedSectors || [];
-        // If driver has empty postcodes but belongs to this plant → treat as plant-wide coverage
-        if (assigned.length === 0) {
-            const dPlantId = d.plant_id ? String(d.plant_id) : null;
-            const dMgrId = d.manager_id ? String(d.manager_id) : null;
-            return (plantIdStr && dPlantId === plantIdStr) || (managerIdStr && dMgrId === managerIdStr);
-        }
-        return matchesPostcode(normalizedPostcode || candidatePostcode, assigned);
-    });
-
-    if (coveringDrivers.length > 0) {
-        // If any covering driver belongs to this plant, prioritize them
-        const plantCovering = plantIdStr ? coveringDrivers.filter((d: any) => {
-            const dPlantId = d.plant_id ? String(d.plant_id) : null;
-            const dMgrId = d.manager_id ? String(d.manager_id) : null;
-            return (dPlantId && dPlantId === plantIdStr) || (managerIdStr && dMgrId === managerIdStr);
-        }) : [];
-
-        const pool = plantCovering.length > 0 ? plantCovering : coveringDrivers;
-        pool.sort((a: any, b: any) => {
-            const aTime = a.last_assigned_at ? new Date(a.last_assigned_at).getTime() : 0;
-            const bTime = b.last_assigned_at ? new Date(b.last_assigned_at).getTime() : 0;
-            return aTime - bTime;
-        });
-        selectedDriver = pool[0];
-    } else if (selectedPlant) {
-        // B. Priority 2: Generic drivers assigned to this plant or manager
-        const plantDrivers = allDrivers.filter((d: any) => {
-            const dPlantId = d.plant_id ? String(d.plant_id) : null;
-            const dMgrId = d.manager_id ? String(d.manager_id) : null;
-            return (dPlantId && dPlantId === plantIdStr) || (managerIdStr && dMgrId === managerIdStr);
+        // Priority 1: Plant drivers specifically assigned to this postcode/district
+        const coveringDrivers = plantDrivers.filter((d: any) => {
+            const assigned = d.assigned_postcodes || d.assignedSectors || [];
+            if (assigned.length === 0) return true; // Driver with empty postcodes covers all plant areas
+            return isPostcodeInServiceArea(candidatePostcode, assigned);
         });
 
-        if (plantDrivers.length > 0) {
-            plantDrivers.sort((a: any, b: any) => {
+        const pool = coveringDrivers.length > 0 ? coveringDrivers : plantDrivers;
+        if (pool.length > 0) {
+            pool.sort((a: any, b: any) => {
                 const aTime = a.last_assigned_at ? new Date(a.last_assigned_at).getTime() : 0;
                 const bTime = b.last_assigned_at ? new Date(b.last_assigned_at).getTime() : 0;
                 return aTime - bTime;
             });
-            selectedDriver = plantDrivers[0];
+            selectedDriver = pool[0];
         }
-    }
-
-    if (!selectedDriver && allDrivers.length > 0) {
-        selectedDriver = allDrivers[0];
     }
 
     return {
@@ -887,6 +841,9 @@ export class OrderService {
         }
 
         const routing = await locatePlantAndDriverForOrder(db, rawPostcode, orderData.address, now);
+        if (!routing.plant) {
+            throw new BadRequestError('There is no plant in the area available for orders at this time. We currently do not serve this postcode.');
+        }
 
         // 2. Status & Payment Security Check
         const isCash = orderData.paymentMethod === 'Cash on Delivery' || orderData.paymentMethod === 'Cash';

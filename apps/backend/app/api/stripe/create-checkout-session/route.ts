@@ -16,6 +16,7 @@ function getStripe(): Stripe {
 import { getAuthenticatedUserAsync } from '@/lib/api';
 import { getDb } from '@/lib/mongodb';
 import { PaymentService } from '@/services/PaymentService';
+import { PlatformService } from '@/services/PlatformService';
 import { PricingChargeService } from '@/services/PricingChargeService';
 import { generateOrderId } from '@laundelle/ids';
 import { isOriginAllowed } from '@/lib/cors';
@@ -81,6 +82,25 @@ export async function POST(req: NextRequest) {
         }
 
         await PaymentService.assertWebhookOperational();
+
+        // Enforce Server-Side Postcode Service Area Verification (Never rely on frontend as source of truth)
+        const candidatePostcode = String(
+            (orderPayload as any)?.postcode ||
+            (orderPayload as any)?.address?.postcode ||
+            (orderPayload as any)?.pincode ||
+            ''
+        ).trim();
+        const candidateAddress = typeof (orderPayload as any)?.address === 'string'
+            ? (orderPayload as any)?.address
+            : `${(orderPayload as any)?.address?.street || ''} ${(orderPayload as any)?.address?.city || ''} ${candidatePostcode}`;
+
+        const coverageCheck = await PlatformService.checkPostcode(candidatePostcode || candidateAddress);
+        if (!coverageCheck.isServiceable || !coverageCheck.plantId) {
+            return NextResponse.json(
+                { error: 'There is no plant in the area available for orders at this time. Checkout cannot proceed.' },
+                { status: 400 }
+            );
+        }
 
         const db = await getDb();
         const now = new Date().toISOString();

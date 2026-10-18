@@ -4,28 +4,34 @@ import { AdminRole, SystemAlert } from '@laundelle/types';
 import { apiFetch } from '@laundelle/api-client';
 
 interface AdminTopbarProps {
-  currentRole: AdminRole;
-  onChangeRole: (role: AdminRole) => void;
-  selectedLocation: string;
-  onChangeLocation: (loc: string) => void;
+  currentRole?: AdminRole;
+  onChangeRole?: (role: AdminRole) => void;
+  selectedLocation?: string;
+  onChangeLocation?: (loc: string) => void;
   dateFilter: string;
   onChangeDateFilter: (df: string) => void;
+  customStartDate?: string;
+  onChangeCustomStartDate?: (d: string) => void;
+  customEndDate?: string;
+  onChangeCustomEndDate?: (d: string) => void;
   onOpenGlobalSearch: () => void;
   onExitAdmin: () => void;
+  onRequestLogout?: () => void;
 }
 
 export const AdminTopbar: React.FC<AdminTopbarProps> = ({
-  currentRole,
-  onChangeRole,
-  selectedLocation,
-  onChangeLocation,
+  currentRole = 'manager',
   dateFilter,
   onChangeDateFilter,
+  customStartDate,
+  onChangeCustomStartDate,
+  customEndDate,
+  onChangeCustomEndDate,
   onOpenGlobalSearch,
   onExitAdmin,
+  onRequestLogout,
 }) => {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const [alerts, setAlerts] = useState<SystemAlert[]>([]);
 
   useEffect(() => {
@@ -69,37 +75,43 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
 
       {/* Control Tools Right Side */}
       <div className="flex items-center gap-2 md:gap-3 shrink-0">
-        {/* Location Selector */}
-        <div className="relative hidden md:block">
-          <div className="flex items-center gap-1.5 bg-white text-slate-700 px-3 py-1.5 rounded-xl text-xs font-medium border border-slate-200 hover:border-slate-300 transition-colors">
-            <MapPin className="w-3.5 h-3.5 text-blue-600" />
+        {/* Working Date Filter */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-white text-slate-700 px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 hover:border-slate-300 transition-colors shadow-2xs">
+            <Calendar className="w-3.5 h-3.5 text-blue-600 shrink-0" />
             <select
-              value={selectedLocation}
-              onChange={(e) => onChangeLocation(e.target.value)}
-              className="bg-transparent focus:outline-hidden font-medium cursor-pointer text-xs pr-1"
+              value={dateFilter}
+              onChange={(e) => onChangeDateFilter(e.target.value)}
+              className="bg-transparent focus:outline-hidden font-semibold cursor-pointer text-xs pr-1 text-slate-800"
             >
-              <option value="All Locations">All Locations</option>
-              <option value="Preston Operations Hub">Preston Hub</option>
-              <option value="Blackburn Facility Center">Blackburn Plant</option>
-              <option value="Bolton Logistics Hub">Bolton Hub</option>
-              <option value="Chorley Service Station">Chorley Station</option>
+              <option value="Today">Today</option>
+              <option value="Yesterday">Yesterday</option>
+              <option value="This Week">This Week</option>
+              <option value="This Month">This Month</option>
+              <option value="All Time">All Time</option>
+              <option value="Custom Range">Custom Range</option>
             </select>
           </div>
-        </div>
 
-        {/* Date Filter */}
-        <div className="hidden md:flex items-center gap-1.5 bg-white text-slate-700 px-3 py-1.5 rounded-xl text-xs font-medium border border-slate-200 hover:border-slate-300 transition-colors">
-          <Calendar className="w-3.5 h-3.5 text-blue-600" />
-          <select
-            value={dateFilter}
-            onChange={(e) => onChangeDateFilter(e.target.value)}
-            className="bg-transparent focus:outline-hidden font-medium cursor-pointer text-xs"
-          >
-            <option value="Today">Today</option>
-            <option value="Tomorrow">Tomorrow</option>
-            <option value="This Week">This Week</option>
-            <option value="Custom">Custom Range</option>
-          </select>
+          {(dateFilter === 'Custom' || dateFilter === 'Custom Range') && (
+            <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200 text-xs shadow-2xs animate-in fade-in duration-150">
+              <input
+                type="date"
+                value={customStartDate || ''}
+                onChange={(e) => onChangeCustomStartDate?.(e.target.value)}
+                className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer"
+                title="Start Date"
+              />
+              <span className="text-slate-400 font-bold text-[10px]">to</span>
+              <input
+                type="date"
+                value={customEndDate || ''}
+                onChange={(e) => onChangeCustomEndDate?.(e.target.value)}
+                className="bg-transparent text-xs text-slate-700 font-medium focus:outline-hidden cursor-pointer"
+                title="End Date"
+              />
+            </div>
+          )}
         </div>
 
         {/* Notifications Dropdown */}
@@ -111,7 +123,7 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
           >
             <Bell className="w-4 h-4 text-slate-600" />
             {unresolvedAlerts.length > 0 && (
-              <span className="absolute 1.5 top-1.5 right-1.5 w-2 h-2 bg-blue-600 rounded-full" />
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-600 rounded-full" />
             )}
           </button>
 
@@ -146,53 +158,21 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
           )}
         </div>
 
-        {/* Role Badge / Switcher */}
-        <div className="relative">
-          <button
-            onClick={() => setRoleDropdownOpen(!roleDropdownOpen)}
-            className="flex items-center gap-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer border border-slate-200 transition-all"
-          >
-            <Shield className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-            <span className="capitalize hidden sm:inline">{currentRole.replace('_', ' ')}</span>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-          </button>
-
-          {roleDropdownOpen && (
-            <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-slate-100 p-2 z-50 space-y-1 animate-in fade-in zoom-in-95 duration-150">
-              <span className="block px-3 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                Switch Operational Mode
-              </span>
-
-              {(['manager', 'processor', 'admin'] as AdminRole[]).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => {
-                    onChangeRole(r);
-                    setRoleDropdownOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium cursor-pointer transition-colors ${
-                    currentRole === r
-                      ? 'bg-blue-50 text-blue-700 font-semibold'
-                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                  }`}
-                >
-                  <span className="capitalize">{r.replace('_', ' ')}</span>
-                  {currentRole === r && <Check className="w-3.5 h-3.5 text-blue-600" />}
-                </button>
-              ))}
-
-              <div className="pt-1 border-t border-slate-100 mt-1">
-                <button
-                  onClick={onExitAdmin}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-700 cursor-pointer transition-colors"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Exit to Public Site</span>
-                </button>
-              </div>
-            </div>
-          )}
+        {/* Manager Mode Badge */}
+        <div className="flex items-center gap-1.5 bg-blue-50/80 text-blue-700 border border-blue-100/80 px-2.5 py-1.5 rounded-xl text-xs font-semibold">
+          <Shield className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+          <span className="capitalize hidden sm:inline">Plant Manager</span>
         </div>
+
+        {/* Topbar Logout Button */}
+        <button
+          onClick={onRequestLogout || onExitAdmin}
+          className="flex items-center gap-1.5 text-slate-500 hover:text-rose-600 bg-slate-50 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all shadow-2xs"
+          title="Log out of Manager Portal"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Logout</span>
+        </button>
       </div>
     </header>
   );

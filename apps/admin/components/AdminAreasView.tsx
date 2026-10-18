@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { MapPin, Plus, RefreshCw, Edit, X, User, Trash2, Clock, Calendar, CheckCircle2, ShieldCheck, Search } from 'lucide-react';
 import { dbFetchPlants, dbCreatePlant, dbUpdatePlant, dbFetchSlots, dbFetchStaff, dbCreateSlot, dbDeleteSlot, dbUpdateSlot, getStoredSession } from '@laundelle/api-client';
+import { extractOutwardCode } from '@laundelle/utils';
 import { PostcodeMultiSelect } from './PostcodeMultiSelect';
 
 export const AdminAreasView: React.FC = () => {
@@ -29,6 +30,7 @@ export const AdminAreasView: React.FC = () => {
 
   // Modal form states for Slots
   const [slotModalOpen, setSlotModalOpen] = useState(false);
+  const [editingSlot, setEditingSlot] = useState<any | null>(null);
   const [slotStartTime, setSlotStartTime] = useState('09:00');
   const [slotEndTime, setSlotEndTime] = useState('12:00');
   const [slotType, setSlotType] = useState<'both' | 'pickup' | 'delivery'>('both');
@@ -100,7 +102,12 @@ export const AdminAreasView: React.FC = () => {
     e.preventDefault();
     setSubmitting(true);
 
-    const pins = plantPincodes.split(',').map(p => p.trim().toUpperCase()).filter(Boolean);
+    const pins = Array.from(new Set(
+      plantPincodes
+        .split(',')
+        .map(p => extractOutwardCode(p) || p.trim().toUpperCase().replace(/\s+/g, ''))
+        .filter(Boolean)
+    ));
 
     const plantData = {
       name: plantName,
@@ -132,12 +139,17 @@ export const AdminAreasView: React.FC = () => {
   };
 
   const openAddSlotModal = () => {
+    setEditingSlot(null);
     setSlotStartTime('09:00');
     setSlotEndTime('12:00');
     setSlotType('both');
     setSlotCapacity(15);
     if (isManager && session?.user?.id) {
-      const myPlant = plants.find((p: any) => p.manager_id === session.user.id);
+      const myPlant = plants.find((p: any) => 
+        String(p.manager_id) === String(session.user.id) ||
+        (p.manager_public_id && (session.user as any).publicId && String(p.manager_public_id) === String((session.user as any).publicId)) ||
+        (p.manager_email && session.user.email && String(p.manager_email).toLowerCase() === String(session.user.email).toLowerCase())
+      );
       if (myPlant) {
         setSlotPlantId(String(myPlant._id));
       }
@@ -145,13 +157,29 @@ export const AdminAreasView: React.FC = () => {
     setSlotModalOpen(true);
   };
 
-  const handleCreateSlot = async (e: React.FormEvent) => {
+  const openEditSlotModal = (slot: any) => {
+    setEditingSlot(slot);
+    setSlotStartTime(slot.startTime || '09:00');
+    setSlotEndTime(slot.endTime || '12:00');
+    setSlotType(slot.slotType || slot.type || 'both');
+    setSlotCapacity(slot.capacity || slot.maxCapacity || 15);
+    if (slot.plant_id) {
+      setSlotPlantId(String(slot.plant_id));
+    }
+    setSlotModalOpen(true);
+  };
+
+  const handleSaveSlot = async (e: React.FormEvent) => {
     e.preventDefault();
     setSlotSubmitting(true);
 
     let targetPlantId = slotPlantId;
     if (isManager && session?.user?.id) {
-      const myPlant = plants.find((p: any) => p.manager_id === session.user.id);
+      const myPlant = plants.find((p: any) => 
+        String(p.manager_id) === String(session.user.id) ||
+        (p.manager_public_id && (session.user as any).publicId && String(p.manager_public_id) === String((session.user as any).publicId)) ||
+        (p.manager_email && session.user.email && String(p.manager_email).toLowerCase() === String(session.user.email).toLowerCase())
+      );
       if (myPlant) targetPlantId = String(myPlant._id);
     }
 
@@ -166,18 +194,25 @@ export const AdminAreasView: React.FC = () => {
       plant_id: targetPlantId || (chosenPlant ? String(chosenPlant._id) : null),
       plant_name: chosenPlant ? chosenPlant.name : '',
       plant_code: chosenPlant ? chosenPlant.code : '',
-      isActive: true
+      isActive: editingSlot ? (editingSlot.isActive !== false) : true
     };
 
-    const res = await dbCreateSlot(payload);
+    let res;
+    if (editingSlot) {
+      const slotId = editingSlot._id || editingSlot.id;
+      res = await dbUpdateSlot(slotId, payload);
+    } else {
+      res = await dbCreateSlot(payload);
+    }
     setSlotSubmitting(false);
 
     if (res.success) {
-      alert('✓ Booking slot created successfully!');
+      alert(editingSlot ? '✓ Booking slot updated successfully!' : '✓ Booking slot created successfully!');
       setSlotModalOpen(false);
+      setEditingSlot(null);
       loadData();
     } else {
-      alert(`Error creating slot: ${res.error || 'Failed'}`);
+      alert(`Error saving slot: ${res.error || 'Failed'}`);
     }
   };
 
@@ -404,13 +439,20 @@ export const AdminAreasView: React.FC = () => {
                                 </span>
                               </td>
                               <td className="py-3 px-4 text-right">
-                                <button
-                                  onClick={() => openEditModal(loc)}
-                                  className="px-3 py-1 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-medium transition-all cursor-pointer inline-flex items-center gap-1.5 border border-slate-200 shadow-2xs"
-                                >
-                                  <Edit className="w-3 h-3 text-slate-500" />
-                                  <span>Edit</span>
-                                </button>
+                                {isManager ? (
+                                  <span className="px-2.5 py-1 bg-slate-50 text-slate-500 rounded-xl text-[11px] font-medium border border-slate-200/60 inline-flex items-center gap-1">
+                                    <ShieldCheck className="w-3 h-3 text-blue-500" />
+                                    <span>Assigned by Admin</span>
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => openEditModal(loc)}
+                                    className="px-3 py-1 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-xs font-medium transition-all cursor-pointer inline-flex items-center gap-1.5 border border-slate-200 shadow-2xs"
+                                  >
+                                    <Edit className="w-3 h-3 text-slate-500" />
+                                    <span>Edit</span>
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           );
@@ -497,6 +539,13 @@ export const AdminAreasView: React.FC = () => {
                             title="Toggle active status"
                           >
                             {s.isActive !== false ? 'Active' : 'Disabled'}
+                          </button>
+                          <button
+                            onClick={() => openEditSlotModal(s)}
+                            className="p-1 text-slate-400 hover:text-blue-600 rounded-lg transition-colors cursor-pointer"
+                            title="Edit Slot"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleDeleteSlot(s.id || s._id)}
@@ -638,14 +687,14 @@ export const AdminAreasView: React.FC = () => {
         </div>
       )}
 
-      {/* Create Dynamic Slot Modal */}
+      {/* Create / Edit Dynamic Slot Modal */}
       {slotModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4">
-          <form onSubmit={handleCreateSlot} className="bg-white w-full max-w-md rounded-2xl p-6 shadow-xl space-y-4 relative border border-slate-100">
+          <form onSubmit={handleSaveSlot} className="bg-white w-full max-w-md rounded-2xl p-6 shadow-xl space-y-4 relative border border-slate-100">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
                 <Clock className="w-4 h-4 text-blue-600" />
-                <span>Create Booking Slot</span>
+                <span>{editingSlot ? 'Edit Booking Slot' : 'Create Booking Slot'}</span>
               </h3>
               <button
                 type="button"
@@ -741,7 +790,7 @@ export const AdminAreasView: React.FC = () => {
                 disabled={slotSubmitting}
                 className="w-1/2 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-medium cursor-pointer shadow-2xs disabled:opacity-50 transition-colors"
               >
-                {slotSubmitting ? 'Creating...' : 'Create Slot'}
+                {slotSubmitting ? 'Saving...' : editingSlot ? 'Update Slot' : 'Create Slot'}
               </button>
             </div>
           </form>

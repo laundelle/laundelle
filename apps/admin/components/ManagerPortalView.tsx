@@ -12,9 +12,17 @@ import { InventoryManagementView } from './InventoryManagementView';
 
 interface ManagerPortalViewProps {
     onNavigateTab: (tab: any) => void;
+    dateFilter?: string;
+    customStartDate?: string;
+    customEndDate?: string;
 }
 
-export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({ onNavigateTab }) => {
+export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({
+    onNavigateTab,
+    dateFilter = 'Today',
+    customStartDate,
+    customEndDate,
+}) => {
     const [data, setData] = useState<any | null>(null);
     const [loading, setLoading] = useState(true);
     const [activeViewTab, setActiveViewTab] = useState<'overview' | 'exceptions' | 'capacity' | 'fleet' | 'inventory'>('overview');
@@ -30,9 +38,9 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({ onNavigate
     const [resolveNotes, setResolveNotes] = useState<string>('');
     const [resolvingLoading, setResolvingLoading] = useState(false);
 
-    const loadDashboardData = async () => {
+    const loadDashboardData = async (df = dateFilter, sd = customStartDate, ed = customEndDate) => {
         setLoading(true);
-        const result = await dbFetchManagerDashboard();
+        const result = await dbFetchManagerDashboard(df, sd, ed);
         setData(result);
         setLoading(false);
     };
@@ -42,8 +50,8 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({ onNavigate
         try {
             const rawSession = localStorage.getItem('l2u_auth_session');
             const token = rawSession ? JSON.parse(rawSession).token : null;
-            const plantParam = data?.plantCode || data?.plant_id || data?.id || '';
-            const res = await apiFetch(`/api/v1/exceptions?plantId=${plantParam}&status=OPEN`, {
+            const plantParam = data?.plantId || data?.plantCode || data?.plant_id || data?.id || '';
+            const res = await apiFetch(`/api/v1/exceptions?plantId=${encodeURIComponent(plantParam)}&status=OPEN`, {
                 headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) }
             });
             const resData = await res.json();
@@ -62,8 +70,8 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({ onNavigate
         try {
             const rawSession = localStorage.getItem('l2u_auth_session');
             const token = rawSession ? JSON.parse(rawSession).token : null;
-            const plantParam = data?.plantCode || data?.plant_id || data?.id || 'plant_main';
-            const res = await apiFetch(`/api/v1/plants/${plantParam}/capacity`, {
+            const plantParam = data?.plantId || data?.plantCode || data?.plant_id || data?.id || '';
+            const res = await apiFetch(`/api/v1/plants/${encodeURIComponent(plantParam)}/capacity`, {
                 headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) }
             });
             const resData = await res.json();
@@ -78,15 +86,15 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({ onNavigate
     };
 
     useEffect(() => {
-        loadDashboardData();
-    }, []);
+        loadDashboardData(dateFilter, customStartDate, customEndDate);
+    }, [dateFilter, customStartDate, customEndDate]);
 
     useEffect(() => {
         if (data) {
             loadExceptions();
             loadCapacity();
         }
-    }, [data?.plantCode]);
+    }, [data?.plantId, data?.plantCode]);
 
     const handleResolve = async () => {
         if (!resolvingException || !resolveAction || !resolveNotes.trim()) {
@@ -144,7 +152,7 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({ onNavigate
                     </p>
                 </div>
                 <button
-                    onClick={loadDashboardData}
+                    onClick={() => loadDashboardData()}
                     className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl text-xs cursor-pointer flex items-center gap-1.5 mx-auto transition-colors"
                 >
                     <RefreshCw className="w-3.5 h-3.5" />
@@ -331,14 +339,14 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({ onNavigate
                         </p>
                     </div>
 
-                    {/* Card 4: Highlighted Card (Like 'Money in account' in reference - soft tinted border and icon) */}
+                    {/* Card 4: Highlighted Card (Real-time plant capacity) */}
                     <div className="bg-white rounded-2xl border border-blue-100 bg-blue-50/20 p-5 shadow-xs space-y-2">
                         <div className="flex items-center gap-1.5 text-blue-600">
                             <Activity className="w-3.5 h-3.5 text-blue-600" />
                             <span className="text-xs font-semibold">Plant Capacity</span>
                         </div>
                         <p className="text-2xl sm:text-3xl font-bold text-blue-700">
-                            {capacityReport?.overallUtilizationPercent || 72}%
+                            {capacityReport?.overallUtilizationPercent !== undefined ? `${capacityReport.overallUtilizationPercent}%` : '0%'}
                         </p>
                         <p className="text-[11px] text-blue-600/80">
                             {stats.completed} orders completed today
@@ -720,13 +728,15 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({ onNavigate
                             <div className="flex items-center gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100 shrink-0">
                                 <div className="text-center">
                                     <span className="text-[10px] text-slate-400 block font-medium uppercase">Utilization</span>
-                                    <span className="text-2xl font-bold text-slate-900">{capacityReport?.overallUtilizationPercent || 72}%</span>
+                                    <span className="text-2xl font-bold text-slate-900">
+                                        {capacityReport?.overallUtilizationPercent !== undefined ? `${capacityReport.overallUtilizationPercent}%` : '0%'}
+                                    </span>
                                 </div>
                                 <div className="h-8 w-px bg-slate-200" />
                                 <div className="text-center">
                                     <span className="text-[10px] text-slate-400 block font-medium uppercase">Express Slots</span>
                                     <span className="text-2xl font-bold text-blue-600">
-                                        {capacityReport?.expressOrdersToday || 4}/{capacityReport?.expressCapacityLimit || 20}
+                                        {capacityReport?.expressOrdersToday ?? 0}/{capacityReport?.expressCapacityLimit ?? 20}
                                     </span>
                                 </div>
                             </div>
@@ -792,7 +802,7 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({ onNavigate
             {/* TAB 4: FLEET MANAGEMENT */}
             {activeViewTab === 'fleet' && (
                 <FleetManagementView
-                    plantId={data?.plantCode || data?.plant_id || data?.id || 'plant_main'}
+                    plantId={data?.plantId || data?.plantCode || data?.plant_id || data?.id || ''}
                     plantName={data?.plantName || 'Facility'}
                     staffDrivers={data?.staff?.drivers || []}
                 />
@@ -801,7 +811,7 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({ onNavigate
             {/* TAB 5: INVENTORY MANAGEMENT */}
             {activeViewTab === 'inventory' && (
                 <InventoryManagementView
-                    plantId={data?.plantCode || data?.plant_id || data?.id || 'plant_main'}
+                    plantId={data?.plantId || data?.plantCode || data?.plant_id || data?.id || ''}
                     plantName={data?.plantName || 'Facility'}
                 />
             )}

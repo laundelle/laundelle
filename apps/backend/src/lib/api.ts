@@ -444,9 +444,18 @@ export function assertPlantIsolation(
         if (targetStaff) {
             const staffPlantId = String(targetStaff.plant_id || targetStaff.plantId || '').trim();
             const staffManagerId = String(targetStaff.manager_id || targetStaff.plantManagerId || '').trim();
-            const isManagerSelf = String(targetStaff._id) === String(managerDbUser._id);
-            const matchesPlant = staffPlantId === managerPlantId;
-            const matchesManager = staffManagerId === String(managerDbUser._id);
+
+            const managerIdentifiers = [
+                String(managerDbUser._id || '').trim(),
+                String(managerDbUser.publicId || '').trim(),
+                String(managerDbUser.id || '').trim(),
+                String(managerDbUser.staffId || '').trim()
+            ].filter(Boolean);
+
+            const isManagerSelf = managerIdentifiers.includes(String(targetStaff._id || '').trim()) ||
+                                  managerIdentifiers.includes(String(targetStaff.publicId || '').trim());
+            const matchesManager = staffManagerId ? managerIdentifiers.includes(staffManagerId) : false;
+            const matchesPlant = Boolean(managerPlantId && staffPlantId && staffPlantId === managerPlantId);
 
             if (!matchesPlant && !matchesManager && !isManagerSelf) {
                 throw new ForbiddenError('Access denied: Staff member does not belong to your facility.');

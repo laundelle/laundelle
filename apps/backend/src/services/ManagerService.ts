@@ -12,9 +12,10 @@ import {
     hashOrderPin,
     encryptOrderPin
 } from '@/lib/orderPin';
-import { BadRequestError } from '@/lib/api';
 import { StaffProvisioningService } from './StaffProvisioningService';
 import { OrderCustomerEnrichmentService } from './OrderCustomerEnrichmentService';
+import { buildPostcodeDistrictRegex, buildAddressDistrictRegex } from '@laundelle/utils';
+import { BadRequestError } from '@/lib/api';
 
 export class ManagerService {
     private static async getManagerPlantId(managerId: string) {
@@ -39,33 +40,46 @@ export class ManagerService {
                 $or: [
                     { manager_id: userInternalId },
                     { manager_id: user.publicId },
-                    { manager_id: managerId }
+                    { manager_id: managerId },
+                    { manager_public_id: user.publicId },
+                    { manager_public_id: userInternalId }
                 ]
             } as any);
+            if (!plant && user.email) {
+                plant = await db.collection('plants').findOne({
+                    $or: [
+                        { manager_email: user.email },
+                        { manager_name: user.full_name || user.name }
+                    ]
+                } as any);
+            }
             if (!plant) {
                 plant = await db.collection('plants').findOne({ status: { $ne: 'inactive' } } as any);
             }
             if (plant) {
-                plantId = plant.publicId || plant.id || plant._id;
+                plantId = String(plant._id);
                 await db.collection('users').updateOne(
                     { _id: user._id } as any,
-                    { $set: { plant_id: plantId, plantId: plantId } }
+                    { $set: { plant_id: plantId, plantId: plantId, assigned_plant: plant.name } }
                 );
             }
         }
         if (!plantId) {
             throw new Error('Access denied: Manager has no assigned plant.');
         }
-        return plantId;
+        return String(plantId);
     }
 
-    static async getDashboardMetrics(managerId: string) {
+    static async getDashboardMetrics(managerId: string, dateFilter: string = 'Today', startDate?: string, endDate?: string) {
         const db = await getDb();
         const plantId = await this.getManagerPlantId(managerId);
         
         let plant: any = null;
         if (plantId) {
             plant = await db.collection('plants').findOne(buildEntityLookupQuery(plantId, 'plant') as any);
+        }
+        if (!plant) {
+            plant = await db.collection('plants').findOne({ status: { $ne: 'inactive' } } as any);
         }
         
         const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
@@ -94,14 +108,61 @@ export class ManagerService {
         const staff = await db.collection('users').find({
             $or: [
                 { plant_id: plantId },
-                { manager_id: managerId }
+                { manager_id: managerId },
+                { plantManagerId: managerId }
             ],
             is_active: true,
             role: { $in: ['driver', 'processor'] }
         }).toArray();
 
-        // Status counts
+        // Calculate Date Range Bounds
+        const now = new Date();
+        let rangeStart = new Date();
+        let rangeEnd = new Date();
+        let isFilteredRange = true;
+
+        const normalizedFilter = dateFilter?.toLowerCase() || 'today';
+
+        if (normalizedFilter === 'today') {
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setHours(23, 59, 59, 999);
+        } else if (normalizedFilter === 'yesterday') {
+            rangeStart.setDate(rangeStart.getDate() - 1);
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setDate(rangeEnd.getDate() - 1);
+            rangeEnd.setHours(23, 59, 59, 999);
+        } else if (normalizedFilter === 'this week') {
+            const dayOfWeek = rangeStart.getDay();
+            const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+            rangeStart.setDate(rangeStart.getDate() - diffToMonday);
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setHours(23, 59, 59, 999);
+        } else if (normalizedFilter === 'this month') {
+            rangeStart.setDate(1);
+            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd.setHours(23, 59, 59, 999);
+        } else if (normalizedFilter === 'custom' || normalizedFilter === 'custom range') {
+            if (startDate) {
+                rangeStart = new Date(startDate);
+                rangeStart.setHours(0, 0, 0, 0);
+            } else {
+                rangeStart.setDate(rangeStart.getDate() - 7);
+                rangeStart.setHours(0, 0, 0, 0);
+            }
+            if (endDate) {
+                rangeEnd = new Date(endDate);
+                rangeEnd.setHours(23, 59, 59, 999);
+            } else {
+                rangeEnd.setHours(23, 59, 59, 999);
+            }
+        } else {
+            // 'All Time'
+            isFilteredRange = false;
+        }
+
+        // Status counts for selected date window and overall
         let todayOrders = 0;
+        let periodOrders = 0;
         let pendingPickup = 0;
         let atPlant = 0;
         let processing = 0;
@@ -109,11 +170,17 @@ export class ManagerService {
         let outForDelivery = 0;
         let completed = 0;
 
-        const startOfToday = new Date();
-        startOfToday.setHours(0, 0, 0, 0);
-
         orders.forEach((o: any) => {
-            const orderDate = new Date(o.createdAt);
+            const orderDate = new Date(o.createdAt || o.date || o.created_at);
+            const inRange = !isFilteredRange || (orderDate >= rangeStart && orderDate <= rangeEnd);
+
+            if (inRange) {
+                periodOrders++;
+            }
+
+            // Check if created today specifically
+            const startOfToday = new Date();
+            startOfToday.setHours(0, 0, 0, 0);
             if (orderDate >= startOfToday) {
                 todayOrders++;
             }
@@ -158,13 +225,16 @@ export class ManagerService {
         });
 
         return {
-            plantId: plant._id,
-            plantName: plant.name,
-            plantCode: plant.code,
-            managerName: manager?.full_name,
+            plantId: plant ? String(plant._id) : String(plantId),
+            plantName: plant ? plant.name : 'Operations Facility',
+            plantCode: plant ? plant.code : 'PLT-01',
+            managerName: manager?.full_name || manager?.name || 'Plant Manager',
             managerStatus: manager?.is_active ? 'Active' : 'Suspended',
+            dateFilter,
+            periodOrders,
             stats: {
-                todayOrders,
+                todayOrders: isFilteredRange && normalizedFilter !== 'today' ? periodOrders : todayOrders,
+                periodOrders,
                 activeOrders: activeOrders.length,
                 pendingPickup,
                 pendingIntake: atPlant,
@@ -219,7 +289,8 @@ export class ManagerService {
 
         // Also match any unassigned orders within the plant's service pincodes
         if (servicePincodes.length > 0) {
-            const pincodeRegexes = servicePincodes.map((pc: string) => new RegExp(`^${pc}`, 'i'));
+            const pincodeRegexes = servicePincodes.map((pc: string) => buildPostcodeDistrictRegex(pc));
+            const addressRegexes = servicePincodes.map((pc: string) => buildAddressDistrictRegex(pc));
             plantOrConditions.push({
                 $and: [
                     {
@@ -232,7 +303,7 @@ export class ManagerService {
                     {
                         $or: [
                             { postcode: { $in: pincodeRegexes } },
-                            ...servicePincodes.map((pc: string) => ({ address: new RegExp(`\\b${pc}\\b`, 'i') }))
+                            ...addressRegexes.map((r: RegExp) => ({ address: r }))
                         ]
                     }
                 ]
@@ -1040,67 +1111,176 @@ export class ManagerService {
         return { logs: logsResult.items };
     }
 
-    static async getStaff(managerId: string) {
+    static async getStaff(managerId: string, returnAllIfAdmin = false, plantFilterId?: string) {
         const db = await getDb();
-        const plantId = await this.getManagerPlantId(managerId);
-        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
 
-        const managerKeys = [managerId, manager ? String(manager._id) : null, manager?.publicId].filter(Boolean);
-        const plantKeys = [plantId, manager?.plant_id, manager?.plantId].filter(Boolean);
+        if (returnAllIfAdmin) {
+            const query: any = { role: { $in: ['driver', 'processor'] } };
+            if (plantFilterId) {
+                query.$or = [
+                    { plant_id: plantFilterId },
+                    { plantId: plantFilterId }
+                ];
+            }
+            const staff = await db.collection('users')
+                .find(query, { projection: { password: 0 } })
+                .sort({ created_at: -1 })
+                .toArray();
+            return { staff };
+        }
+
+        let plantId: string | null = null;
+        try {
+            plantId = await this.getManagerPlantId(managerId);
+        } catch {
+            plantId = null;
+        }
+
+        const manager = await db.collection('users').findOne(
+            buildEntityLookupQuery(managerId, 'user', (id) => ObjectId.isValid(id) ? new ObjectId(id) : null) as any
+        );
+
+        const managerKeys = [
+            managerId,
+            manager ? String(manager._id) : null,
+            manager?.publicId,
+            manager?.id,
+            manager?.staffId,
+            manager?.auth0UserId,
+            manager?.email
+        ].filter(Boolean);
+
+        let plantDoc: any = null;
+        const candidatePlantId = plantId || manager?.plant_id || manager?.plantId;
+        if (candidatePlantId) {
+            plantDoc = await db.collection('plants').findOne(
+                buildEntityLookupQuery(candidatePlantId, 'plant', (id) => ObjectId.isValid(id) ? new ObjectId(id) : null) as any
+            );
+        }
+        if (!plantDoc && manager) {
+            plantDoc = await db.collection('plants').findOne({
+                $or: [
+                    { manager_id: { $in: managerKeys } },
+                    { manager_public_id: { $in: managerKeys } },
+                    { manager_email: manager.email }
+                ]
+            } as any);
+        }
+
+        const plantKeys = [
+            plantId,
+            candidatePlantId,
+            plantDoc ? String(plantDoc._id) : null,
+            plantDoc?.publicId,
+            plantDoc?.id,
+            plantDoc?.code,
+            manager?.plant_id,
+            manager?.plantId
+        ].filter(Boolean);
 
         const query = {
             $or: [
                 { plant_id: { $in: plantKeys } },
                 { plantId: { $in: plantKeys } },
-                { manager_id: { $in: managerKeys } }
+                { manager_id: { $in: managerKeys } },
+                { plantManagerId: { $in: managerKeys } }
             ],
             role: { $in: ['driver', 'processor'] }
         };
+
         const staff = await db.collection('users')
             .find(query, { projection: { password: 0 } })
             .sort({ created_at: -1 })
             .toArray();
+
+        // Auto-heal postcodes if manager/plant has postcodes but subordinate staff has none
+        const managerPostcodes: string[] = Array.isArray(plantDoc?.service_pincodes)
+            ? plantDoc.service_pincodes
+            : (typeof plantDoc?.service_pincodes === 'string'
+                ? plantDoc.service_pincodes.split(',').map((p: string) => p.trim().toUpperCase()).filter(Boolean)
+                : (Array.isArray(manager?.assigned_postcodes) ? manager.assigned_postcodes : (Array.isArray(manager?.assignedSectors) ? manager.assignedSectors : [])));
+
+        if (managerPostcodes.length > 0 && staff.length > 0) {
+            const needHealing = staff.filter((s: any) => (!s.assigned_postcodes || s.assigned_postcodes.length === 0));
+            if (needHealing.length > 0) {
+                const healingIds = needHealing.map((s: any) => s._id);
+                await db.collection('users').updateMany(
+                    { _id: { $in: healingIds } },
+                    { $set: { assigned_postcodes: managerPostcodes, assignedSectors: managerPostcodes } }
+                ).catch(() => {});
+                for (const s of staff) {
+                    if (!s.assigned_postcodes || s.assigned_postcodes.length === 0) {
+                        s.assigned_postcodes = managerPostcodes;
+                        s.assignedSectors = managerPostcodes;
+                    }
+                }
+            }
+        }
+
         return { staff };
     }
 
     // ─── Helper: Sync all driver/processor postcodes from manager's plant ───────
     static async syncAllStaffPostcodes(managerId: string): Promise<void> {
         const db = await getDb();
-        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
+        const manager = await db.collection('users').findOne(
+            buildEntityLookupQuery(managerId, 'user', (id) => ObjectId.isValid(id) ? new ObjectId(id) : null) as any
+        );
         if (!manager) return;
+
+        const managerKeys = [
+            managerId,
+            String(manager._id),
+            manager.publicId,
+            manager.id,
+            manager.staffId,
+            manager.email
+        ].filter(Boolean);
 
         let plant: any = null;
         const managerPlantId = manager.plant_id || manager.plantId;
         if (managerPlantId) {
-            plant = await db.collection('plants').findOne(buildEntityLookupQuery(managerPlantId, 'plant') as any);
+            plant = await db.collection('plants').findOne(
+                buildEntityLookupQuery(managerPlantId, 'plant', (id) => ObjectId.isValid(id) ? new ObjectId(id) : null) as any
+            );
         }
         if (!plant) {
-            const mInternalId = String(manager._id);
             plant = await db.collection('plants').findOne({
                 $or: [
-                    { manager_id: mInternalId },
-                    { manager_id: manager.publicId },
-                    { manager_id: managerId }
+                    { manager_id: { $in: managerKeys } },
+                    { manager_public_id: { $in: managerKeys } },
+                    { manager_email: manager.email }
                 ]
             } as any);
         }
-        if (!plant) return;
 
-        const pincodes: string[] = Array.isArray(plant.service_pincodes)
+        const pincodes: string[] = Array.isArray(plant?.service_pincodes)
             ? plant.service_pincodes
-            : (plant.service_pincodes || '').split(',').map((p: string) => p.trim().toUpperCase()).filter(Boolean);
+            : (typeof plant?.service_pincodes === 'string'
+                ? plant.service_pincodes.split(',').map((p: string) => p.trim().toUpperCase()).filter(Boolean)
+                : (Array.isArray(manager.assigned_postcodes) ? manager.assigned_postcodes : []));
 
-        const plantKeys = [String(plant._id), plant.publicId, plant.id].filter(Boolean);
-        const managerKeys = [managerId, String(manager._id), manager.publicId].filter(Boolean);
+        if (!pincodes || pincodes.length === 0) return;
+
+        const plantKeys = [
+            plant ? String(plant._id) : null,
+            plant?.publicId,
+            plant?.id,
+            plant?.code,
+            manager.plant_id,
+            manager.plantId
+        ].filter(Boolean);
 
         await db.collection('users').updateMany(
             {
                 $or: [
                     { manager_id: { $in: managerKeys } },
+                    { plantManagerId: { $in: managerKeys } },
                     { plant_id: { $in: plantKeys } },
-                    { plantId: { $in: plantKeys } }
+                    { plantId: { $in: plantKeys } },
+                    { _id: manager._id }
                 ],
-                role: { $in: ['driver', 'processor'] }
+                role: { $in: ['driver', 'processor', 'manager', 'plant_manager'] }
             },
             { $set: { assigned_postcodes: pincodes, assignedSectors: pincodes } }
         );

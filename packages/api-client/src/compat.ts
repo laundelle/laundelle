@@ -678,7 +678,7 @@ export async function dbFetchManagers(): Promise<any[]> {
         const data = await res.json();
         if (!res.ok || data.error) return [];
         const staff: any[] = data.data?.staff || data.staff || [];
-        return staff.filter((s: any) => s.role === 'manager');
+        return staff.filter((s: any) => s.role === 'manager' || s.role === 'plant_manager');
     } catch {
         return [];
     }
@@ -818,9 +818,15 @@ export async function dbFetchAdminDashboardMetrics(location?: string, dateFilter
     }
 }
 
-export async function dbFetchManagerDashboard(): Promise<any> {
+export async function dbFetchManagerDashboard(dateFilter?: string, startDate?: string, endDate?: string): Promise<any> {
     try {
-        const res = await apiFetch('/api/v1/manager/dashboard', {
+        const params = new URLSearchParams();
+        if (dateFilter) params.set('dateFilter', dateFilter);
+        if (startDate) params.set('startDate', startDate);
+        if (endDate) params.set('endDate', endDate);
+        const qs = params.toString();
+        const url = qs ? `/api/v1/manager/dashboard?${qs}` : '/api/v1/manager/dashboard';
+        const res = await apiFetch(url, {
             method: 'GET',
             headers: authHeaders(),
         });
@@ -833,11 +839,15 @@ export async function dbFetchManagerDashboard(): Promise<any> {
     }
 }
 
-export async function dbFetchManagerOrders(status?: string): Promise<any[]> {
+export async function dbFetchManagerOrders(status?: string, dateFilter?: string, startDate?: string, endDate?: string): Promise<any[]> {
     try {
-        const url = status && status !== 'all' 
-            ? `/api/v1/manager/orders?status=${encodeURIComponent(status)}` 
-            : '/api/v1/manager/orders';
+        const params = new URLSearchParams();
+        if (status && status !== 'all') params.set('status', status);
+        if (dateFilter) params.set('dateFilter', dateFilter);
+        if (startDate) params.set('startDate', startDate);
+        if (endDate) params.set('endDate', endDate);
+        const qs = params.toString();
+        const url = qs ? `/api/v1/manager/orders?${qs}` : '/api/v1/manager/orders';
         const res = await apiFetch(url, {
             method: 'GET',
             headers: authHeaders(),
@@ -858,9 +868,11 @@ export async function dbFetchManagerStaff(): Promise<any[]> {
             headers: authHeaders(),
         });
         const json = await res.json();
-        const data = json.success ? json.data : json;
-        if (!res.ok || data.error) return [];
-        return Array.isArray(data) ? data : (data.staff || []);
+        if (!res.ok || json.error) return [];
+        const raw = json.data ?? json.staff ?? json;
+        if (Array.isArray(raw)) return raw;
+        if (Array.isArray(raw?.staff)) return raw.staff;
+        return [];
     } catch {
         return [];
     }

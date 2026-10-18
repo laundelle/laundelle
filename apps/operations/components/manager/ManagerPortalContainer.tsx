@@ -14,7 +14,10 @@ import { FleetManagementView } from './FleetManagementView';
 import { InventoryManagementView } from './InventoryManagementView';
 import { AdminAreasView } from './AdminAreasView';
 import { AdminComplaintsView } from './AdminComplaintsView';
-import { dbFetchManagerOrders } from '@laundelle/api-client';
+import { ManagerSettingsView } from './ManagerSettingsView';
+import { LogoutConfirmModal } from './LogoutConfirmModal';
+import { ManagerStaffWarningBanner } from './ManagerStaffWarningBanner';
+import { dbFetchManagerOrders, dbFetchManagerStaff } from '@laundelle/api-client';
 
 interface ManagerPortalContainerProps {
   userName?: string;
@@ -28,17 +31,57 @@ export const ManagerPortalContainer: React.FC<ManagerPortalContainerProps> = ({
   const [activeTab, setActiveTab] = useState<AdminViewTab>('dashboard');
   const [selectedLocation, setSelectedLocation] = useState('All Locations');
   const [dateFilter, setDateFilter] = useState('Today');
+  const [customStartDate, setCustomStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().split('T')[0];
+  });
+  const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-  const fetchOrders = async () => {
-    const data = await dbFetchManagerOrders();
+  // Manager staff list for minimum staffing verification
+  const [staffList, setStaffList] = useState<any[]>([]);
+  const [loadingStaff, setLoadingStaff] = useState(true);
+  const [autoOpenStaffRole, setAutoOpenStaffRole] = useState<'driver' | 'processor' | null>(null);
+
+  const fetchStaff = async () => {
+    try {
+      const data = await dbFetchManagerStaff();
+      setStaffList(data || []);
+    } catch (err) {
+      console.error('Failed to load manager staff for staffing check:', err);
+    } finally {
+      setLoadingStaff(false);
+    }
+  };
+
+  const fetchOrders = async (df = dateFilter, sd = customStartDate, ed = customEndDate) => {
+    const data = await dbFetchManagerOrders(df, sd, ed);
     setOrders(data || []);
   };
 
   useEffect(() => {
-    fetchOrders();
-  }, [activeTab]);
+    fetchOrders(dateFilter, customStartDate, customEndDate);
+  }, [activeTab, dateFilter, customStartDate, customEndDate]);
+
+  useEffect(() => {
+    fetchStaff();
+  }, []);
+
+  const activeDrivers = staffList.filter((s: any) => s.role === 'driver' && s.is_active !== false);
+  const activeProcessors = staffList.filter((s: any) => s.role === 'processor' && s.is_active !== false);
+
+  const handleOpenAddDriver = () => {
+    setActiveTab('staff');
+    setAutoOpenStaffRole('driver');
+  };
+
+  const handleOpenAddProcessor = () => {
+    setActiveTab('staff');
+    setAutoOpenStaffRole('processor');
+  };
 
   return (
     <div className="w-full h-screen overflow-hidden bg-[#f8fafc] flex flex-row font-sans text-gray-900">
@@ -49,6 +92,7 @@ export const ManagerPortalContainer: React.FC<ManagerPortalContainerProps> = ({
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         unresolvedAlertsCount={2}
         currentRole="manager"
+        onRequestLogout={() => setShowLogoutModal(true)}
       />
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0">
@@ -58,21 +102,68 @@ export const ManagerPortalContainer: React.FC<ManagerPortalContainerProps> = ({
           selectedLocation={selectedLocation}
           onChangeLocation={setSelectedLocation}
           dateFilter={dateFilter}
-          onChangeDateFilter={setDateFilter}
+          onChangeDateFilter={(df) => {
+            setDateFilter(df);
+            fetchOrders(df, customStartDate, customEndDate);
+          }}
+          customStartDate={customStartDate}
+          onChangeCustomStartDate={(sd) => {
+            setCustomStartDate(sd);
+            fetchOrders(dateFilter, sd, customEndDate);
+          }}
+          customEndDate={customEndDate}
+          onChangeCustomEndDate={(ed) => {
+            setCustomEndDate(ed);
+            fetchOrders(dateFilter, customStartDate, ed);
+          }}
           onOpenGlobalSearch={() => {}}
-          onExitAdmin={onSignOut}
+          onExitAdmin={() => setShowLogoutModal(true)}
+          onRequestLogout={() => setShowLogoutModal(true)}
+        />
+
+        {/* Continuous Staffing Warning: continuously shown across views until at least 1 driver and 1 processor are created */}
+        <ManagerStaffWarningBanner
+          activeDriversCount={activeDrivers.length}
+          activeProcessorsCount={activeProcessors.length}
+          loading={loadingStaff}
+          onOpenAddDriver={handleOpenAddDriver}
+          onOpenAddProcessor={handleOpenAddProcessor}
         />
 
         <main className="flex-1 overflow-y-auto">
-          {activeTab === 'dashboard' && <ManagerPortalView onNavigateTab={setActiveTab} />}
-          {activeTab === 'orders' && <AdminOrdersView orders={orders} onRefresh={fetchOrders} />}
+          {activeTab === 'dashboard' && (
+            <ManagerPortalView
+              onNavigateTab={setActiveTab}
+              dateFilter={dateFilter}
+              customStartDate={customStartDate}
+              customEndDate={customEndDate}
+            />
+          )}
+          {activeTab === 'orders' && <AdminOrdersView orders={orders} onRefresh={() => fetchOrders(dateFilter, customStartDate, customEndDate)} />}
           {activeTab === 'drivers' && <ManagerDriversView />}
           {activeTab === 'processors' && <ManagerProcessorsView />}
-          {activeTab === 'staff' && <ManagerStaffView />}
+          {activeTab === 'staff' && (
+            <ManagerStaffView
+              autoOpenAddRole={autoOpenStaffRole}
+              onClearAutoOpen={() => setAutoOpenStaffRole(null)}
+              onStaffChange={fetchStaff}
+            />
+          )}
           {activeTab === 'complaints' && <ManagerIncidentsView />}
           {activeTab === 'areas' && <AdminAreasView />}
+          {activeTab === 'settings' && <ManagerSettingsView />}
         </main>
       </div>
+
+      <LogoutConfirmModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={() => {
+          setShowLogoutModal(false);
+          onSignOut();
+        }}
+        portalName="Manager Portal"
+      />
     </div>
   );
 };

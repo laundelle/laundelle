@@ -2,77 +2,21 @@ import crypto from 'crypto';
 import { BadRequestError } from './api';
 import { OrderStatus } from '@laundelle/types';
 
-/**
- * Standard UK Postcode Normalization
- * Formats UK alphanumeric postcodes into standard UK format (e.g. "SW1A 1AA", "PR1 1AA", "W1D 4EQ").
- */
-export function normalizeUkPostcode(raw: any): string {
-    if (!raw || typeof raw !== 'string') {
-        if (raw !== null && raw !== undefined && typeof raw === 'number') {
-            raw = String(raw);
-        } else {
-            return '';
-        }
-    }
-    const cleaned = raw.trim().toUpperCase().replace(/\s+/g, '');
-    // UK postcodes are typically 5 to 7 alphanumeric characters (outward: 2-4 chars, inward: 3 chars)
-    if (cleaned.length >= 5 && cleaned.length <= 8) {
-        const inward = cleaned.slice(-3);
-        const outward = cleaned.slice(0, -3);
-        // Valid inward starts with number followed by 2 letters
-        if (/^[0-9][A-Z]{2}$/.test(inward)) {
-            return `${outward} ${inward}`;
-        }
-    }
-    return raw.trim().toUpperCase().replace(/\s+/g, ' ');
-}
+import {
+    normalizeUkPostcode,
+    parseUkPostcode,
+    isPostcodeInServiceArea,
+} from '@laundelle/utils';
 
-/**
- * Extract district (e.g. "SW1A" or "PR1") and sector (e.g. "SW1A 1" or "PR1 2") from a UK postcode.
- */
-export function parseUkPostcode(raw: string | undefined | null): {
-    full: string;
-    outward: string;
-    sector: string;
-} | null {
-    const normalized = normalizeUkPostcode(raw);
-    if (!normalized) return null;
-
-    const parts = normalized.split(' ');
-    if (parts.length === 2) {
-        const outward = parts[0];
-        const inward = parts[1];
-        const sector = `${outward} ${inward.charAt(0)}`;
-        return { full: normalized, outward, sector };
-    }
-
-    return { full: normalized, outward: normalized, sector: normalized };
-}
+export { normalizeUkPostcode, parseUkPostcode };
 
 /**
  * Match an order's UK postcode against a list of assigned driver postcodes / sectors / districts.
- * Supports exact postcode ("SW1A 1AA"), sector ("SW1A 1"), or district ("SW1A").
+ * Supports exact district ("PR1"), sector ("PR1 4"), or full postcode ("PR1 4UD").
+ * Strictly prevents overlapping prefix bleeding (e.g. PR1 never matches PR10, PR11, PR22).
  */
 export function matchesPostcode(orderPostcodeRaw: string, driverPostcodes: string[] = []): boolean {
-    if (!orderPostcodeRaw || !driverPostcodes || driverPostcodes.length === 0) return false;
-
-    const parsed = parseUkPostcode(orderPostcodeRaw);
-    if (!parsed) return false;
-
-    const normalizedDriverCodes = driverPostcodes.map(pc => normalizeUkPostcode(pc));
-
-    return normalizedDriverCodes.some(driverCode => {
-        if (!driverCode) return false;
-        // Exact match
-        if (driverCode === parsed.full) return true;
-        // Sector match (e.g. Driver covers "SW1A 1" and order is "SW1A 1AA")
-        if (driverCode === parsed.sector) return true;
-        // Outward / District match (e.g. Driver covers "SW1A" or "PR1" and order is "SW1A 1AA")
-        if (driverCode === parsed.outward) return true;
-        // Driver assigned "SW1A 1AA" and order specified outward "SW1A"
-        if (parsed.full === driverCode.split(' ')[0]) return true;
-        return false;
-    });
+    return isPostcodeInServiceArea(orderPostcodeRaw, driverPostcodes);
 }
 
 /**

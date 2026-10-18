@@ -60,10 +60,13 @@ export const AdminStaffView: React.FC = () => {
 
   const loadStaff = async () => {
     setLoading(true);
-    const [dbStaff, dbOrders] = await Promise.all([
+    const [dbStaff, dbOrders, dbPlants] = await Promise.all([
       dbFetchStaff(),
-      dbAdminFetchOrders()
+      dbAdminFetchOrders(),
+      dbFetchPlants()
     ]);
+    const safePlants = Array.isArray(dbPlants) ? dbPlants : ((dbPlants as any)?.plants || []);
+    setPlants(safePlants);
     setOrders(dbOrders || []);
 
     const roleLabels: Record<string, string> = {
@@ -74,29 +77,46 @@ export const AdminStaffView: React.FC = () => {
       processor: 'PROCESSOR',
     };
 
-    const mapped = dbStaff.map((u: any): any => ({
-      id: u._id,
-      userId: u._id,
-      employeeNumber: u.employee_number || u.employeeNumber || `EMP-${u._id.substring(u._id.length - 4).toUpperCase()}`,
-      fullName: u.full_name || u.name || 'Anonymous Staff',
-      email: u.email,
-      phone: u.phone || '+44 7700 900505',
-      role: u.role || 'manager',
-      roleLabel: roleLabels[u.role] || (u.role ? u.role.toUpperCase() : 'Plant Manager'),
-      status: u.is_active ? 'active' : 'suspended',
-      isActive: u.is_active !== false,
-      plantId: u.plant_id || '',
-      assigned_postcodes: u.assigned_postcodes || u.assignedSectors || [],
-      vehicle: u.vehicle || '',
-      vehicleType: u.vehicle_type || u.vehicleType || 'Van',
-      vehicleReg: u.vehicle_reg || u.vehicleReg || '',
-      licenseNum: u.license_number || u.licenseNum || '',
-      emergencyContact: u.emergency_contact || (u.emergencyName || u.emergencyPhone ? { name: u.emergencyName || '', phone: u.emergencyPhone || '' } : null),
-      hireDate: u.created_at ? u.created_at.split('T')[0] : '2025-01-01',
-      primaryLocation: u.primaryLocation || 'Preston Operations Hub',
-      avatarUrl: u.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200',
-      activeJobsCount: 0
-    }));
+    const mapped = dbStaff.map((u: any): any => {
+      const uId = String(u._id || u.id || '');
+      const uEmail = String(u.email || '').toLowerCase();
+      const uEmp = String(u.employee_number || u.employeeNumber || '');
+      const directPlantId = u.plant_id || u.plantId || '';
+      const matchedPlant = safePlants.find((p: any) =>
+        (directPlantId && (String(p._id) === String(directPlantId) || p.code === directPlantId || p.id === directPlantId)) ||
+        (p.manager_id && String(p.manager_id) === uId) ||
+        (p.manager_public_id && uEmp && String(p.manager_public_id) === uEmp) ||
+        (p.manager_email && uEmail && String(p.manager_email).toLowerCase() === uEmail)
+      );
+
+      const resolvedPlantId = directPlantId || (matchedPlant ? String(matchedPlant._id) : '');
+      const resolvedPlantName = matchedPlant ? `${matchedPlant.name} (${matchedPlant.code})` : '';
+
+      return {
+        id: u._id,
+        userId: u._id,
+        employeeNumber: u.employee_number || u.employeeNumber || `EMP-${u._id.substring(u._id.length - 4).toUpperCase()}`,
+        fullName: u.full_name || u.name || 'Anonymous Staff',
+        email: u.email,
+        phone: u.phone || '+44 7700 900505',
+        role: u.role || 'manager',
+        roleLabel: roleLabels[u.role] || (u.role ? u.role.toUpperCase() : 'Plant Manager'),
+        status: u.is_active ? 'active' : 'suspended',
+        isActive: u.is_active !== false,
+        plantId: resolvedPlantId,
+        plantName: resolvedPlantName,
+        assigned_postcodes: u.assigned_postcodes || u.assignedSectors || (matchedPlant?.service_pincodes || []),
+        vehicle: u.vehicle || '',
+        vehicleType: u.vehicle_type || u.vehicleType || 'Van',
+        vehicleReg: u.vehicle_reg || u.vehicleReg || '',
+        licenseNum: u.license_number || u.licenseNum || '',
+        emergencyContact: u.emergency_contact || (u.emergencyName || u.emergencyPhone ? { name: u.emergencyName || '', phone: u.emergencyPhone || '' } : null),
+        hireDate: u.created_at ? u.created_at.split('T')[0] : '2025-01-01',
+        primaryLocation: matchedPlant ? `${matchedPlant.name} (${matchedPlant.code})` : (u.primaryLocation || 'Preston Operations Hub'),
+        avatarUrl: u.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=200',
+        activeJobsCount: 0
+      };
+    });
 
     setStaff(mapped);
     setLoading(false);
@@ -163,7 +183,12 @@ export const AdminStaffView: React.FC = () => {
     setPhoneCountryCode(parsedP.code);
     setPhone(parsedP.num);
     setRole(stf.role);
-    setPlantId(stf.plantId || '');
+    const matchedP = plants.find(p => 
+      (stf.plantId && (String(p._id) === String(stf.plantId) || p.code === stf.plantId)) ||
+      (p.manager_id && String(p.manager_id) === String(stf.id || stf.userId)) ||
+      (p.manager_email && stf.email && String(p.manager_email).toLowerCase() === String(stf.email).toLowerCase())
+    );
+    setPlantId(stf.plantId || (matchedP ? String(matchedP._id) : ''));
     setAssignedPostcodes((stf.assigned_postcodes || []).join(', '));
     setIsActive(stf.isActive);
     setVehicleType(stf.vehicleType || 'Van');
@@ -173,6 +198,16 @@ export const AdminStaffView: React.FC = () => {
     const parsedEP = parsePhone(stf.emergencyContact?.phone);
     setEmergencyPhoneCountryCode(parsedEP.code);
     setEmergencyPhone(parsedEP.num);
+    if (['driver', 'processor'].includes(stf.role)) {
+      const curManagerId = stf.manager_id || stf.plantManagerId || '';
+      setSelectedManagerId(curManagerId);
+      if (curManagerId) {
+        handleManagerSelect(curManagerId);
+      }
+    } else {
+      setSelectedManagerId('');
+      setManagerPlantPreview(null);
+    }
     setModalOpen(true);
   };
 
@@ -217,9 +252,7 @@ export const AdminStaffView: React.FC = () => {
 
     if (['driver', 'processor'].includes(role)) {
       // For driver/processor: send manager_id; backend resolves plant + postcodes
-      if (editingStaff) {
-        // On edit: just send updatable fields (no manager/plant/postcode change)
-      } else {
+      if (selectedManagerId) {
         staffData.manager_id = selectedManagerId;
         staffData.plantManagerId = selectedManagerId;
       }
@@ -299,10 +332,24 @@ export const AdminStaffView: React.FC = () => {
     return matchesRole && matchesStatus && matchesPlant && matchesQuery;
   });
 
-  const getPlantName = (pId: string) => {
-    if (!pId) return 'Unassigned';
-    const found = plants.find(p => p._id === pId);
-    return found ? `${found.name} (${found.code})` : pId;
+  const getPlantName = (pId: string, staffMember?: any) => {
+    if (staffMember?.plantName) return staffMember.plantName;
+    if (pId) {
+      const found = plants.find(p => String(p._id) === String(pId) || p.code === pId || p.id === pId);
+      if (found) return `${found.name} (${found.code})`;
+    }
+    if (staffMember) {
+      const uId = String(staffMember.id || staffMember.userId || '');
+      const uEmail = String(staffMember.email || '').toLowerCase();
+      const uEmp = String(staffMember.employeeNumber || '');
+      const found = plants.find(p =>
+        (p.manager_id && String(p.manager_id) === uId) ||
+        (p.manager_public_id && uEmp && String(p.manager_public_id) === uEmp) ||
+        (p.manager_email && uEmail && String(p.manager_email).toLowerCase() === uEmail)
+      );
+      if (found) return `${found.name} (${found.code})`;
+    }
+    return pId || 'Unassigned';
   };
 
   return (
@@ -459,7 +506,7 @@ export const AdminStaffView: React.FC = () => {
                     <td className="py-3 px-4">
                       <span
                         className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wider uppercase ${
-                          stf.role === 'manager'
+                          stf.role === 'manager' || stf.role === 'plant_manager'
                             ? 'bg-amber-50 text-amber-700 border border-amber-100/60'
                             : stf.role === 'driver'
                             ? 'bg-blue-50 text-blue-700 border border-blue-100/60'
@@ -472,10 +519,10 @@ export const AdminStaffView: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3 px-4">
-                      {stf.role === 'manager' || stf.role === 'processor' ? (
+                      {stf.role === 'manager' || stf.role === 'plant_manager' || stf.role === 'processor' ? (
                         <div className="flex items-center gap-1.5 text-xs text-slate-700">
                           <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                          <span className="font-medium">{getPlantName(stf.plantId)}</span>
+                          <span className="font-medium">{getPlantName(stf.plantId, stf)}</span>
                         </div>
                       ) : stf.role === 'driver' && stf.assigned_postcodes?.length > 0 ? (
                         <div className="flex flex-wrap gap-1 max-w-xs">
@@ -622,7 +669,7 @@ export const AdminStaffView: React.FC = () => {
             <div className="space-y-3 text-xs">
               <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100 space-y-2">
                 <span className="text-[10px] font-bold text-[#0077B6] uppercase tracking-wider block">Operational Assignment</span>
-                {viewingStaff.role === 'manager' ? (
+                {viewingStaff.role === 'manager' || viewingStaff.role === 'plant_manager' ? (
                   <div className="flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-[#E63946] shrink-0" />
                     <div>
@@ -704,7 +751,7 @@ export const AdminStaffView: React.FC = () => {
               </div>
 
               {/* Specific Role Details / Drilldown Section */}
-              {viewingStaff.role === 'manager' && (
+              {(viewingStaff.role === 'manager' || viewingStaff.role === 'plant_manager') && (
                 <div className="space-y-2 pt-2 border-t border-gray-100">
                   <h4 className="font-heading font-extrabold text-[#03045E] text-xs uppercase tracking-wider">
                     Staff Managed Under Facility ({staff.filter(s => String(s.plantId) === String(viewingStaff.plantId) && String(s.id) !== String(viewingStaff.id)).length})
@@ -949,7 +996,7 @@ export const AdminStaffView: React.FC = () => {
               </div>
 
               {/* Plant Assignment — only for Manager role */}
-              {role === 'manager' && (
+              {(role === 'manager' || role === 'plant_manager') && (
                 <div>
                   <label className="block font-bold text-gray-700 mb-1">
                     Assign Plant Location
@@ -970,15 +1017,15 @@ export const AdminStaffView: React.FC = () => {
               )}
 
               {/* Manager Selection — for Driver/Processor (postcodes auto-inherited) */}
-              {['driver', 'processor'].includes(role) && !editingStaff && (
+              {['driver', 'processor'].includes(role) && (
                 <div>
                   <label className="block font-bold text-gray-700 mb-1">
-                    Select Plant Manager <span className="text-red-500">*</span>
+                    Select Plant Manager {!editingStaff && <span className="text-red-500">*</span>}
                   </label>
                   <select
                     value={selectedManagerId}
                     onChange={(e) => handleManagerSelect(e.target.value)}
-                    required
+                    required={!editingStaff}
                     className="w-full p-2.5 bg-gray-50 border rounded-xl font-semibold focus:ring-2 focus:ring-[#03045E] focus:outline-hidden cursor-pointer"
                   >
                     <option value="">-- Select Manager --</option>

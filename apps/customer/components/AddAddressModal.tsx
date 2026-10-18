@@ -14,6 +14,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { UserAddress } from '@laundelle/types';
+import { normalizeUkPostcode, isValidUkPostcodeOrDistrict } from '@laundelle/utils';
 
 interface AddAddressModalProps {
   isOpen: boolean;
@@ -179,6 +180,12 @@ export const AddAddressModal: React.FC<AddAddressModalProps> = ({
       return;
     }
 
+    const cleanPostcode = normalizeUkPostcode(pincode);
+    if (!isValidUkPostcodeOrDistrict(cleanPostcode)) {
+      alert('Please enter a valid UK postcode (e.g. PR1 4UD, SW1A 1AA).');
+      return;
+    }
+
     const finalLabel = labelType === 'Other' ? customLabel.trim() || 'Other' : labelType;
 
     const newAddr: UserAddress = {
@@ -188,7 +195,7 @@ export const AddAddressModal: React.FC<AddAddressModalProps> = ({
       street: street.trim(),
       landmark: landmark.trim() || undefined,
       city: city.trim(),
-      pincode: pincode.trim().toUpperCase(),
+      pincode: cleanPostcode,
       instructions: instructions.trim() || undefined,
       isDefault,
       latitude: coordinates?.lat,

@@ -42,7 +42,17 @@ interface StaffMember {
   created_at?: string;
 }
 
-export const ManagerStaffView: React.FC = () => {
+interface ManagerStaffViewProps {
+  autoOpenAddRole?: 'driver' | 'processor' | null;
+  onClearAutoOpen?: () => void;
+  onStaffChange?: () => void;
+}
+
+export const ManagerStaffView: React.FC<ManagerStaffViewProps> = ({
+  autoOpenAddRole,
+  onClearAutoOpen,
+  onStaffChange,
+}) => {
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -103,6 +113,14 @@ export const ManagerStaffView: React.FC = () => {
     loadStaff();
   }, []);
 
+  useEffect(() => {
+    if (autoOpenAddRole) {
+      setNewRole(autoOpenAddRole);
+      setAddModalOpen(true);
+      onClearAutoOpen?.();
+    }
+  }, [autoOpenAddRole, onClearAutoOpen]);
+
   const showNotification = (type: 'success' | 'error', message: string) => {
     setFeedback({ type, message });
     setTimeout(() => {
@@ -154,6 +172,7 @@ export const ManagerStaffView: React.FC = () => {
       setEditModalOpen(false);
       setEditingStaff(null);
       loadStaff();
+      onStaffChange?.();
     } else {
       showNotification('error', result.error || 'Failed to update staff member.');
     }
@@ -195,6 +214,7 @@ export const ManagerStaffView: React.FC = () => {
       setNewVehicle('');
       setNewRole('driver');
       loadStaff();
+      onStaffChange?.();
 
       if (result.ticketUrl) {
         setCreatedStaffInvite({

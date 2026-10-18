@@ -156,6 +156,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
             setSlotsLoadedPlantName(fetched[0].plant_name);
           } else {
             setSlotsLoadedPlantName(null);
+            setPickupSlot('');
+            setDeliverySlot('');
+            setPickupDate('');
+            setDeliveryDate('');
           }
         }
       } catch (e) {
@@ -535,6 +539,10 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     }
     if (!activeAddr) {
       setScheduleError('Please add or select your service location first.');
+      return;
+    }
+    if (!slotsLoading && dynamicSlots.length === 0) {
+      setScheduleError('There is no plant in the area available for orders at this time. Booking slots are unavailable.');
       return;
     }
     if (!pickupDate || !pickupSlot) {
@@ -1034,10 +1042,15 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                               {activeAddr.pincode}
                             </span>
                           )}
-                          {activeAddr && slotsLoadedPlantName ? (
+                          {activeAddr && slotsLoadedPlantName && dynamicSlots.length > 0 ? (
                             <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                               Covering Plant: {slotsLoadedPlantName}
+                            </span>
+                          ) : activeAddr && !slotsLoading && dynamicSlots.length === 0 ? (
+                            <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-300 flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3 text-amber-700" />
+                              There is no plant in the area
                             </span>
                           ) : activeAddr && slotsLoading ? (
                             <span className="text-[10px] text-gray-400">Locating covering plant...</span>
@@ -1080,7 +1093,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   </div>
                 </div>
 
-                {/* 2. TIME SLOTS SECTION (Revealed ONLY after Service Location is set) */}
+                {/* 2. TIME SLOTS SECTION (Revealed ONLY after Service Location is set and plant has slots) */}
                 {!activeAddr ? (
                   <div className="rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50/50 p-8 text-center space-y-4">
                     <div className="w-12 h-12 rounded-full bg-blue-100 text-[#1d5bd8] flex items-center justify-center mx-auto">
@@ -1103,6 +1116,36 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                       <Plus className="w-4 h-4" />
                       <span>Add Service Location Now</span>
                     </button>
+                  </div>
+                ) : slotsLoading ? (
+                  <div className="rounded-2xl border border-blue-100 bg-white p-8 text-center space-y-3 shadow-xs">
+                    <div className="w-8 h-8 rounded-full border-2 border-[#03045E] border-t-transparent animate-spin mx-auto" />
+                    <p className="text-xs font-semibold text-gray-600">Loading service slots for your area...</p>
+                  </div>
+                ) : dynamicSlots.length === 0 ? (
+                  <div className="rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/70 p-8 text-center space-y-4">
+                    <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto shadow-xs">
+                      <AlertCircle className="w-6 h-6" />
+                    </div>
+                    <div className="max-w-md mx-auto space-y-2">
+                      <h3 className="text-base font-extrabold text-amber-950">There is no plant in the area</h3>
+                      <p className="text-xs text-amber-900/85 leading-relaxed">
+                        We currently do not have an active plant servicing {activeAddr?.pincode ? `postcode ${activeAddr.pincode}` : 'this area'}. Booking slots will be revealed once an operational plant with assigned couriers is available.
+                      </p>
+                    </div>
+                    <div className="pt-2 flex items-center justify-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAddressToEdit(null);
+                          setAddressModalOpen(true);
+                        }}
+                        className="px-5 py-2.5 bg-[#03045E] hover:bg-[#023E8A] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer inline-flex items-center gap-2"
+                      >
+                        <MapPin className="w-4 h-4" />
+                        <span>Change Address / Postcode</span>
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <>
@@ -1364,9 +1407,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <button
                     type="button"
                     onClick={handleProceedFromSlots}
-                    className="px-8 py-3.5 rounded-xl bg-navy hover:bg-[#072465] text-white text-sm font-bold flex items-center gap-2 shadow-md transition-all cursor-pointer active:scale-98"
+                    disabled={!slotsLoading && dynamicSlots.length === 0}
+                    className={`px-8 py-3.5 rounded-xl text-white text-sm font-bold flex items-center gap-2 shadow-md transition-all ${
+                      !slotsLoading && dynamicSlots.length === 0
+                        ? 'bg-gray-400 cursor-not-allowed opacity-60'
+                        : 'bg-navy hover:bg-[#072465] cursor-pointer active:scale-98'
+                    }`}
                   >
-                    <span>Continue to Contact Details</span>
+                    <span>{(!slotsLoading && dynamicSlots.length === 0) ? 'There is no plant in the area' : 'Continue to Contact Details'}</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>

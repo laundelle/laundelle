@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, MapPin, Calendar, Bell, Shield, ArrowLeft, ChevronDown, Check, AlertTriangle } from 'lucide-react';
+import { Search, MapPin, Calendar, Bell, Shield, ArrowLeft, ChevronDown, Check, AlertTriangle, LogOut } from 'lucide-react';
 import { AdminRole, SystemAlert } from '@laundelle/types';
 import { apiFetch, dbFetchPlants } from '@laundelle/api-client';
 
@@ -16,6 +16,7 @@ interface AdminTopbarProps {
   onChangeCustomEndDate?: (date: string) => void;
   onOpenGlobalSearch: () => void;
   onExitAdmin: () => void;
+  onRequestLogout?: () => void;
 }
 
 export const AdminTopbar: React.FC<AdminTopbarProps> = ({
@@ -31,6 +32,7 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
   onChangeCustomEndDate,
   onOpenGlobalSearch,
   onExitAdmin,
+  onRequestLogout,
 }) => {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
@@ -196,6 +198,16 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
             </div>
           )}
         </div>
+
+        {/* Topbar Logout Button */}
+        <button
+          onClick={onRequestLogout || onExitAdmin}
+          className="flex items-center gap-1.5 text-slate-500 hover:text-rose-600 bg-slate-50 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer transition-all shadow-2xs"
+          title="Sign out of Admin Portal"
+        >
+          <LogOut className="w-3.5 h-3.5 text-rose-500" />
+          <span className="hidden sm:inline">Logout</span>
+        </button>
       </div>
     </header>
   );

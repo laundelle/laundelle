@@ -185,10 +185,10 @@ export const PostcodeCheckerModal: React.FC<PostcodeCheckerModalProps> = ({
                 <AlertCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
                 <div>
                   <h4 className="text-xs font-bold text-amber-900">
-                    We are not operating in {postcode.toUpperCase()} just yet!
+                    There is no plant in the area ({postcode.toUpperCase()})
                   </h4>
                   <p className="text-xs text-amber-800 mt-0.5">
-                    We are expanding our electric courier routes rapidly. Join our VIP waiting list to get notified the day we launch, plus receive £10 off your first booking.
+                    There is no plant in the area currently operating. Join our VIP waiting list to get notified the day our plant and couriers launch in your neighbourhood, plus receive £10 off your first booking.
                   </p>
                 </div>
               </div>

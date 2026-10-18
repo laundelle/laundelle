@@ -17,8 +17,15 @@ export async function GET(req: NextRequest) {
             throw new ForbiddenError('Access denied: Manager authorization required.');
         }
 
-        const data = await ManagerService.getStaff(String(dbUser._id));
-        return NextResponse.json({ success: true, ...data });
+        const url = new URL(req.url);
+        const queryManagerId = url.searchParams.get('managerId');
+        const queryPlantId = url.searchParams.get('plantId');
+
+        const isSuperAdmin = role === 'super_admin';
+        const targetManagerId = isSuperAdmin && queryManagerId ? queryManagerId : String(dbUser._id);
+
+        const data = await ManagerService.getStaff(targetManagerId, isSuperAdmin && !queryManagerId, queryPlantId || undefined);
+        return NextResponse.json({ success: true, ...data, data: data.staff, staff: data.staff });
     } catch (e: any) {
         return NextResponse.json(
             { success: false, error: e.message, code: e.code || 'BAD_REQUEST' },

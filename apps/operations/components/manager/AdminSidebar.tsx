@@ -20,6 +20,7 @@ import {
   Truck,
   Package,
   ChevronsUpDown,
+  LogOut,
 } from 'lucide-react';
 import { AdminViewTab } from '@laundelle/types';
 
@@ -30,6 +31,7 @@ interface AdminSidebarProps {
   onToggleCollapse: () => void;
   unresolvedAlertsCount: number;
   currentRole?: string;
+  onRequestLogout?: () => void;
 }
 
 export const AdminSidebar: React.FC<AdminSidebarProps> = ({
@@ -39,6 +41,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   onToggleCollapse,
   unresolvedAlertsCount,
   currentRole,
+  onRequestLogout,
 }) => {
   const rawNavItems: { id: AdminViewTab; label: string; icon: React.FC<{ className?: string }>; badge?: number }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -170,6 +173,22 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
             );
           })}
         </nav>
+
+        {/* Sidebar Logout Button */}
+        {onRequestLogout && (
+          <div className="px-3 pt-2 pb-1 border-t border-slate-100 shrink-0">
+            <button
+              onClick={onRequestLogout}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 hover:text-rose-700 transition-colors cursor-pointer ${
+                collapsed ? 'justify-center' : ''
+              }`}
+              title={collapsed ? 'Log Out' : undefined}
+            >
+              <LogOut className="w-4 h-4 shrink-0 text-rose-600" />
+              {!collapsed && <span>Log Out</span>}
+            </button>
+          </div>
+        )}
 
         {/* Footer info */}
         <div className="p-3.5 border-t border-slate-100 shrink-0">

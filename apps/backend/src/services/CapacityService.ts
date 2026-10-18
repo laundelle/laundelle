@@ -2,6 +2,7 @@ import { getDb } from '@/lib/mongodb';
 import { PlantCapacityReport, PlantStage, PlantStageCapacity, PlantStaffCapacity } from '@laundelle/types';
 import { BadRequestError, NotFoundError } from '@/lib/api';
 import { NotificationService } from './NotificationService';
+import { buildEntityLookupQuery } from '@laundelle/ids';
 
 const STAGE_CONFIGS: Record<PlantStage, { label: string; baseCapacityKg: number }> = {
   intake: { label: 'Inbound Intake & Weighing', baseCapacityKg: 800 },
@@ -23,13 +24,31 @@ export class CapacityService {
     const db = await getDb();
 
     // 1. Get plant metadata
-    const plant = await db.collection('plants').findOne({ $or: [{ _id: plantId }, { id: plantId }, { code: plantId }] } as any);
+    const plant = await db.collection('plants').findOne(buildEntityLookupQuery(plantId, 'plant') as any);
     const plantName = plant ? plant.name : `Plant Hub #${plantId}`;
-    const effectivePlantId = plant ? (plant._id || plant.id) : plantId;
+    const effectivePlantId = plant ? String(plant._id) : plantId;
+
+    // Build plant matching conditions for orders
+    const plantMatchConditions: any[] = [
+      { plant_id: effectivePlantId },
+      { plantId: effectivePlantId }
+    ];
+    if (plant) {
+      plantMatchConditions.push({ plant_id: plant._id });
+      if (plant.publicId) {
+        plantMatchConditions.push({ plant_id: plant.publicId }, { plantId: plant.publicId });
+      }
+      if (plant.code) {
+        plantMatchConditions.push({ plant_code: plant.code });
+      }
+      if (plant.manager_id) {
+        plantMatchConditions.push({ manager_id: plant.manager_id });
+      }
+    }
 
     // 2. Fetch active orders in plant pipeline
     const activeOrders = await db.collection('orders').find({
-      $or: [{ plant_id: effectivePlantId }, { plantId: effectivePlantId }],
+      $or: plantMatchConditions,
       status: { $nin: ['delivered', 'completed', 'cancelled'] }
     }).toArray();
 
@@ -81,7 +100,7 @@ export class CapacityService {
     }
 
     // 4. Calculate stage utilization and find bottleneck
-    let maxUtilization = -1;
+    let maxUtilization = 0;
     let bottleneckStage: PlantStage = 'washing';
     const stages: Record<PlantStage, PlantStageCapacity> = {} as any;
 

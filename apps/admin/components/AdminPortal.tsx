@@ -25,6 +25,8 @@ import { AdminCouponsChargesView } from './AdminCouponsChargesView';
 
 import { Search, X, QrCode, User, ShoppingBag, LayoutDashboard, Users, Settings, Truck, Package } from 'lucide-react';
 import { dbAdminFetchOrders, dbFetchManagerOrders, dbAdminFetchCustomers, dbFetchManagerStaff } from '@laundelle/api-client';
+import { LogoutConfirmModal } from './LogoutConfirmModal';
+import { ManagerStaffWarningBanner } from './ManagerStaffWarningBanner';
 
 interface AdminPortalProps {
   orders: Order[]; // Left for backwards compatibility, but not used for actual display anymore
@@ -52,10 +54,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   });
   const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
   const [orders, setOrders] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [staffList, setStaffList] = useState<any[]>([]);
+  const [autoOpenStaffRole, setAutoOpenStaffRole] = useState<'driver' | 'processor' | null>(null);
 
   const fetchOrders = async () => {
     const data = currentRole === 'manager'
@@ -139,6 +143,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         unresolvedAlertsCount={3}
         currentRole={currentRole}
+        onRequestLogout={() => setShowLogoutModal(true)}
       />
 
       {/* Main Content Workspace */}
@@ -172,14 +177,36 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             customEndDate={customEndDate}
             onChangeCustomEndDate={setCustomEndDate}
             onOpenGlobalSearch={() => setGlobalSearchOpen(true)}
-            onExitAdmin={onExitAdmin}
+            onExitAdmin={() => setShowLogoutModal(true)}
+            onRequestLogout={() => setShowLogoutModal(true)}
           />
+
+          {/* Continuous Manager Warning if viewing in manager mode */}
+          {currentRole === 'manager' && (
+            <ManagerStaffWarningBanner
+              activeDriversCount={staffList.filter((s: any) => s.role === 'driver' && s.is_active !== false).length}
+              activeProcessorsCount={staffList.filter((s: any) => s.role === 'processor' && s.is_active !== false).length}
+              onOpenAddDriver={() => {
+                setActiveTab('staff');
+                setAutoOpenStaffRole('driver');
+              }}
+              onOpenAddProcessor={() => {
+                setActiveTab('staff');
+                setAutoOpenStaffRole('processor');
+              }}
+            />
+          )}
 
           {/* Active View Renderer */}
           <main className="flex-1 overflow-y-auto">
             {activeTab === 'dashboard' && (
               currentRole === 'manager' ? (
-                <ManagerPortalView onNavigateTab={setActiveTab} />
+                <ManagerPortalView
+                  onNavigateTab={setActiveTab}
+                  dateFilter={dateFilter}
+                  customStartDate={customStartDate}
+                  customEndDate={customEndDate}
+                />
               ) : (
                 <AdminDashboard
                   onNavigateTab={setActiveTab}
@@ -197,7 +224,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             {activeTab === 'processors' && <ManagerProcessorsView />}
             {activeTab === 'customers' && <AdminCustomersView />}
             {activeTab === 'staff' && (
-              currentRole === 'manager' ? <ManagerStaffView /> : <AdminStaffView />
+              currentRole === 'manager' ? (
+                <ManagerStaffView
+                  autoOpenAddRole={autoOpenStaffRole}
+                  onClearAutoOpen={() => setAutoOpenStaffRole(null)}
+                  onStaffChange={fetchOrders}
+                />
+              ) : (
+                <AdminStaffView />
+              )
             )}
             {activeTab === 'services' && <AdminServicesView />}
             {activeTab === 'coupons_charges' && <AdminCouponsChargesView />}
@@ -357,6 +392,16 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           })}
         </div>
       )}
+
+      <LogoutConfirmModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={() => {
+          setShowLogoutModal(false);
+          onExitAdmin();
+        }}
+        portalName={currentRole === 'manager' ? 'Manager Portal' : 'Admin Portal'}
+      />
     </div>
   );
 };

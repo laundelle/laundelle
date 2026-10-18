@@ -1,17 +1,25 @@
 import { getDb } from '@/lib/mongodb';
 import { BadRequestError, NotFoundError } from '@/lib/api';
 import { AuditService } from '@/services/AuditService';
-import { extractOutwardCode } from '@laundelle/utils';
+import {
+    extractOutwardCode,
+    isPostcodeInServiceArea,
+    parseUkPostcode,
+    normalizeUkPostcode,
+    isValidUkPostcodeOrDistrict
+} from '@laundelle/utils';
 import { generateServiceId, generateBookingSlotId } from '@laundelle/ids';
-export { extractOutwardCode };
+export { extractOutwardCode, isPostcodeInServiceArea, parseUkPostcode, normalizeUkPostcode };
 
 
-// Reusable logic from the existing file for checking postcodes
+// Canonical derivation of district and sector from candidate postcode
 export function derivePostcodeSector(postcode: string) {
-    const cleaned = postcode.replace(/\s+/g, '').toUpperCase();
-    const match = cleaned.match(/^([A-Z]{1,2}[0-9][A-Z0-9]?)([0-9])([A-Z]{2})$/);
-    if (!match) return null;
-    return { district: match[1], sector: match[2] };
+    const parsed = parseUkPostcode(postcode);
+    if (!parsed) return null;
+    return {
+        district: parsed.outward,
+        sector: parsed.inward ? parsed.inward.charAt(0) : ''
+    };
 }
 
 export class PlatformService {
@@ -98,6 +106,57 @@ export class PlatformService {
         return { success: true };
     }
 
+    static async isPlantOperationallyStaffed(plant: any): Promise<boolean> {
+        if (!plant) return false;
+        const db = await getDb();
+        const plantId = plant._id;
+        const managerId = plant.manager_id;
+
+        const staffConditions: any[] = [];
+        if (plantId) {
+            staffConditions.push({ plant_id: plantId });
+            staffConditions.push({ plant_id: String(plantId) });
+            staffConditions.push({ plantId: String(plantId) });
+        }
+        if (plant.publicId) {
+            staffConditions.push({ plant_id: plant.publicId });
+            staffConditions.push({ plantId: plant.publicId });
+        }
+        if (plant.id) {
+            staffConditions.push({ plant_id: plant.id });
+            staffConditions.push({ plantId: plant.id });
+        }
+        if (managerId) {
+            staffConditions.push({ manager_id: managerId });
+            staffConditions.push({ manager_id: String(managerId) });
+            staffConditions.push({ plantManagerId: String(managerId) });
+        }
+        if (plant.manager_public_id) {
+            staffConditions.push({ manager_id: plant.manager_public_id });
+            staffConditions.push({ plantManagerId: plant.manager_public_id });
+        }
+        if (plant.code) {
+            staffConditions.push({ plant_code: plant.code });
+        }
+
+        if (staffConditions.length === 0) return false;
+
+        const [driverCount, processorCount] = await Promise.all([
+            db.collection('users').countDocuments({
+                role: 'driver',
+                is_active: { $ne: false },
+                $or: staffConditions
+            }),
+            db.collection('users').countDocuments({
+                role: 'processor',
+                is_active: { $ne: false },
+                $or: staffConditions
+            })
+        ]);
+
+        return driverCount >= 1 && processorCount >= 1;
+    }
+
     // ----------------------------------------------------------------------
     // SLOTS
     // ----------------------------------------------------------------------
@@ -106,9 +165,22 @@ export class PlatformService {
         const query: any = { isActive: { $ne: false } };
 
         if (filter?.plant_id) {
+            const plant = await db.collection('plants').findOne({
+                $or: [
+                    { _id: filter.plant_id as any },
+                    { _id: String(filter.plant_id) as any },
+                    { id: filter.plant_id },
+                    { code: filter.plant_id }
+                ]
+            });
+            if (!plant || !await this.isPlantOperationallyStaffed(plant)) {
+                return [];
+            }
+
             query.$or = [
                 { plant_id: String(filter.plant_id) },
-                { plant_id: filter.plant_id as any }
+                { plant_id: filter.plant_id as any },
+                { plant_code: plant.code }
             ];
             return db.collection('booking_slots').find(query).toArray();
         }
@@ -131,7 +203,7 @@ export class PlatformService {
             return [];
         }
 
-        return db.collection('booking_slots').find(query).toArray();
+        return [];
     }
 
     static async getAdminSlots(actorId?: string) {
@@ -299,13 +371,27 @@ export class PlatformService {
     static async checkPostcode(postcode: string) {
         if (!postcode) return { isServiceable: false, location: null, services: [] };
 
-        const cleaned = postcode.replace(/\s+/g, '').toUpperCase();
-        const parsed = derivePostcodeSector(postcode);
+        const parsed = parseUkPostcode(postcode);
+        if (!parsed || !parsed.isValidOutward) {
+            return {
+                isServiceable: false,
+                location: null,
+                city: null,
+                district: null,
+                plantId: null,
+                plantCode: null,
+                plantName: null,
+                managerId: null,
+                managerName: null,
+                services: [],
+                message: 'Invalid UK postcode format'
+            };
+        }
 
         const db = await getDb();
 
-        // 1. Scan active laundry plants and their configured service_pincodes
-        const activePlants = await db.collection('plants').find({ status: 'ACTIVE' }).toArray();
+        // 1. Scan active laundry plants and match against configured service_pincodes (exact district match)
+        const activePlants = await db.collection('plants').find({ status: { $in: ['ACTIVE', 'active'] } }).toArray();
         let matchedPlant: any = null;
 
         for (const plant of activePlants) {
@@ -318,37 +404,8 @@ export class PlatformService {
 
             if (pincodes.length === 0) continue;
 
-            const isMatch = pincodes.some((pin: string) => {
-                const cleanPin = pin.replace(/\s+/g, '').toUpperCase();
-                if (!cleanPin) return false;
-
-                // Exact match (e.g. "PR1" === "PR1")
-                if (cleaned === cleanPin) return true;
-
-                // Cleaned entered postcode starts with the plant pincode (e.g. "PR12HE" starts with "PR1")
-                if (cleaned.startsWith(cleanPin)) return true;
-
-                // Plant pincode starts with entered prefix (e.g. user entered "PR1" and plant has "PR1")
-                if (cleanPin.startsWith(cleaned)) return true;
-
-                // Match starting 2-3 letters (e.g. "PR1" or "PR" from "PR1 2HE")
-                const prefix2 = cleaned.substring(0, 2);
-                const prefix3 = cleaned.substring(0, 3);
-                if (cleanPin === prefix2 || cleanPin === prefix3) {
-                    return true;
-                }
-
-                if (parsed?.district) {
-                    const cleanDistrict = parsed.district.replace(/\s+/g, '').toUpperCase();
-                    if (cleanDistrict === cleanPin || cleanDistrict.startsWith(cleanPin) || cleanPin.startsWith(cleanDistrict)) {
-                        return true;
-                    }
-                }
-
-                return false;
-            });
-
-            if (isMatch) {
+            // EXACT DISTRICT / SERVICE AREA MATCH (Prevents PR1 from matching PR10, PR11, PR22, PR2A, PR29)
+            if (isPostcodeInServiceArea(postcode, pincodes)) {
                 matchedPlant = plant;
                 break;
             }
@@ -357,24 +414,18 @@ export class PlatformService {
         // 2. Also check postcode_sectors collection if not matched on plant yet
         let sectorMatch: any = null;
         if (!matchedPlant) {
-            if (parsed) {
+            if (parsed.isValidFull && parsed.inward) {
+                const sectorDigit = parsed.inward.charAt(0);
                 sectorMatch = await db.collection('postcode_sectors').findOne({
-                    district: parsed.district,
-                    sector: parsed.sector,
+                    district: parsed.outward,
+                    sector: sectorDigit,
                     is_active: true
                 });
             }
 
             if (!sectorMatch) {
                 sectorMatch = await db.collection('postcode_sectors').findOne({
-                    district: cleaned,
-                    is_active: true
-                });
-            }
-
-            if (!sectorMatch && parsed) {
-                sectorMatch = await db.collection('postcode_sectors').findOne({
-                    district: parsed.district,
+                    district: parsed.outward,
                     is_active: true
                 });
             }
@@ -387,8 +438,30 @@ export class PlatformService {
             }
         }
 
-        // Only mark serviceable if an active plant/manager facility covers it
-        const isServiceable = !!matchedPlant;
+        // Check operational staffing requirement: must have >= 1 driver and >= 1 processor
+        let isOperationallyStaffed = false;
+        if (matchedPlant) {
+            isOperationallyStaffed = await this.isPlantOperationallyStaffed(matchedPlant);
+        }
+
+        // Only mark serviceable if an active plant facility covers it AND has required processor + driver
+        const isServiceable = !!matchedPlant && isOperationallyStaffed;
+
+        if (!isServiceable) {
+            return {
+                isServiceable: false,
+                location: null,
+                city: null,
+                district: parsed?.outward || null,
+                plantId: null,
+                plantCode: null,
+                plantName: null,
+                managerId: null,
+                managerName: null,
+                services: [],
+                message: 'There is no plant in the area'
+            };
+        }
 
         let services: any[] = [];
         if (isServiceable) {
@@ -404,19 +477,17 @@ export class PlatformService {
             }
         }
 
-        const locationName = matchedPlant
-            ? `${matchedPlant.name} (${matchedPlant.code})`
-            : (sectorMatch?.location || (sectorMatch ? `${sectorMatch.city || sectorMatch.district}` : null));
+        const locationName = `${matchedPlant.name} (${matchedPlant.code})`;
 
         return {
-            isServiceable,
+            isServiceable: true,
             location: locationName,
-            city: matchedPlant?.address || sectorMatch?.city || null,
-            district: matchedPlant?.code || sectorMatch?.district || parsed?.district || null,
-            plantId: matchedPlant ? String(matchedPlant._id) : (sectorMatch?.plant_id ? String(sectorMatch.plant_id) : null),
-            plantCode: matchedPlant?.code || null,
-            plantName: matchedPlant?.name || null,
-            managerId: matchedPlant?.manager_id || null,
+            city: matchedPlant.address || sectorMatch?.city || null,
+            district: matchedPlant.code || sectorMatch?.district || parsed?.outward || null,
+            plantId: String(matchedPlant._id),
+            plantCode: matchedPlant.code || null,
+            plantName: matchedPlant.name || null,
+            managerId: matchedPlant.manager_id || null,
             managerName: managerName || null,
             services: services.map((s: any) => ({
                 id: s.id,
@@ -436,19 +507,19 @@ export class PlatformService {
         const activePlants = await db.collection('plants').find({ status: { $in: ['ACTIVE', 'active'] } }).toArray();
         const districts = new Set<string>();
         for (const p of activePlants) {
-            if (Array.isArray(p.pincodes)) {
-                for (const pin of p.pincodes) {
-                    if (pin && typeof pin === 'string') {
-                        districts.add(pin.trim().toUpperCase());
-                    }
-                }
+            const isStaffed = await this.isPlantOperationallyStaffed(p);
+            if (!isStaffed) continue;
+
+            const pincodes: string[] = Array.isArray(p.service_pincodes)
+                ? p.service_pincodes
+                : (p.service_pincodes || '').split(',').map((s: string) => s.trim().toUpperCase()).filter(Boolean);
+
+            for (const pin of pincodes) {
+                const out = extractOutwardCode(pin);
+                if (out) districts.add(out);
             }
         }
-        const activeSectors = await db.collection('postcode_sectors').find({ is_active: true }).toArray();
-        for (const s of activeSectors) {
-            if (s.district) districts.add(s.district.trim().toUpperCase());
-        }
-        return Array.from(districts);
+        return Array.from(districts).sort();
     }
 
     static async getAdminPostcodes() {

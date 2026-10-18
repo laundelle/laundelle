@@ -49,6 +49,8 @@ export interface UpdateStaffInput {
     assignedSectors?: string[];
     plantId?: string | null;
     plant_id?: string | null;
+    manager_id?: string | null;
+    plantManagerId?: string | null;
     role?: string;
 }
 
@@ -60,12 +62,11 @@ export interface UpdateStatusInput {
 
 export class StaffProvisioningService {
 
-    /**
-     * Resolves inherited postcodes for a given plant ID.
-     */
-    private static async resolvePlantPostcodes(db: any, plantId: string | null): Promise<string[]> {
+    public static async resolvePlantPostcodes(db: any, plantId: string | null): Promise<string[]> {
         if (!plantId) return [];
-        const plant = await db.collection('plants').findOne({ _id: plantId as any });
+        const plant = await db.collection('plants').findOne(
+            buildEntityLookupQuery(plantId, 'plant', (id) => ObjectId.isValid(id) ? new ObjectId(id) : null) as any
+        );
         if (!plant) return [];
         if (Array.isArray(plant.service_pincodes)) {
             return plant.service_pincodes;
@@ -75,6 +76,48 @@ export class StaffProvisioningService {
                 .split(',')
                 .map((p: string) => p.trim().toUpperCase())
                 .filter(Boolean);
+        }
+        return [];
+    }
+
+    /**
+     * Resolves inherited postcodes for subordinate staff.
+     * Prioritizes the manager's assigned plant, then falls back to direct manager postcodes.
+     */
+    public static async resolveManagerPostcodes(db: any, managerId: string | null, plantId: string | null): Promise<string[]> {
+        if (plantId) {
+            const plantCodes = await this.resolvePlantPostcodes(db, plantId);
+            if (plantCodes && plantCodes.length > 0) return plantCodes;
+        }
+
+        if (managerId) {
+            const manager = await db.collection('users').findOne(
+                buildEntityLookupQuery(managerId, 'user', (id) => ObjectId.isValid(id) ? new ObjectId(id) : null) as any
+            );
+            if (manager) {
+                const mPlantId = manager.plant_id || manager.plantId;
+                if (mPlantId && mPlantId !== plantId) {
+                    const plantCodes = await this.resolvePlantPostcodes(db, mPlantId);
+                    if (plantCodes && plantCodes.length > 0) return plantCodes;
+                }
+                const mKeys = [managerId, String(manager._id), manager.publicId].filter(Boolean);
+                const plant = await db.collection('plants').findOne({
+                    $or: [
+                        { manager_id: { $in: mKeys } },
+                        { manager_public_id: { $in: mKeys } }
+                    ]
+                } as any);
+                if (plant) {
+                    const plantCodes = await this.resolvePlantPostcodes(db, String(plant._id));
+                    if (plantCodes && plantCodes.length > 0) return plantCodes;
+                }
+                if (Array.isArray(manager.assigned_postcodes) && manager.assigned_postcodes.length > 0) {
+                    return manager.assigned_postcodes;
+                }
+                if (Array.isArray(manager.assignedSectors) && manager.assignedSectors.length > 0) {
+                    return manager.assignedSectors;
+                }
+            }
         }
         return [];
     }
@@ -324,8 +367,8 @@ export class StaffProvisioningService {
             resolvedPlantId = plantExists.publicId || plantExists.id || String(plantExists._id);
         }
 
-        // Postcodes are inherited from the assigned plant
-        const plantPostcodes = await this.resolvePlantPostcodes(db, resolvedPlantId);
+        // Postcodes are inherited from the assigned plant or manager
+        const inheritedPostcodes = await this.resolveManagerPostcodes(db, resolvedManagerId, resolvedPlantId);
 
         const internalDbId = new ObjectId().toHexString();
         const staffPublicId = generateStaffId();
@@ -380,8 +423,8 @@ export class StaffProvisioningService {
                     license_number: input.license_number || input.licenseNum || '',
                     emergency_contact: emergencyContact,
                     vehicle: vehicleSummary,
-                    assigned_postcodes: plantPostcodes,
-                    assignedSectors: plantPostcodes,
+                    assigned_postcodes: inheritedPostcodes,
+                    assignedSectors: inheritedPostcodes,
                     status: 'active',
                     is_active: true,
                     created_at: now,
@@ -575,6 +618,45 @@ export class StaffProvisioningService {
             const postcodes = input.assigned_postcodes || input.assignedSectors || [];
             updateFields.assigned_postcodes = postcodes;
             updateFields.assignedSectors = postcodes;
+
+            // Cascade to subordinate staff if updating a manager
+            if (['manager', 'plant_manager'].includes(targetUser.role)) {
+                const mKeys = [String(targetUser._id), targetUser.publicId, targetUser.id, targetUser.staffId].filter(Boolean);
+                await db.collection('users').updateMany(
+                    {
+                        $or: [
+                            { manager_id: { $in: mKeys } },
+                            { plantManagerId: { $in: mKeys } }
+                        ],
+                        role: { $in: ['driver', 'processor'] }
+                    },
+                    { $set: { assigned_postcodes: postcodes, assignedSectors: postcodes } }
+                ).catch(() => {});
+            }
+        }
+
+        // Super admin manager assignment for subordinate staff
+        const newManagerId = input.manager_id || (input as any).plantManagerId;
+        if (actorRole === 'super_admin' && newManagerId !== undefined) {
+            updateFields.manager_id = newManagerId || null;
+            updateFields.plantManagerId = newManagerId || null;
+            if (newManagerId) {
+                const manager = await db.collection('users').findOne(
+                    buildEntityLookupQuery(newManagerId, 'user', (id) => ObjectId.isValid(id) ? new ObjectId(id) : null) as any
+                );
+                if (manager) {
+                    const inheritedPlantId = manager.plant_id || manager.plantId || null;
+                    if (inheritedPlantId && !updateFields.plant_id) {
+                        updateFields.plant_id = inheritedPlantId;
+                        updateFields.plantId = inheritedPlantId;
+                    }
+                    const inheritedPostcodes = await this.resolveManagerPostcodes(db, newManagerId, inheritedPlantId);
+                    if (inheritedPostcodes.length > 0 && updateFields.assigned_postcodes === undefined) {
+                        updateFields.assigned_postcodes = inheritedPostcodes;
+                        updateFields.assignedSectors = inheritedPostcodes;
+                    }
+                }
+            }
         }
 
         // Super admin plant assignment
@@ -582,6 +664,73 @@ export class StaffProvisioningService {
         if (actorRole === 'super_admin' && newPlantId !== undefined) {
             updateFields.plantId = newPlantId || null;
             updateFields.plant_id = newPlantId || null;
+
+            // If updating a plant manager, synchronize with the plants collection
+            if (['manager', 'plant_manager'].includes(targetUser.role)) {
+                const targetUserIdStr = String(targetUser._id);
+                const targetUserPubId = targetUser.publicId || targetUserIdStr;
+                const managerName = nameVal || targetUser.full_name || targetUser.name || targetUser.email;
+
+                if (newPlantId) {
+                    const plant = await db.collection('plants').findOne(buildEntityLookupQuery(newPlantId, 'plant') as any);
+                    if (plant) {
+                        // Clear this manager from any other plants
+                        await db.collection('plants').updateMany(
+                            {
+                                $or: [
+                                    { manager_id: targetUserIdStr },
+                                    { manager_id: targetUserPubId },
+                                    { manager_id: newPlantId }
+                                ],
+                                _id: { $ne: plant._id } as any
+                            },
+                            { $set: { manager_id: null, manager_name: null } }
+                        );
+                        // Assign manager to this plant
+                        await db.collection('plants').updateOne(
+                            { _id: plant._id },
+                            {
+                                $set: {
+                                    manager_id: targetUserIdStr,
+                                    manager_public_id: targetUserPubId,
+                                    manager_name: managerName
+                                }
+                            }
+                        );
+                        updateFields.assigned_plant = plant.name;
+                        const plantPincodes = await this.resolvePlantPostcodes(db, String(plant._id));
+                        if (plantPincodes.length > 0) {
+                            updateFields.assigned_postcodes = plantPincodes;
+                            updateFields.assignedSectors = plantPincodes;
+                            const mKeys = [targetUserIdStr, targetUserPubId].filter(Boolean);
+                            await db.collection('users').updateMany(
+                                {
+                                    $or: [
+                                        { manager_id: { $in: mKeys } },
+                                        { plantManagerId: { $in: mKeys } },
+                                        { plant_id: String(plant._id) },
+                                        { plantId: String(plant._id) }
+                                    ],
+                                    role: { $in: ['driver', 'processor'] }
+                                },
+                                { $set: { assigned_postcodes: plantPincodes, assignedSectors: plantPincodes } }
+                            ).catch(() => {});
+                        }
+                    }
+                } else {
+                    // Unassign manager from all plants
+                    await db.collection('plants').updateMany(
+                        {
+                            $or: [
+                                { manager_id: targetUserIdStr },
+                                { manager_id: targetUserPubId }
+                            ]
+                        },
+                        { $set: { manager_id: null, manager_name: null } }
+                    );
+                    updateFields.assigned_plant = null;
+                }
+            }
         }
 
         // Apply MongoDB update

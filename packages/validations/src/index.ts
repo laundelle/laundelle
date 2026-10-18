@@ -18,6 +18,8 @@ export const otpVerifySchema = z.object({
   code: z.string().length(6, 'Verification code must be 6 digits'),
 });
 
+const UK_POSTCODE_OR_DISTRICT_REGEX = /^(([A-Z]{1,2}[0-9][A-Z0-9]?)\s*([0-9][A-Z]{2})|([A-Z]{1,2}[0-9][A-Z0-9]?)|GIR\s*(0AA)?)$/i;
+
 // Address Validations
 export const addressSchema = z.object({
   id: z.string().optional(),
@@ -25,7 +27,10 @@ export const addressSchema = z.object({
   flat: z.string().optional(),
   street: z.string().min(3, 'Street address is required'),
   city: z.string().min(2, 'City is required'),
-  postcode: z.string().min(4, 'Valid UK postcode is required'),
+  postcode: z.string().refine(
+    (val) => UK_POSTCODE_OR_DISTRICT_REGEX.test((val || '').trim()),
+    { message: 'Please enter a valid UK postcode (e.g. PR1 4UD, SW1A 1AA)' }
+  ),
   notes: z.string().optional(),
   isDefault: z.boolean().optional(),
 });
