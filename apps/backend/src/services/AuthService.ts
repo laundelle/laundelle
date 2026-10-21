@@ -7,6 +7,7 @@ import crypto from 'crypto';
 
 import { generateCustomerId, generateStaffId } from '@laundelle/ids';
 import { OrderService } from '@/services/OrderService';
+import { Auth0Service } from '@/services/Auth0Service';
 
 export class AuthService {
     
@@ -329,15 +330,99 @@ export class AuthService {
 
         const isCustomerPortal = body?.portal === 'customer';
         const isAdminPortal = body?.portal === 'admin';
+        const isOperationsPortal = body?.portal === 'operations';
 
         const envAdminEmails = [
             process.env.ADMIN_EMAIL,
             ...(process.env.ADDITIONAL_ADMIN_EMAILS || '').split(','),
         ].filter(Boolean).map(e => String(e).trim().toLowerCase());
-        const isAdminEmail = !isCustomerPortal && isAdminPortal && envAdminEmails.length > 0 && envAdminEmails.includes(formatted);
+        const isEnvAdmin = envAdminEmails.length > 0 && envAdminEmails.includes(formatted);
+
+        // Gather all role candidates from verified token claims and Auth0 metadata
+        const candidateRoles: string[] = [];
+        if (isEnvAdmin) {
+            candidateRoles.push('super_admin');
+        }
+        if (Array.isArray(verifiedToken.roles)) {
+            candidateRoles.push(...verifiedToken.roles);
+        }
+        if (verifiedToken.role && typeof verifiedToken.role === 'string') {
+            candidateRoles.push(verifiedToken.role);
+        }
+        const customTokenRoles = (verifiedToken as any)['https://laundelle.co.uk/roles'] ||
+            (verifiedToken as any)['https://laundelle/roles'] ||
+            (verifiedToken as any)['https://auth.laundelle.co.uk/roles'] ||
+            (verifiedToken as any)['http://laundelle.co.uk/roles'] ||
+            (verifiedToken as any)['https://laundelle.com/roles'];
+        if (Array.isArray(customTokenRoles)) {
+            candidateRoles.push(...customTokenRoles);
+        } else if (typeof customTokenRoles === 'string') {
+            candidateRoles.push(customTokenRoles);
+        }
+        const customTokenRole = (verifiedToken as any)['https://laundelle.co.uk/role'] ||
+            (verifiedToken as any)['https://laundelle/role'] ||
+            (verifiedToken as any)['https://auth.laundelle.co.uk/role'];
+        if (typeof customTokenRole === 'string') {
+            candidateRoles.push(customTokenRole);
+        }
+
+        // Check Auth0 Management API if configured (e.g. roles assigned in Auth0 Dashboard)
+        if (Auth0Service.isConfigured()) {
+            try {
+                const [m2mRoles, m2mUser] = await Promise.all([
+                    Auth0Service.getUserRoles(sub).catch(() => []),
+                    Auth0Service.getUser(sub).catch(() => null),
+                ]);
+                if (Array.isArray(m2mRoles)) {
+                    candidateRoles.push(...m2mRoles);
+                }
+                if (m2mUser) {
+                    const appR = m2mUser.appMetadata?.roles || m2mUser.appMetadata?.role;
+                    if (Array.isArray(appR)) candidateRoles.push(...appR);
+                    else if (typeof appR === 'string') candidateRoles.push(appR);
+
+                    const userR = m2mUser.userMetadata?.roles || m2mUser.userMetadata?.role;
+                    if (Array.isArray(userR)) candidateRoles.push(...userR);
+                    else if (typeof userR === 'string') candidateRoles.push(userR);
+                }
+            } catch (m2mErr) {
+                console.warn('[AuthService] Auth0 Management API role check notice:', m2mErr);
+            }
+        }
+
+        // Resolve highest staff role from candidate roles
+        let resolvedStaffRole: string | null = null;
+        for (const raw of candidateRoles) {
+            if (!raw) continue;
+            const r = String(raw).toLowerCase().trim();
+            if (r === 'super_admin' || r === 'super admin' || r === 'superadmin' || r === 'super-admin') {
+                resolvedStaffRole = 'super_admin';
+                break;
+            }
+            if (r === 'admin' || r === 'administrator') {
+                if (!resolvedStaffRole || resolvedStaffRole !== 'super_admin') {
+                    resolvedStaffRole = 'admin';
+                }
+            }
+            if (r === 'plant_manager' || r === 'plant manager' || r === 'plant-manager' || r === 'manager' || r === 'operations manager' || r === 'ops' || r === 'operations' || r === 'operations staff' || r === 'staff') {
+                if (!resolvedStaffRole || !['super_admin', 'admin'].includes(resolvedStaffRole)) {
+                    resolvedStaffRole = 'plant_manager';
+                }
+            }
+            if (r === 'driver' || r === 'courier') {
+                if (!resolvedStaffRole || !['super_admin', 'admin', 'plant_manager'].includes(resolvedStaffRole)) {
+                    resolvedStaffRole = 'driver';
+                }
+            }
+            if (r === 'processor' || r === 'operator' || r === 'facility operator') {
+                if (!resolvedStaffRole || !['super_admin', 'admin', 'plant_manager', 'driver'].includes(resolvedStaffRole)) {
+                    resolvedStaffRole = 'processor';
+                }
+            }
+        }
 
         // Administrative accounts require authentic RS256 Auth0 token
-        if (isAdminEmail) {
+        if (resolvedStaffRole === 'super_admin' || isEnvAdmin) {
             const isVerifiedRs256 = Boolean(verifiedToken && !verifiedToken.isLegacyToken);
             if (!isVerifiedRs256) {
                 throw new ForbiddenError('Super Admin accounts require verified Auth0 authentication with designated administrative credentials.');
@@ -356,14 +441,14 @@ export class AuthService {
         if (!user) {
             const existingByEmail = await db.collection('users').findOne({ email: formatted });
             if (existingByEmail) {
-                const isStaff = ['super_admin', 'admin', 'plant_manager', 'driver', 'processor'].includes(existingByEmail.role);
-                if (isStaff) {
+                const isStaff = ['super_admin', 'admin', 'plant_manager', 'driver', 'processor', 'manager'].includes(existingByEmail.role);
+                if (isStaff || resolvedStaffRole) {
                     const isLinked = existingByEmail.auth0UserId || existingByEmail.auth0_sub;
                     if (isLinked && existingByEmail.auth0UserId !== sub && existingByEmail.auth0_sub !== sub) {
                         const isPrevSocial = String(existingByEmail.auth0UserId || '').startsWith('google-oauth2|') ||
                                              String(existingByEmail.auth0UserId || '').startsWith('apple|') ||
                                              String(existingByEmail.auth0UserId || '').startsWith('windowslive|');
-                        if (isAdminEmail || isPrevSocial) {
+                        if (isEnvAdmin || Boolean(resolvedStaffRole) || isPrevSocial) {
                             await db.collection('users').updateOne(
                                 { _id: existingByEmail._id },
                                 { $set: { auth0UserId: sub, auth0_sub: sub, updated_at: now } }
@@ -394,21 +479,21 @@ export class AuthService {
             const internalDbId = new ObjectId().toHexString();
             const customerId = generateCustomerId();
             const staffId = generateStaffId();
-            const isSuperAdmin = !isCustomerPortal && isAdminPortal && isAdminEmail;
-            const role = isCustomerPortal ? 'customer' : (isSuperAdmin ? 'super_admin' : 'customer');
-            const fullName = (name || formatted.split('@')[0] || (role === 'customer' ? 'Customer' : 'System Administrator')).trim();
+            const isStaff = !isCustomerPortal && Boolean(resolvedStaffRole);
+            const role = isStaff ? (resolvedStaffRole as string) : 'customer';
+            const fullName = (name || formatted.split('@')[0] || (role === 'customer' ? 'Customer' : 'Staff Member')).trim();
 
             const newUser: any = {
                 _id: internalDbId as any,
-                publicId: role === 'customer' ? customerId : staffId,
-                customerId: role === 'customer' ? customerId : undefined,
-                staffId: role === 'customer' ? undefined : staffId,
-                id: role === 'customer' ? customerId : staffId,
+                publicId: isStaff ? staffId : customerId,
+                customerId: isStaff ? undefined : customerId,
+                staffId: isStaff ? staffId : undefined,
+                id: isStaff ? staffId : customerId,
                 email: formatted,
                 auth0UserId: sub,
                 auth0_sub: sub,
                 full_name: fullName,
-                phone: isSuperAdmin ? (process.env.ADMIN_PHONE || '') : '',
+                phone: isStaff ? (process.env.ADMIN_PHONE || '') : '',
                 role: role,
                 avatar_url: picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=03045E&color=CAF0F8&size=128`,
                 wallet_balance: 0,
@@ -445,7 +530,7 @@ export class AuthService {
             await AuditService.recordEvent({
                 entityType: 'user',
                 entityId: role === 'customer' ? customerId : String(internalDbId),
-                action: role === 'customer' ? 'user_registered_auth0' : 'super_admin_registered_auth0',
+                action: role === 'customer' ? 'user_registered_auth0' : `${role}_registered_auth0`,
                 actorId: sub || customerId,
                 actorRole: role,
                 ipAddress: clientIp
@@ -454,8 +539,16 @@ export class AuthService {
             const updateDoc: any = { updated_at: now, last_login_at: now };
             const unsetDoc: any = {};
 
+            const existingIsStaff = ['super_admin', 'admin', 'plant_manager', 'manager', 'driver', 'processor'].includes(user.role);
+
             if (isCustomerPortal) {
-                // Ensure 100% customer role when authenticating through customer portal
+                // If an operational or administrative staff member attempts to sign into the customer portal,
+                // do NOT demote or mutate their staff record in MongoDB. Reject cleanly with portal guidance.
+                if (existingIsStaff || resolvedStaffRole) {
+                    throw new ForbiddenError(
+                        `Access Restricted: Account "${formatted}" is registered as operational/administrative staff (${user.role || resolvedStaffRole}). Please use the Operations or Administrator Portal.`
+                    );
+                }
                 if (user.role !== 'customer') {
                     updateDoc.role = 'customer';
                     user.role = 'customer';
@@ -474,13 +567,25 @@ export class AuthService {
                     updateDoc.id = finalCustId;
                     user.id = finalCustId;
                 }
-                if (user.staffId) {
-                    unsetDoc.staffId = '';
-                    delete user.staffId;
+            } else {
+                // Logging in via Admin or Operations portal
+                // If Auth0 grants a staff role or user already had a staff role, sync/restore their role
+                const targetRole = resolvedStaffRole || (existingIsStaff ? user.role : null);
+                if (targetRole) {
+                    if (user.role !== targetRole) {
+                        updateDoc.role = targetRole;
+                        user.role = targetRole;
+                    }
+                    if (!user.staffId) {
+                        const newStaffId = generateStaffId();
+                        updateDoc.staffId = newStaffId;
+                        user.staffId = newStaffId;
+                    }
+                    if (!user.publicId || user.publicId.startsWith('CUST-')) {
+                        updateDoc.publicId = user.staffId;
+                        user.publicId = user.staffId;
+                    }
                 }
-            } else if (isAdminEmail && isAdminPortal && user.role !== 'admin' && user.role !== 'super_admin') {
-                updateDoc.role = 'super_admin';
-                user.role = 'super_admin';
             }
 
             if (user.role === 'customer') {
@@ -525,13 +630,14 @@ export class AuthService {
         if (body?.portal === 'operations' && !['driver', 'processor', 'manager', 'plant_manager', 'admin', 'super_admin'].includes(user.role)) {
             throw new ForbiddenError(`Access Restricted: Account "${formatted}" has role "${user.role || 'customer'}". This portal is restricted to authorized Operations Staff only.`);
         }
-        if (body?.portal === 'customer' && ['driver', 'processor', 'manager', 'plant_manager'].includes(user.role)) {
-            throw new ForbiddenError(`Access Restricted: Account "${formatted}" is registered as operational staff (${user.role}). Please use the Operations Portal or sign in with a Customer account.`);
+        if (body?.portal === 'customer' && ['driver', 'processor', 'manager', 'plant_manager', 'admin', 'super_admin'].includes(user.role)) {
+            throw new ForbiddenError(`Access Restricted: Account "${formatted}" is registered as operational/administrative staff (${user.role}). Please use the Operations or Administrator Portal or sign in with a Customer account.`);
         }
 
         const internalId = String(user._id);
-        const publicId = user.publicId || user.customerId || user.id || internalId;
         const role = user.role || 'customer';
+        const isStaffUser = ['driver', 'processor', 'manager', 'plant_manager', 'admin', 'super_admin'].includes(role);
+        const publicId = user.publicId || (isStaffUser ? user.staffId : user.customerId) || user.id || internalId;
         const token = signJwt({ 
             sub: internalId, 
             auth0UserId: user.auth0UserId || sub,
@@ -549,12 +655,14 @@ export class AuthService {
             user: {
                 id: publicId,
                 publicId,
-                customerId: publicId,
+                customerId: !isStaffUser ? publicId : undefined,
+                staffId: isStaffUser ? publicId : undefined,
                 internalId,
                 email: user.email,
                 name: user.full_name,
                 phone,
-                role
+                role,
+                plantId: user.plant_id || user.plantId
             }
         };
     }

@@ -24,22 +24,31 @@ async function auth0SyncHandler(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const clientIp = req.headers.get('x-forwarded-for') || 'unknown';
 
-    // Infer portal context from headers if not specified or override if explicitly from customer domain
+    // Infer portal context accurately from origin/referer headers or honor explicitly specified portal
     const origin = (req.headers.get('origin') || req.headers.get('referer') || '').toLowerCase();
-    const isCustomerDomain = origin.includes(':3000') ||
-        origin.includes('laundelle.co.uk') ||
-        origin.includes('3000.inc1.devtunnels.ms');
 
-    if (isCustomerDomain) {
+    const isAdminOrigin = origin.includes(':3002') ||
+        origin.includes('admin.') ||
+        origin.includes('3002.inc1.devtunnels.ms');
+
+    const isOpsOrigin = origin.includes(':3001') ||
+        origin.includes('ops.') ||
+        origin.includes('operations.') ||
+        origin.includes('3001.inc1.devtunnels.ms');
+
+    const isExplicitCustomerOrigin = origin.includes(':3000') ||
+        origin.includes('customer.') ||
+        origin.includes('3000.inc1.devtunnels.ms') ||
+        (!isAdminOrigin && !isOpsOrigin && (origin.includes('laundelle.co.uk') || origin.includes('localhost') || origin.includes('127.0.0.1')));
+
+    if (isAdminOrigin) {
+        body.portal = 'admin';
+    } else if (isOpsOrigin) {
+        body.portal = 'operations';
+    } else if (isExplicitCustomerOrigin) {
         body.portal = 'customer';
     } else if (!body.portal) {
-        if (origin.includes(':3002') || origin.includes('admin.') || origin.includes('3002.inc1.devtunnels.ms')) {
-            body.portal = 'admin';
-        } else if (origin.includes(':3001') || origin.includes('ops.') || origin.includes('operations.') || origin.includes('3001.inc1.devtunnels.ms')) {
-            body.portal = 'operations';
-        } else {
-            body.portal = 'customer';
-        }
+        body.portal = 'customer';
     }
     
     const result = await AuthService.syncAuth0User(body, clientIp, verifiedToken);

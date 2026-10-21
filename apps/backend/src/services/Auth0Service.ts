@@ -392,6 +392,25 @@ export class Auth0Service {
     }
 
     /**
+     * Retrieves all assigned Auth0 roles for a user.
+     */
+    public static async getUserRoles(auth0UserId: string): Promise<string[]> {
+        try {
+            const res = await this.request<any[]>(
+                `/api/v2/users/${encodeURIComponent(auth0UserId)}/roles`,
+                'GET'
+            );
+            if (Array.isArray(res)) {
+                return res.map(r => r.name).filter(Boolean);
+            }
+            return [];
+        } catch (err: any) {
+            console.warn(`[Auth0Service] Failed to retrieve roles for Auth0 user ${auth0UserId}:`, err?.message || err);
+            return [];
+        }
+    }
+
+    /**
      * Retrieves an Auth0 user by user ID.
      */
     public static async getUser(auth0UserId: string): Promise<Auth0UserRecord | null> {

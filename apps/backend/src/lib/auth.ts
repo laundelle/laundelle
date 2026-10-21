@@ -408,9 +408,27 @@ function parseTokenParts(token: string): {
  * Normalizes an Auth0 decoded payload into Laundelle's standard JwtPayload.
  */
 function normalizeAuth0Payload(raw: any): JwtPayload {
-    const roles: string[] = raw['https://laundelle.co.uk/roles'] || raw['https://laundelle/roles'] || raw.roles || [];
+    const rawRoles = raw['https://laundelle.co.uk/roles'] ||
+        raw['https://laundelle/roles'] ||
+        raw['https://auth.laundelle.co.uk/roles'] ||
+        raw['http://laundelle.co.uk/roles'] ||
+        raw['https://laundelle.com/roles'] ||
+        raw.roles ||
+        raw.app_metadata?.roles ||
+        raw.user_metadata?.roles ||
+        (raw.app_metadata?.role ? [raw.app_metadata.role] : []) ||
+        (raw.user_metadata?.role ? [raw.user_metadata.role] : []) ||
+        [];
+    const roles: string[] = Array.isArray(rawRoles) ? rawRoles : [String(rawRoles)];
     const permissions: string[] = raw.permissions || raw['https://laundelle.co.uk/permissions'] || [];
-    const directRole = roles[0] || raw['https://laundelle.co.uk/role'] || raw.role || 'customer';
+    const directRole = roles[0] ||
+        raw['https://laundelle.co.uk/role'] ||
+        raw['https://laundelle/role'] ||
+        raw['https://auth.laundelle.co.uk/role'] ||
+        raw.app_metadata?.role ||
+        raw.user_metadata?.role ||
+        raw.role ||
+        'customer';
     const emailVerified = typeof raw.email_verified === 'boolean'
         ? raw.email_verified
         : (raw.email_verified !== undefined ? Boolean(raw.email_verified) : undefined);
