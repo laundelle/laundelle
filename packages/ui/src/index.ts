@@ -11,3 +11,4 @@ export * from './PinInput';
 export * from './GenerateQRModal';
 export * from './BottomBlurMask';
 export * from './ScrollReveal';
+export * from './UserGuide';

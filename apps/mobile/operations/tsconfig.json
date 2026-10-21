@@ -1,0 +1,41 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "jsx": "react-native",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*", "app/*"],
+      "@laundelle/types": ["../../../packages/types/src/index.ts"],
+      "@laundelle/types/*": ["../../../packages/types/src/*"],
+      "@laundelle/api-client": ["../../../packages/api-client/src/index.ts"],
+      "@laundelle/api-client/*": ["../../../packages/api-client/src/*"],
+      "@laundelle/auth": ["../../../packages/auth/src/index.ts"],
+      "@laundelle/auth/*": ["../../../packages/auth/src/*"],
+      "@laundelle/utils": ["../../../packages/utils/src/index.ts"],
+      "@laundelle/utils/*": ["../../../packages/utils/src/*"],
+      "@laundelle/validations": ["../../../packages/validations/src/index.ts"],
+      "@laundelle/validations/*": ["../../../packages/validations/src/*"],
+      "@laundelle/config": ["../../../packages/config/src/index.ts"],
+      "@laundelle/config/*": ["../../../packages/config/src/*"],
+      "@laundelle/ids": ["../../../packages/ids/src/index.ts"],
+      "@laundelle/ids/*": ["../../../packages/ids/src/*"]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

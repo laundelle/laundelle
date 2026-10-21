@@ -199,7 +199,7 @@ export const AdminAreasView: React.FC = () => {
 
     let res;
     if (editingSlot) {
-      const slotId = editingSlot._id || editingSlot.id;
+      const slotId = editingSlot.id || editingSlot.slotId || editingSlot.publicId || editingSlot._id;
       res = await dbUpdateSlot(slotId, payload);
     } else {
       res = await dbCreateSlot(payload);
@@ -227,7 +227,7 @@ export const AdminAreasView: React.FC = () => {
   };
 
   const handleToggleSlotActive = async (slot: any) => {
-    const slotId = slot.id || slot._id;
+    const slotId = slot.id || slot.slotId || slot.publicId || slot._id;
     const res = await dbUpdateSlot(slotId, { isActive: !slot.isActive });
     if (res.success) {
       loadData();
@@ -519,7 +519,7 @@ export const AdminAreasView: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   {filteredSlots.map((s) => (
                     <div
-                      key={s._id || s.id}
+                      key={s.id || s.slotId || s.publicId || s._id}
                       className={`bg-white rounded-2xl p-4 shadow-xs border transition-all space-y-2.5 ${
                         s.isActive !== false ? 'border-slate-100 hover:border-slate-200' : 'border-slate-200 opacity-60'
                       }`}
@@ -548,7 +548,7 @@ export const AdminAreasView: React.FC = () => {
                             <Edit className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => handleDeleteSlot(s.id || s._id)}
+                            onClick={() => handleDeleteSlot(s.id || s.slotId || s.publicId || s._id)}
                             className="p-1 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
                             title="Delete Slot"
                           >

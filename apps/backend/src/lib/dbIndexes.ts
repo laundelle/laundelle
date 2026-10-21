@@ -30,6 +30,36 @@ async function ensureSafeUniqueStringIndex(collection: any, field: string, index
 }
 
 /**
+ * Safely creates an index only if an index with identical key specification does not already exist.
+ * Preserves existing production indexes, avoids index drops, and prevents IndexOptionsConflict / code 85.
+ */
+async function ensureSafeIndex(collection: any, keys: Record<string, any>, options: any = {}) {
+  try {
+    const existingIndexes = await collection.indexes().catch(() => []);
+    const keyEntries = Object.entries(keys);
+
+    const matchingIndex = existingIndexes.find((idx: any) => {
+      if (!idx.key) return false;
+      const idxEntries = Object.entries(idx.key);
+      if (idxEntries.length !== keyEntries.length) return false;
+      return keyEntries.every(([k, v]) => idx.key[k] === v);
+    });
+
+    if (matchingIndex) {
+      // Existing index satisfies key specification; preserve it
+      return matchingIndex.name;
+    }
+
+    return await collection.createIndex(keys, options);
+  } catch (err: any) {
+    if (err.code === 85 || err.message?.includes('Index already exists')) {
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
  * Ensures optimal MongoDB database indexes for production performance,
  * concurrency safety, and fast query execution across all collections.
  */
@@ -155,13 +185,7 @@ export async function ensureDatabaseIndexes() {
       db.collection('machines').createIndex({ machineCode: 1 }, { background: true })
     ]);
 
-    // 16. Revoked Tokens
-    await Promise.all([
-      db.collection('revoked_tokens').createIndex({ token: 1 }, { unique: true, background: true }),
-      db.collection('revoked_tokens').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, background: true })
-    ]);
-
-    // 17. Vehicles Fleet (P2)
+    // 16. Vehicles Fleet (P2)
     await Promise.all([
       db.collection('vehicles').createIndex({ id: 1 }, { unique: true, background: true }),
       db.collection('vehicles').createIndex({ registrationNumber: 1 }, { unique: true, background: true }),
@@ -295,21 +319,62 @@ export async function ensureDatabaseIndexes() {
     }
 
     await Promise.all([
-      redemptionsColl.createIndex(
+      ensureSafeIndex(
+        redemptionsColl,
         { orderId: 1, code: 1 },
         { unique: true, background: true, name: 'uniq_coupon_redemptions_orderId_code' }
       ),
-      redemptionsColl.createIndex(
+      ensureSafeIndex(
+        redemptionsColl,
         { stripeSessionId: 1, code: 1 },
         { sparse: true, background: true, name: 'idx_coupon_redemptions_stripeSession_code' }
       ),
-      redemptionsColl.createIndex(
+      ensureSafeIndex(
+        redemptionsColl,
         { code: 1, redeemedAt: -1 },
         { background: true, name: 'idx_coupon_redemptions_code_redeemedAt' }
       ),
-      db.collection('coupons').createIndex(
+      ensureSafeIndex(
+        db.collection('coupons'),
         { code: 1 },
         { unique: true, background: true, name: 'uniq_coupons_code' }
+      ),
+      // 10. Sessions collection (Server-side Session Security)
+      ensureSafeIndex(
+        db.collection('sessions'),
+        { sessionId: 1 },
+        { unique: true, background: true, name: 'uniq_sessions_sessionId' }
+      ),
+      ensureSafeIndex(
+        db.collection('sessions'),
+        { userId: 1, revokedAt: 1 },
+        { background: true, name: 'idx_sessions_userId_revokedAt' }
+      ),
+      ensureSafeIndex(
+        db.collection('sessions'),
+        { publicId: 1, revokedAt: 1 },
+        { background: true, name: 'idx_sessions_publicId_revokedAt' }
+      ),
+      ensureSafeIndex(
+        db.collection('sessions'),
+        { auth0UserId: 1, revokedAt: 1 },
+        { background: true, name: 'idx_sessions_auth0UserId_revokedAt' }
+      ),
+      ensureSafeIndex(
+        db.collection('sessions'),
+        { expiresAt: 1 },
+        { expireAfterSeconds: 0, background: true, name: 'ttl_sessions_expiresAt' }
+      ),
+      // 11. Revoked Tokens collection (Distributed token invalidation)
+      ensureSafeIndex(
+        db.collection('revoked_tokens'),
+        { token: 1 },
+        { unique: true, background: true, name: 'uniq_revoked_tokens_token' }
+      ),
+      ensureSafeIndex(
+        db.collection('revoked_tokens'),
+        { expiresAt: 1 },
+        { expireAfterSeconds: 0, background: true, name: 'ttl_revoked_tokens_expiresAt' }
       )
     ]);
 
@@ -318,7 +383,7 @@ export async function ensureDatabaseIndexes() {
 
     // Run IdMigrationService to backfill canonical publicIds
     try {
-      const { IdMigrationService } = await import('@/services/IdMigrationService');
+      const { IdMigrationService } = await import('../services/IdMigrationService');
       const migrationRes = await IdMigrationService.runMigration();
       console.log('[Laundelle DB] Canonical ID migration verified:', migrationRes);
     } catch (migErr: any) {

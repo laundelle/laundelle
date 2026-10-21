@@ -53,6 +53,9 @@ import {
   dbFetchServices,
   dbCancelOrder,
   dbAuth0Sync,
+  dbFetchSession,
+  setCsrfToken,
+  getAuthToken,
   apiFetch,
   authHeaders
 } from '@laundelle/api-client';
@@ -124,30 +127,34 @@ export default function App({ initialTab }: { initialTab?: string }) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [notifications, setNotifications] = useState<CustomerNotification[]>([]);
-  const [cart, setCart] = useState<CartItem[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('laundelle_user_cart');
-        if (saved) return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to restore cart from localStorage:', e);
-      }
-    }
-    return [];
-  });
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const isCartRestored = React.useRef(false);
 
-  // Sync cart to localStorage whenever it changes
+  // Restore cart from localStorage safely on client mount to prevent SSR hydration mismatch
   React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        if (cart.length > 0) {
-          localStorage.setItem('laundelle_user_cart', JSON.stringify(cart));
-        } else {
-          localStorage.removeItem('laundelle_user_cart');
-        }
-      } catch (e) {
-        console.error('Failed to sync cart to localStorage:', e);
+    try {
+      const saved = localStorage.getItem('laundelle_user_cart');
+      if (saved) {
+        setCart(JSON.parse(saved));
       }
+    } catch (e) {
+      console.error('Failed to restore cart from localStorage:', e);
+    } finally {
+      isCartRestored.current = true;
+    }
+  }, []);
+
+  // Sync cart to localStorage whenever it changes (only after initial restore)
+  React.useEffect(() => {
+    if (!isCartRestored.current) return;
+    try {
+      if (cart.length > 0) {
+        localStorage.setItem('laundelle_user_cart', JSON.stringify(cart));
+      } else {
+        localStorage.removeItem('laundelle_user_cart');
+      }
+    } catch (e) {
+      console.error('Failed to sync cart to localStorage:', e);
     }
   }, [cart]);
 
@@ -217,7 +224,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
     if (window.location.pathname !== path) {
       window.history.pushState(null, '', path);
     }
-  }, [activeTab, isAuth0Loading]);
+  }, [activeTab]);
 
   // Direct Book Now navigation with service pre-selected
   const handleStartBookingWithService = (serviceIdOrName?: string) => {
@@ -353,6 +360,60 @@ export default function App({ initialTab }: { initialTab?: string }) {
     isAuthenticated: false,
   });
 
+  const bffCheckedRef = React.useRef(false);
+  const dataFetchedForUserRef = React.useRef<string | null>(null);
+
+  const updateAuthSessionIfChanged = React.useCallback((newSession: AuthSession) => {
+    setAuthSession((prev) => {
+      if (
+        prev.isAuthenticated === newSession.isAuthenticated &&
+        prev.role === newSession.role &&
+        prev.user?.id === newSession.user?.id &&
+        prev.user?.name === newSession.user?.name &&
+        prev.user?.email === newSession.user?.email
+      ) {
+        return prev;
+      }
+      return newSession;
+    });
+  }, []);
+
+  // Initialize session via secure BFF cookie endpoint on mount
+  React.useEffect(() => {
+    if (bffCheckedRef.current) return;
+    if (isAuth0Loading) return;
+    if (isAuth0Authenticated) {
+      bffCheckedRef.current = true;
+      return;
+    }
+
+    bffCheckedRef.current = true;
+    dbFetchSession().then((sess) => {
+      if (sess.isAuthenticated && sess.user) {
+        if (sess.csrfToken) {
+          setCsrfToken(sess.csrfToken);
+        }
+        updateAuthSessionIfChanged({
+          role: 'customer',
+          user: {
+            id: sess.user.id,
+            name: sess.user.name,
+            email: sess.user.email,
+            role: 'customer',
+            roleLabel: 'Customer Account',
+          },
+          isAuthenticated: true,
+        });
+      } else if (!getAuthToken()) {
+        const stored = getStoredSession();
+        if (stored && !stored.token) {
+          clearSession();
+          updateAuthSessionIfChanged({ role: null, user: null, isAuthenticated: false });
+        }
+      }
+    }).catch(() => { });
+  }, [isAuth0Loading, isAuth0Authenticated, updateAuthSessionIfChanged]);
+
   const handleOpenCustomerAuth = (_screenHint?: 'signup') => {
     try {
       if (typeof window !== 'undefined' && cartDrawerOpen) {
@@ -446,7 +507,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
                   });
                 }
                 auth0Logout?.({ logoutParams: { returnTo: typeof window !== 'undefined' ? window.location.origin : undefined } });
-              } catch {}
+              } catch { }
               showToast('ℹ️ Your session has expired. Please sign in again.');
             } else {
               showToast(`⚠️ ${syncResult.error}`);
@@ -459,12 +520,16 @@ export default function App({ initialTab }: { initialTab?: string }) {
             if (['driver', 'processor', 'manager', 'plant_manager'].includes(returnedRole)) {
               console.warn('[AppClient] Received operational staff role in Customer Portal:', returnedRole);
               clearSession();
-              setAuthSession({ role: null, user: null, isAuthenticated: false });
+              updateAuthSessionIfChanged({ role: null, user: null, isAuthenticated: false });
               showToast('⚠️ Operational staff accounts cannot be used in the Customer Portal.');
               return;
             }
 
-            setAuthSession({
+            if (syncResult.csrfToken) {
+              setCsrfToken(syncResult.csrfToken);
+            }
+
+            updateAuthSessionIfChanged({
               role: 'customer',
               user: {
                 id: syncResult.user.id,
@@ -495,6 +560,17 @@ export default function App({ initialTab }: { initialTab?: string }) {
             }
           }
         } catch { }
+      } else if (!isAuth0Loading && !isAuth0Authenticated) {
+        // If Auth0 finished loading and user is not authenticated with Auth0,
+        // verify whether any stored session actually has a valid backend session cookie/token
+        const stored = getStoredSession();
+        if (stored) {
+          const sess = await dbFetchSession();
+          if (!sess.isAuthenticated && !stored.token) {
+            clearSession();
+            updateAuthSessionIfChanged({ role: null, user: null, isAuthenticated: false });
+          }
+        }
       }
     };
 
@@ -503,25 +579,25 @@ export default function App({ initialTab }: { initialTab?: string }) {
     return () => {
       isCancelled = true;
     };
-  }, [isAuth0Loading, isAuth0Authenticated, auth0User]);
+  }, [isAuth0Loading, isAuth0Authenticated, auth0User, updateAuthSessionIfChanged]);
 
   // Restore MongoDB auth session from localStorage on mount
   React.useEffect(() => {
     const restoreSession = () => {
       const stored = getStoredSession();
-      if (stored?.user) {
+      if (stored?.user && (stored.token || stored.isAuthenticated)) {
         const uRole = stored.user.role || 'customer';
         // In the Customer portal, operational staff roles are not allowed.
         // If an operational session leaked from cross-app development, purge it.
         if (['driver', 'processor', 'manager', 'plant_manager'].includes(uRole)) {
           console.warn('[AppClient] Operational staff session detected in Customer Portal. Purging to prevent portal glitching.');
           clearSession();
-          setAuthSession({ role: null, user: null, isAuthenticated: false });
+          updateAuthSessionIfChanged({ role: null, user: null, isAuthenticated: false });
           return;
         }
 
         const isAdmin = uRole === 'admin' || uRole === 'super_admin';
-        setAuthSession({
+        updateAuthSessionIfChanged({
           role: isAdmin ? 'admin' : 'customer',
           user: {
             id: stored.user.id,
@@ -533,7 +609,7 @@ export default function App({ initialTab }: { initialTab?: string }) {
           isAuthenticated: true,
         });
       } else {
-        setAuthSession({ role: null, user: null, isAuthenticated: false });
+        updateAuthSessionIfChanged({ role: null, user: null, isAuthenticated: false });
       }
     };
 
@@ -542,32 +618,13 @@ export default function App({ initialTab }: { initialTab?: string }) {
     // React to login/logout events dispatched by db.ts helpers
     window.addEventListener('l2u_auth_change', restoreSession);
     return () => window.removeEventListener('l2u_auth_change', restoreSession);
-  }, []);
+  }, [updateAuthSessionIfChanged]);
 
   // Fetch MongoDB user data: Profile, Orders, Notifications
   React.useEffect(() => {
     const syncData = async () => {
-      const stored = getStoredSession();
-      if (authSession.isAuthenticated && authSession.user?.id && stored?.token) {
-        try {
-          const userId = authSession.user.id;
-          const [p, o, n] = await Promise.all([
-            dbFetchProfile(userId),
-            dbFetchOrders(userId),
-            dbFetchNotifications(userId),
-          ]);
-          setProfile(p);
-          setOrders(o || []);
-          setNotifications(n || []);
-
-          // Prompt user to complete profile if mobile number is missing in MongoDB
-          if (p && (!p.phone || p.phone.trim() === '')) {
-            setCompleteProfileModalOpen(true);
-          }
-        } catch (e) {
-          console.error('[AppClient] Failed to load user data from MongoDB:', e);
-        }
-      } else if (!authSession.isAuthenticated) {
+      if (!authSession.isAuthenticated || !authSession.user?.id) {
+        dataFetchedForUserRef.current = null;
         setProfile({
           name: '',
           email: '',
@@ -590,10 +647,47 @@ export default function App({ initialTab }: { initialTab?: string }) {
         });
         setOrders([]);
         setNotifications([]);
+        return;
+      }
+
+      // If Auth0 is still initializing, delay API calls until authentication state is resolved
+      if (isAuth0Loading) return;
+
+      // Prevent redundant duplicate data fetches for the same authenticated user
+      if (dataFetchedForUserRef.current === authSession.user.id) {
+        return;
+      }
+      dataFetchedForUserRef.current = authSession.user.id;
+
+      try {
+        const userId = authSession.user.id;
+        const [p, o, n] = await Promise.all([
+          dbFetchProfile(userId),
+          dbFetchOrders(userId),
+          dbFetchNotifications(userId),
+        ]);
+
+        // If a 401 occurred and cleared session, update authSession accordingly
+        const currentSession = getStoredSession();
+        if (!currentSession || !currentSession.isAuthenticated) {
+          setAuthSession({ role: null, user: null, isAuthenticated: false });
+          return;
+        }
+
+        setProfile(p);
+        setOrders(o || []);
+        setNotifications(n || []);
+
+        // Prompt user to complete profile if mobile number is missing in MongoDB
+        if (p && (!p.phone || p.phone.trim() === '')) {
+          setCompleteProfileModalOpen(true);
+        }
+      } catch (e) {
+        console.error('[AppClient] Failed to load user data from MongoDB:', e);
       }
     };
     syncData();
-  }, [authSession.isAuthenticated, authSession.role, authSession.user?.id]);
+  }, [authSession.isAuthenticated, authSession.role, authSession.user?.id, isAuth0Loading]);
 
   // Handle Stripe Payment Redirect Query Parameters
   React.useEffect(() => {
@@ -669,13 +763,13 @@ export default function App({ initialTab }: { initialTab?: string }) {
             return;
           }
 
-          if (res.status === 202 && data.status === 'pending' && !isFinalAttempt) {
-            // ⏳ Stripe received payment but webhook hasn't processed order yet — poll again
-            showToast(`⏳ Verifying with webhook... (attempt ${attempt}/${MAX_ATTEMPTS})`);
+          if ((res.status === 202 || (res.status === 401 && attempt < 3)) && !isFinalAttempt) {
+            // ⏳ Stripe received payment but order verification is still hydrating / processing — poll again
+            showToast(`⏳ Verifying payment confirmation... (attempt ${attempt}/${MAX_ATTEMPTS})`);
             setPaymentResult({
               status: 'processing',
               orderId: orderId || undefined,
-              error: `Stripe received your payment. Verifying order confirmation with webhook... (attempt ${attempt}/${MAX_ATTEMPTS})`,
+              error: `Stripe received your payment. Verifying order confirmation... (attempt ${attempt}/${MAX_ATTEMPTS})`,
             });
             await new Promise(resolve => setTimeout(resolve, POLL_DELAY_MS));
             return pollConfirmSession(attempt + 1);

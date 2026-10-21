@@ -17,7 +17,8 @@ export type AdminViewTab =
   | 'qr_scan'
   | 'qc'
   | 'history'
-  | 'profile';
+  | 'profile'
+  | 'user_guide';
 
 export interface Coupon {
   id: string;

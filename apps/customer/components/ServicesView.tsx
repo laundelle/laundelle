@@ -213,7 +213,7 @@ export const ServicesView: React.FC<ServicesViewProps> = ({
         <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-7">
           {filteredServices.map((service, index) => {
             const fallbackImg = SERVICE_NAME_TO_IMAGE['Wash + Dry + Fold'] || '';
-            const serviceImg = SERVICE_NAME_TO_IMAGE[service.name] || (service.image && !service.image.startsWith('/Images/') ? service.image : fallbackImg);
+            const serviceImg = (service.image && !service.image.startsWith('/Images/') ? service.image : null) || SERVICE_NAME_TO_IMAGE[service.name] || fallbackImg;
             const turnaround = 'turnaround' in service ? (service as any).turnaround : '24–48 Hours';
             const isPopular = service.popular || index === 0;
 

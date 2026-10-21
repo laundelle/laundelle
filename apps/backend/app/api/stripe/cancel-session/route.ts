@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuthenticatedUser } from '@/lib/api';
+import { getAuthenticatedUserAsync } from '@/lib/api';
 import { getDb } from '@/lib/mongodb';
 import { generateOrderId } from '@laundelle/ids';
 
@@ -7,8 +7,8 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
     try {
-        const authUser = getAuthenticatedUser(req);
-        const effectiveUserId = authUser?.sub || authUser?.userId || authUser?.id;
+        const authUser = await getAuthenticatedUserAsync(req);
+        const effectiveUserId = authUser?.sub || authUser?.userId || authUser?.id || authUser?.publicId;
         if (!effectiveUserId) {
             return NextResponse.json({ error: 'Authentication required.' }, { status: 401 });
         }

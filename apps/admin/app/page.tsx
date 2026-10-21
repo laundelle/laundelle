@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth0 } from '@auth0/auth0-react';
 import { getStoredSession, clearSession, saveSession, AuthSession } from '@laundelle/auth';
-import { dbAuth0Sync } from '@laundelle/api-client';
+import { dbAuth0Sync, dbFetchSession, setCsrfToken } from '@laundelle/api-client';
 import { AdminPortal } from '@/components/AdminPortal';
 import { AdminLoginPage } from '@/components/AdminLoginPage';
 
@@ -22,19 +22,42 @@ export default function AdminPage() {
     getIdTokenClaims,
   } = useAuth0();
 
-  // Load existing session from storage
+  // Load existing session from in-memory / secure cookie
   useEffect(() => {
     const existing = getStoredSession();
     if (existing?.isAuthenticated && (existing.user?.role === 'admin' || existing.user?.role === 'super_admin')) {
       setSession(existing);
-    } else if (existing?.isAuthenticated) {
-      // Invalidate if non-admin
-      clearSession();
-      setSession(null);
+      setMounted(true);
     } else {
-      setSession(null);
+      // Re-hydrate session from secure cookie via BFF endpoint
+      dbFetchSession().then((sess) => {
+        if (sess.isAuthenticated && (sess.user?.role === 'admin' || sess.user?.role === 'super_admin')) {
+          const rehydrated: AuthSession = {
+            isAuthenticated: true,
+            role: sess.user.role,
+            token: '',
+            user: {
+              id: sess.user.id || sess.user.publicId,
+              name: sess.user.name,
+              email: sess.user.email,
+              role: sess.user.role,
+              roleLabel: sess.user.role === 'super_admin' ? 'Super Administrator' : 'Administrator',
+            }
+          };
+          saveSession(rehydrated);
+          setSession(rehydrated);
+        } else if (existing?.isAuthenticated) {
+          clearSession();
+          setSession(null);
+        } else {
+          setSession(null);
+        }
+      }).catch(() => {
+        setSession(null);
+      }).finally(() => {
+        setMounted(true);
+      });
     }
-    setMounted(true);
 
     const handleAuthChange = () => {
       const updated = getStoredSession();
@@ -105,6 +128,9 @@ export default function AdminPage() {
             },
           };
 
+          if (syncResult.csrfToken) {
+            setCsrfToken(syncResult.csrfToken);
+          }
           saveSession(adminSession);
           setSession(adminSession);
           setAuthError(null);

@@ -101,6 +101,8 @@ jest-cache/
 .parcel-cache/
 .turbo/
 .vercel/cache/
+.expo/
+**/.expo/
 
 
 # ------------------------------------------

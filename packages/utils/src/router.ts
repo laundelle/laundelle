@@ -1,16 +1,21 @@
 export type UserRole = 'customer' | 'admin' | 'manager' | 'driver' | 'processor';
 
 export interface AuthSession {
-  role: UserRole | null;
+  role: UserRole | string | null;
   user: {
     id: string;
     name: string;
     email: string;
-    roleLabel: string;
+    roleLabel?: string;
     employeeNumber?: string;
     role?: string;
+    publicId?: string;
+    plantId?: string;
+    plant_id?: string;
   } | null;
   isAuthenticated: boolean;
+  token?: string;
+  csrfToken?: string;
 }
 
 export function parseCurrentRoute(): { rolePath: string; subPath: string } {

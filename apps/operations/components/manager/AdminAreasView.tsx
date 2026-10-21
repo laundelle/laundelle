@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MapPin, Plus, RefreshCw, Edit, X, User, Trash2, Clock, Calendar, CheckCircle2, ShieldCheck, Search } from 'lucide-react';
-import { dbFetchPlants, dbCreatePlant, dbUpdatePlant, dbFetchSlots, dbFetchStaff, dbCreateSlot, dbDeleteSlot, dbUpdateSlot, getStoredSession } from '@laundelle/api-client';
+import { dbFetchPlants, dbCreatePlant, dbUpdatePlant, dbFetchSlots, dbFetchStaff, dbFetchManagerStaff, dbCreateSlot, dbDeleteSlot, dbUpdateSlot, getStoredSession } from '@laundelle/api-client';
 import { extractOutwardCode } from '@laundelle/utils';
 import { PostcodeMultiSelect } from './PostcodeMultiSelect';
 
@@ -44,19 +44,25 @@ export const AdminAreasView: React.FC = () => {
       const [dbPlants, dbSlots, dbStaff] = await Promise.all([
         dbFetchPlants(),
         dbFetchSlots(),
-        dbFetchStaff()
+        isManager ? dbFetchManagerStaff() : dbFetchStaff()
       ]);
       const safePlants = Array.isArray(dbPlants) ? dbPlants : ((dbPlants as any)?.plants || []);
       const safeSlots = Array.isArray(dbSlots) ? dbSlots : ((dbSlots as any)?.slots || []);
-      const safeStaff = Array.isArray(dbStaff) ? dbStaff : ((dbStaff as any)?.staff || []);
+      const safeStaff = Array.isArray(dbStaff) ? dbStaff : ((dbStaff as any)?.staff || (dbStaff as any)?.data || []);
 
       setPlants(safePlants);
       setSlots(safeSlots);
       setManagers(safeStaff.filter((u: any) => u.role === 'manager' || u.role === 'plant_manager'));
 
       // If manager, auto set their plant
-      if (session?.user?.id) {
-        const myPlant = safePlants.find((p: any) => p.manager_id === session.user.id);
+      const userPlantId = (session?.user as any)?.plant_id || (session?.user as any)?.plantId;
+      if (session?.user?.id || userPlantId) {
+        const myPlant = safePlants.find((p: any) => 
+          (userPlantId && (String(p._id) === String(userPlantId) || p.id === userPlantId || p.code === userPlantId)) ||
+          (session?.user?.id && String(p.manager_id) === String(session.user.id)) ||
+          (p.manager_public_id && (session?.user as any)?.publicId && String(p.manager_public_id) === String((session?.user as any).publicId)) ||
+          (p.manager_email && session?.user?.email && String(p.manager_email).toLowerCase() === String(session?.user?.email).toLowerCase())
+        );
         if (myPlant) {
           setSlotPlantId(String(myPlant._id));
         } else if (safePlants.length > 0) {
@@ -147,9 +153,11 @@ export const AdminAreasView: React.FC = () => {
     setSlotEndTime('12:00');
     setSlotType('both');
     setSlotCapacity(15);
-    if (isManager && session?.user?.id) {
+    const userPlantId = (session?.user as any)?.plant_id || (session?.user as any)?.plantId;
+    if (isManager && (session?.user?.id || userPlantId)) {
       const myPlant = plants.find((p: any) => 
-        String(p.manager_id) === String(session.user.id) ||
+        (userPlantId && (String(p._id) === String(userPlantId) || p.id === userPlantId || p.code === userPlantId)) ||
+        (session?.user?.id && String(p.manager_id) === String(session.user.id)) ||
         (p.manager_public_id && (session.user as any).publicId && String(p.manager_public_id) === String((session.user as any).publicId)) ||
         (p.manager_email && session.user.email && String(p.manager_email).toLowerCase() === String(session.user.email).toLowerCase())
       );
@@ -177,16 +185,18 @@ export const AdminAreasView: React.FC = () => {
     setSlotSubmitting(true);
 
     let targetPlantId = slotPlantId;
-    if (isManager && session?.user?.id) {
+    const userPlantId = (session?.user as any)?.plant_id || (session?.user as any)?.plantId;
+    if (isManager && (session?.user?.id || userPlantId)) {
       const myPlant = plants.find((p: any) => 
-        String(p.manager_id) === String(session.user.id) ||
+        (userPlantId && (String(p._id) === String(userPlantId) || p.id === userPlantId || p.code === userPlantId)) ||
+        (session?.user?.id && String(p.manager_id) === String(session.user.id)) ||
         (p.manager_public_id && (session.user as any).publicId && String(p.manager_public_id) === String((session.user as any).publicId)) ||
         (p.manager_email && session.user.email && String(p.manager_email).toLowerCase() === String(session.user.email).toLowerCase())
       );
       if (myPlant) targetPlantId = String(myPlant._id);
     }
 
-    const chosenPlant = plants.find(p => String(p._id) === String(targetPlantId));
+    const chosenPlant = plants.find(p => String(p._id) === String(targetPlantId) || p.id === targetPlantId || p.code === targetPlantId || p.publicId === targetPlantId);
 
     const payload = {
       startTime: slotStartTime,
@@ -194,15 +204,15 @@ export const AdminAreasView: React.FC = () => {
       slot: `${slotStartTime} - ${slotEndTime}`,
       slotType,
       capacity: Number(slotCapacity) || 15,
-      plant_id: targetPlantId || (chosenPlant ? String(chosenPlant._id) : null),
-      plant_name: chosenPlant ? chosenPlant.name : '',
-      plant_code: chosenPlant ? chosenPlant.code : '',
+      plant_id: targetPlantId || (chosenPlant ? String(chosenPlant._id) : null) || (editingSlot ? String(editingSlot.plant_id) : null),
+      plant_name: chosenPlant ? chosenPlant.name : (editingSlot?.plant_name || ''),
+      plant_code: chosenPlant ? chosenPlant.code : (editingSlot?.plant_code || ''),
       isActive: editingSlot ? (editingSlot.isActive !== false) : true
     };
 
     let res;
     if (editingSlot) {
-      const slotId = editingSlot._id || editingSlot.id;
+      const slotId = editingSlot.id || editingSlot.slotId || editingSlot.publicId || editingSlot._id;
       res = await dbUpdateSlot(slotId, payload);
     } else {
       res = await dbCreateSlot(payload);
@@ -213,7 +223,7 @@ export const AdminAreasView: React.FC = () => {
       alert(editingSlot ? '✓ Booking slot updated successfully!' : '✓ Booking slot created successfully!');
       setSlotModalOpen(false);
       setEditingSlot(null);
-      loadData();
+      await loadData();
     } else {
       alert(`Error saving slot: ${res.error || 'Failed'}`);
     }
@@ -223,26 +233,28 @@ export const AdminAreasView: React.FC = () => {
     if (!confirm('Are you sure you want to delete this booking slot? Customers will no longer be able to select it.')) return;
     const res = await dbDeleteSlot(slotId);
     if (res.success) {
-      loadData();
+      await loadData();
     } else {
       alert(`Error deleting slot: ${res.error || 'Failed'}`);
     }
   };
 
   const handleToggleSlotActive = async (slot: any) => {
-    const slotId = slot.id || slot._id;
+    const slotId = slot.id || slot.slotId || slot.publicId || slot._id;
     const res = await dbUpdateSlot(slotId, { isActive: !slot.isActive });
     if (res.success) {
-      loadData();
+      await loadData();
     } else {
       alert(`Error updating slot: ${res.error || 'Failed'}`);
     }
   };
 
   const getManagerName = (managerId: string) => {
-    if (!managerId) return 'Unassigned';
+    if (!managerId) {
+      return (session?.user as any)?.name || (session?.user as any)?.full_name || 'Assigned Manager';
+    }
     const found = managers.find(m => String(m._id) === String(managerId) || m.id === managerId || m.publicId === managerId);
-    return found ? (found.full_name || found.name) : 'Assigned Manager';
+    return found ? (found.full_name || found.name) : ((session?.user as any)?.name || (session?.user as any)?.full_name || 'Assigned Manager');
   };
 
   const filteredPlants = plants.filter((p) => {
@@ -522,7 +534,7 @@ export const AdminAreasView: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   {filteredSlots.map((s) => (
                     <div
-                      key={s._id || s.id}
+                      key={s.id || s.slotId || s.publicId || s._id}
                       className={`bg-white rounded-2xl p-4 shadow-xs border transition-all space-y-2.5 ${
                         s.isActive !== false ? 'border-slate-100 hover:border-slate-200' : 'border-slate-200 opacity-60'
                       }`}
@@ -551,7 +563,7 @@ export const AdminAreasView: React.FC = () => {
                             <Edit className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => handleDeleteSlot(s.id || s._id)}
+                            onClick={() => handleDeleteSlot(s.id || s.slotId || s.publicId || s._id)}
                             className="p-1 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
                             title="Delete Slot"
                           >

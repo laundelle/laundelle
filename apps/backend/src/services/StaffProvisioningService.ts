@@ -4,6 +4,7 @@ import { generateStaffId, buildEntityLookupQuery } from '@laundelle/ids';
 import { normalizeRole, Auth0Role, hasPermission } from '@laundelle/auth';
 import { Auth0Service } from './Auth0Service';
 import { AuditService } from './AuditService';
+import { SessionService } from './SessionService';
 import {
     ApiError,
     BadRequestError,
@@ -821,16 +822,7 @@ export class StaffProvisioningService {
 
         const now = new Date().toISOString();
 
-        // 1. Sync with Auth0 if user has an Auth0 identity
-        if (targetUser.auth0UserId) {
-            if (!isActive) {
-                await Auth0Service.blockUser(targetUser.auth0UserId);
-            } else {
-                await Auth0Service.unblockUser(targetUser.auth0UserId);
-            }
-        }
-
-        // 2. Update MongoDB document
+        // 1. Immediately update MongoDB document to prevent privileged endpoint access
         await db.collection('users').updateOne(
             { _id: targetUser._id },
             {
@@ -841,6 +833,36 @@ export class StaffProvisioningService {
                 }
             }
         );
+
+        // 2. Immediately await revocation of all active server-side sessions
+        if (!isActive) {
+            try {
+                const targetDbId = String(targetUser._id);
+                const publicId = targetUser.id || targetUser.staffId || targetUser.publicId;
+                await SessionService.revokeAllUserSessions(targetDbId);
+                if (publicId && publicId !== targetDbId) {
+                    await SessionService.revokeAllUserSessions(publicId);
+                }
+                if (targetUser.auth0UserId) {
+                    await SessionService.revokeAllUserSessions(targetUser.auth0UserId);
+                }
+            } catch (revokeErr: any) {
+                console.error('[StaffProvisioningService] Warning: Failed to revoke sessions during deactivation:', revokeErr.message);
+            }
+        }
+
+        // 3. Sync blocking/unblocking with Auth0 (with safe partial-failure tolerance)
+        if (targetUser.auth0UserId) {
+            try {
+                if (!isActive) {
+                    await Auth0Service.blockUser(targetUser.auth0UserId);
+                } else {
+                    await Auth0Service.unblockUser(targetUser.auth0UserId);
+                }
+            } catch (auth0Err: any) {
+                console.warn(`[StaffProvisioningService] Auth0 sync warning for ${targetUser.auth0UserId}:`, auth0Err.message);
+            }
+        }
 
         await AuditService.recordEvent({
             actorId: String(actorContext.dbUser._id || actorContext.token.sub),
@@ -857,4 +879,118 @@ export class StaffProvisioningService {
             is_active: isActive
         };
     }
+
+    /**
+     * Deletes a staff member from MongoDB and permanently deletes their Auth0 user account.
+     * Prevents deleting staff with active orders in flight.
+     * Cleans up plant associations and records audit trails.
+     */
+    public static async deleteStaff(
+        actorContext: AuthenticatedContext,
+        targetUserId: string
+    ) {
+        const db = await getDb();
+        const queries: any[] = [
+            { _id: targetUserId as any },
+            { id: targetUserId },
+            { publicId: targetUserId },
+            { staffId: targetUserId }
+        ];
+        if (ObjectId.isValid(targetUserId)) {
+            queries.push({ _id: new ObjectId(targetUserId) });
+        }
+
+        const targetUser = await db.collection('users').findOne({ $or: queries });
+
+        if (!targetUser) {
+            throw new NotFoundError(`Staff member with ID "${targetUserId}" not found.`);
+        }
+
+        const actorRole = normalizeRole(actorContext.dbUser.role);
+
+        // Enforce plant isolation and role permissions
+        if (actorRole === 'plant_manager') {
+            if (!['driver', 'processor'].includes(targetUser.role)) {
+                throw new ForbiddenError('Plant Managers can only delete drivers and processors under their facility.');
+            }
+            assertPlantIsolation(actorContext.dbUser, null, targetUser);
+        } else if (actorRole !== 'super_admin') {
+            throw new ForbiddenError('Access denied: You do not have permission to delete staff members.');
+        }
+
+        // Prevent deleting oneself
+        if (String(targetUser._id) === String(actorContext.dbUser._id)) {
+            throw new BadRequestError('You cannot delete your own account.');
+        }
+
+        // Check for active orders if driver
+        if (targetUser.role === 'driver') {
+            const activeOrders = await db.collection('orders').countDocuments({
+                assigned_driver_id: { $in: [String(targetUser._id), targetUser.id, targetUser.staffId, targetUser.publicId].filter(Boolean) },
+                status: { $nin: ['delivered', 'cancelled', 'order_placed', 'pending_payment'] }
+            });
+            if (activeOrders > 0) {
+                throw new BadRequestError(`Cannot delete driver with ${activeOrders} active assigned order(s). Please reassign their orders first.`);
+            }
+        }
+
+        // If manager, unlink from plants and subordinate staff
+        if (['manager', 'plant_manager'].includes(targetUser.role)) {
+            const mKeys = [String(targetUser._id), targetUser.publicId, targetUser.id, targetUser.staffId].filter(Boolean);
+            await db.collection('plants').updateMany(
+                {
+                    $or: [
+                        { manager_id: { $in: mKeys } },
+                        { manager_public_id: { $in: mKeys } }
+                    ]
+                },
+                { $set: { manager_id: null, manager_public_id: null, manager_name: null } }
+            );
+
+            await db.collection('users').updateMany(
+                {
+                    $or: [
+                        { manager_id: { $in: mKeys } },
+                        { plantManagerId: { $in: mKeys } }
+                    ]
+                },
+                { $set: { manager_id: null, plantManagerId: null } }
+            );
+        }
+
+        // 1. Delete user from Auth0 if Auth0 identity exists
+        const auth0Id = targetUser.auth0UserId || targetUser.auth0_sub;
+        if (auth0Id) {
+            try {
+                await Auth0Service.deleteUser(auth0Id);
+            } catch (auth0Err: any) {
+                console.warn(`[StaffProvisioningService] Auth0 deletion warning for ${auth0Id}: ${auth0Err.message}`);
+            }
+        }
+
+        // 2. Delete user from MongoDB
+        await db.collection('users').deleteOne({ _id: targetUser._id });
+
+        // 3. Record in audit trail
+        await AuditService.recordEvent({
+            actorId: String(actorContext.dbUser._id || actorContext.token.sub),
+            actorRole: actorRole || 'system',
+            action: 'staff_deleted',
+            entityType: 'staff',
+            entityId: String(targetUser._id),
+            reason: `Staff member ${targetUser.full_name || targetUser.name || targetUser.email} deleted from MongoDB and Auth0`,
+            metadata: {
+                email: targetUser.email,
+                role: targetUser.role,
+                auth0UserId: auth0Id || null
+            }
+        }).catch(() => {});
+
+        return {
+            success: true,
+            deletedId: String(targetUser._id),
+            message: `Staff member "${targetUser.full_name || targetUser.email}" was successfully deleted from MongoDB and Auth0.`
+        };
+    }
 }
+

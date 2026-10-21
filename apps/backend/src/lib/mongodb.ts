@@ -34,11 +34,42 @@ export default {
     }
 } as unknown as Promise<MongoClient>;
 
+let indexesInitPromise: Promise<void> | null = null;
+let indexesSuccessfullyInitialized = false;
+
+export async function ensureIndexesInitialized(): Promise<void> {
+    if (indexesSuccessfullyInitialized) return;
+    if (!indexesInitPromise) {
+        indexesInitPromise = (async () => {
+            try {
+                const { ensureDatabaseIndexes } = await import('./dbIndexes');
+                await ensureDatabaseIndexes();
+                indexesSuccessfullyInitialized = true;
+            } catch (err: any) {
+                indexesInitPromise = null;
+                console.error('[MongoDB Index Initialization Error]:', err.message);
+                throw err;
+            }
+        })();
+    }
+    return indexesInitPromise;
+}
+
 export async function getDb(dbName = 'Laundry'): Promise<Db> {
     const cp = await getClientPromise();
-    return cp.db(dbName);
+    const db = cp.db(dbName);
+
+    // Automatically initialize/verify database indexes on initial connection
+    if (!indexesSuccessfullyInitialized && !indexesInitPromise) {
+        ensureIndexesInitialized().catch((err) => {
+            console.error('[MongoDB Index Background Warning]:', err.message);
+        });
+    }
+
+    return db;
 }
 
 export async function getMongoClient(): Promise<MongoClient> {
     return getClientPromise();
 }
+

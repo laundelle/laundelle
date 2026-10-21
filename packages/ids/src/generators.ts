@@ -19,17 +19,25 @@ export function getSecureRandomString(length: number): string {
   if (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues) {
     globalThis.crypto.getRandomValues(bytes);
   } else {
-    // Fallback for older Node environments
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const nodeCrypto = typeof globalThis !== 'undefined' && (globalThis as any).crypto
-      ? (globalThis as any).crypto
-      : (typeof require !== 'undefined' ? require('crypto') : null);
-    if (nodeCrypto?.getRandomValues) {
-      nodeCrypto.getRandomValues(bytes);
-    } else if (nodeCrypto?.randomBytes) {
-      const randomBuffer = nodeCrypto.randomBytes(length);
+    try {
+      // Prevent static bundlers like Metro from failing on Node-only builtins
+      const g = typeof globalThis !== 'undefined' ? (globalThis as Record<string, any>) : {};
+      const nodeCrypto = g.crypto || (typeof g.require === 'function' ? g.require('crypto') : null);
+      if (nodeCrypto?.getRandomValues) {
+        nodeCrypto.getRandomValues(bytes);
+      } else if (nodeCrypto?.randomBytes) {
+        const randomBuffer = nodeCrypto.randomBytes(length);
+        for (let i = 0; i < length; i++) {
+          bytes[i] = randomBuffer[i];
+        }
+      } else {
+        for (let i = 0; i < length; i++) {
+          bytes[i] = Math.floor(Math.random() * 256);
+        }
+      }
+    } catch {
       for (let i = 0; i < length; i++) {
-        bytes[i] = randomBuffer[i];
+        bytes[i] = Math.floor(Math.random() * 256);
       }
     }
   }

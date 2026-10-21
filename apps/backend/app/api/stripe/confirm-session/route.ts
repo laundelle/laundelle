@@ -1,22 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PaymentService } from '@/services/PaymentService';
-import { getAuthenticatedUser } from '@/lib/api';
+import { getAuthenticatedUserAsync } from '@/lib/api';
 
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: NextRequest) {
+async function handleConfirmSession(req: NextRequest) {
     try {
-        const authUser = getAuthenticatedUser(req);
-        const authenticatedUserId = authUser?.sub || authUser?.userId || authUser?.id;
-        if (!authenticatedUserId) {
-            return NextResponse.json({
-                confirmed: false,
-                status: 'error',
-                error: 'Authentication required.'
-            }, { status: 401 });
+        const authUser = await getAuthenticatedUserAsync(req);
+        const authenticatedUserId = authUser?.sub || authUser?.userId || authUser?.id || authUser?.publicId;
+
+        let sessionId: string | null = null;
+        if (req.method === 'GET') {
+            sessionId = req.nextUrl.searchParams.get('sessionId') || req.nextUrl.searchParams.get('session_id');
+        } else {
+            const body = await req.json().catch(() => ({}));
+            sessionId = body.sessionId || body.session_id;
         }
-        const body = await req.json();
-        const sessionId = body.sessionId || body.session_id;
 
         if (!sessionId || typeof sessionId !== 'string') {
             return NextResponse.json({
@@ -26,12 +25,11 @@ export async function POST(req: NextRequest) {
             }, { status: 400 });
         }
 
-        // READ-ONLY verification: checks Stripe status AND looks up webhook-created order.
-        // This method NEVER creates orders. Order creation is exclusively done by the webhook.
-        const result = await PaymentService.verifySessionPayment(sessionId, authenticatedUserId);
+        // Authoritative Stripe session payment verification.
+        // Verifies payment status directly with Stripe API and returns the confirmed order.
+        const result = await PaymentService.verifySessionPayment(sessionId, authenticatedUserId, authUser);
 
         if (result.status === 'paid' && result.order) {
-            // Order was created by the webhook and found in DB
             return NextResponse.json({
                 confirmed: true,
                 status: 'paid',
@@ -40,8 +38,6 @@ export async function POST(req: NextRequest) {
         }
 
         if (result.status === 'pending') {
-            // Stripe confirms payment but webhook hasn't processed yet
-            // Client should show "processing" state and may poll
             return NextResponse.json({
                 confirmed: false,
                 status: 'pending',
@@ -64,4 +60,12 @@ export async function POST(req: NextRequest) {
             error: error.message || 'Payment verification failed'
         }, { status: 500 });
     }
+}
+
+export async function POST(req: NextRequest) {
+    return handleConfirmSession(req);
+}
+
+export async function GET(req: NextRequest) {
+    return handleConfirmSession(req);
 }

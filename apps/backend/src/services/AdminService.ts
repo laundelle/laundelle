@@ -15,6 +15,8 @@ import {
 } from '@laundelle/ids';
 import { OrderCustomerEnrichmentService } from './OrderCustomerEnrichmentService';
 import { isPostcodeInServiceArea, extractOutwardCode } from '@laundelle/utils';
+import { Auth0Service } from './Auth0Service';
+import { NotFoundError, BadRequestError } from '@/lib/api';
 
 export class AdminService {
     static async getDashboardMetrics(location?: string, dateFilter?: string, startDate?: string, endDate?: string) {
@@ -604,6 +606,88 @@ export class AdminService {
         return { success: true };
     }
 
+    /**
+     * Deletes a customer account from MongoDB and permanently deletes their Auth0 credentials.
+     * Prevents deletion if customer has active in-progress orders.
+     * Cleans up customer flags, notes, and records an audit trail.
+     */
+    static async deleteCustomer(adminId: string, customerId: string) {
+        const db = await getDb();
+        const customerLookup = buildEntityLookupQuery(customerId, 'user');
+        const user = await db.collection('users').findOne(customerLookup as any);
+
+        if (!user) {
+            throw new NotFoundError(`Customer with identifier "${customerId}" not found.`);
+        }
+
+        const uId = String(user._id || user.id || user.customerId || user.publicId);
+        const email = user.email ? user.email.toLowerCase().trim() : '';
+        const phone = user.phone ? user.phone.trim() : '';
+
+        // Prevent deleting customers with active orders in flight
+        const activeOrdersCount = await db.collection('orders').countDocuments({
+            $or: [
+                { customer_id: uId },
+                { customerId: uId },
+                { userId: uId },
+                { user_id: uId },
+                ...(email ? [{ customerEmail: email }, { 'contactDetails.email': email }, { email }] : []),
+                ...(phone ? [{ customerPhone: phone }, { 'contactDetails.phone': phone }] : [])
+            ],
+            status: { $nin: ['delivered', 'cancelled', 'refunded'] }
+        });
+
+        if (activeOrdersCount > 0) {
+            throw new BadRequestError(
+                `Cannot delete customer with ${activeOrdersCount} active order(s) in progress. Please complete or cancel active orders first.`
+            );
+        }
+
+        // 1. Delete user from Auth0 if Auth0 identity exists
+        const auth0Id = user.auth0UserId || user.auth0_sub;
+        if (auth0Id) {
+            try {
+                await Auth0Service.deleteUser(auth0Id);
+            } catch (auth0Err: any) {
+                console.warn(`[AdminService] Auth0 customer deletion warning for ${auth0Id}: ${auth0Err.message}`);
+            }
+        }
+
+        // 2. Remove associated customer flags and notes
+        const targetIds = [customerId, uId, user.publicId, user.customerId, String(user._id)].filter(Boolean);
+        await db.collection('customer_flags').deleteMany({
+            customerId: { $in: targetIds }
+        }).catch(() => {});
+
+        await db.collection('customer_notes').deleteMany({
+            customerId: { $in: targetIds }
+        }).catch(() => {});
+
+        // 3. Delete from MongoDB users collection
+        await db.collection('users').deleteOne({ _id: user._id });
+
+        // 4. Record audit event
+        await AuditService.recordEvent({
+            entityType: 'customer',
+            entityId: customerId,
+            action: 'customer_deleted',
+            actorId: adminId,
+            actorRole: 'admin',
+            reason: `Customer "${user.full_name || user.email}" was deleted from MongoDB and Auth0`,
+            metadata: {
+                email: user.email,
+                auth0UserId: auth0Id || null
+            }
+        }).catch(() => {});
+
+        return {
+            success: true,
+            deletedId: customerId,
+            message: `Customer "${user.full_name || user.email}" was successfully deleted from MongoDB and Auth0.`
+        };
+    }
+
+
     static async getFinanceData() {
         const db = await getDb();
         const [orders, incidents, storeCredits, users] = await Promise.all([
@@ -1079,12 +1163,50 @@ export class AdminService {
 
     static async getStaff(query: any = {}) {
         const db = await getDb();
-        if (!query.role) {
-            query.role = { $in: ['admin', 'super_admin', 'manager', 'plant_manager', 'driver', 'processor'] };
+        const canonicalStaffRoles = ['admin', 'super_admin', 'manager', 'plant_manager', 'driver', 'processor'];
+
+        let roleFilter: any;
+        if (query.role) {
+            if (typeof query.role === 'string') {
+                roleFilter = canonicalStaffRoles.includes(query.role) ? query.role : { $in: [] };
+            } else if (query.role.$in && Array.isArray(query.role.$in)) {
+                const allowed = query.role.$in.filter((r: string) => canonicalStaffRoles.includes(r));
+                roleFilter = { $in: allowed };
+            } else {
+                roleFilter = { $in: canonicalStaffRoles };
+            }
+        } else {
+            roleFilter = { $in: canonicalStaffRoles };
         }
-        const staff = await db.collection('users')
-            .find(query, { projection: { password: 0 } })
+
+        const staffQuery: any = {
+            ...query,
+            role: roleFilter,
+            $and: [
+                { role: { $nin: ['customer', 'user', 'guest'] } },
+                {
+                    $or: [
+                        { customerId: { $exists: false } },
+                        { customerId: null },
+                        { staffId: { $exists: true, $ne: null } }
+                    ]
+                }
+            ]
+        };
+
+        const rawStaff = await db.collection('users')
+            .find(staffQuery, { projection: { password: 0 } })
             .toArray();
+
+        // Extra safeguard in-memory: customers must NEVER appear under staff accounts
+        const staff = rawStaff.filter((u: any) => {
+            const r = (u.role || '').toLowerCase();
+            if (r === 'customer' || r === 'user' || r === 'guest') return false;
+            if (u.customerId && !u.staffId && !canonicalStaffRoles.includes(r)) return false;
+            if (String(u.id || u.publicId || '').startsWith('CUST-') && !u.staffId) return false;
+            return canonicalStaffRoles.includes(r);
+        });
+
         return { staff };
     }
 

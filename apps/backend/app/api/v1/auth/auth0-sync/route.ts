@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { withErrorHandler, successResponse, UnauthorizedError } from '@/lib/api';
 import { verifyJwtAsync, JwtPayload } from '@/lib/auth';
 import { AuthService } from '@/services/AuthService';
+import { SessionService } from '@/services/SessionService';
 
 async function auth0SyncHandler(req: NextRequest) {
     const authHeader = req.headers.get('authorization');
@@ -22,9 +23,48 @@ async function auth0SyncHandler(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
     const clientIp = req.headers.get('x-forwarded-for') || 'unknown';
+
+    // Infer portal context from headers if not specified or override if explicitly from customer domain
+    const origin = (req.headers.get('origin') || req.headers.get('referer') || '').toLowerCase();
+    const isCustomerDomain = origin.includes(':3000') ||
+        origin.includes('laundelle.co.uk') ||
+        origin.includes('3000.inc1.devtunnels.ms');
+
+    if (isCustomerDomain) {
+        body.portal = 'customer';
+    } else if (!body.portal) {
+        if (origin.includes(':3002') || origin.includes('admin.') || origin.includes('3002.inc1.devtunnels.ms')) {
+            body.portal = 'admin';
+        } else if (origin.includes(':3001') || origin.includes('ops.') || origin.includes('operations.') || origin.includes('3001.inc1.devtunnels.ms')) {
+            body.portal = 'operations';
+        } else {
+            body.portal = 'customer';
+        }
+    }
     
     const result = await AuthService.syncAuth0User(body, clientIp, verifiedToken);
-    return successResponse(result);
+    const portal = body.portal || 'customer';
+
+    // Create server-side session in MongoDB
+    const { sessionId, csrfToken } = await SessionService.createSession({
+        userId: (result.user as any).internalId || result.user.id,
+        publicId: result.user.publicId || result.user.id,
+        auth0UserId: verifiedToken.sub,
+        email: result.user.email,
+        role: result.user.role || 'customer',
+        plantId: (result.user as any).plantId,
+        portal,
+        userAgent: req.headers.get('user-agent') || 'unknown',
+        ipAddress: clientIp,
+    });
+
+    (result as any).csrfToken = csrfToken;
+
+    const response = successResponse(result);
+    const cookieConfig = SessionService.getCookieConfig(portal);
+    response.cookies.set(cookieConfig.name, sessionId, cookieConfig.options);
+
+    return response;
 }
 
 export const POST = withErrorHandler(auth0SyncHandler);

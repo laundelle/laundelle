@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, MapPin, Calendar, Bell, Shield, ArrowLeft, ChevronDown, Check, AlertTriangle, LogOut } from 'lucide-react';
+import { Search, MapPin, Calendar, Bell, Shield, ArrowLeft, ChevronDown, Check, AlertTriangle, LogOut, HelpCircle } from 'lucide-react';
 import { AdminRole, SystemAlert } from '@laundelle/types';
 import { apiFetch, dbFetchPlants } from '@laundelle/api-client';
 
@@ -15,6 +15,7 @@ interface AdminTopbarProps {
   customEndDate?: string;
   onChangeCustomEndDate?: (date: string) => void;
   onOpenGlobalSearch: () => void;
+  onOpenUserGuide?: () => void;
   onExitAdmin: () => void;
   onRequestLogout?: () => void;
 }
@@ -31,6 +32,7 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
   customEndDate,
   onChangeCustomEndDate,
   onOpenGlobalSearch,
+  onOpenUserGuide,
   onExitAdmin,
   onRequestLogout,
 }) => {
@@ -154,6 +156,18 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
             </div>
           )}
         </div>
+
+        {/* User Guide / Help Centre Shortcut */}
+        {onOpenUserGuide && (
+          <button
+            onClick={onOpenUserGuide}
+            className="flex items-center gap-1.5 p-2 rounded-xl text-slate-500 hover:text-blue-600 hover:bg-blue-50/80 cursor-pointer transition-colors border border-transparent hover:border-blue-100"
+            title="Open User Guide & Help Centre"
+          >
+            <HelpCircle className="w-4 h-4 text-slate-600 group-hover:text-blue-600" />
+            <span className="hidden xl:inline text-xs font-semibold text-slate-600">Help Guide</span>
+          </button>
+        )}
 
         {/* Notifications Dropdown */}
         <div className="relative">

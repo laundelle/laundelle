@@ -540,7 +540,7 @@ export const ProcessorQRScanView: React.FC<ProcessorQRScanViewProps> = ({ onNavi
   return (
     <div className="w-full min-h-screen pb-16">
       {/* ─── Injected Styles ──────────────────────────────────────────────── */}
-      <style jsx global>{`
+      <style dangerouslySetInnerHTML={{ __html: `
         .scanner-viewport-bg {
           background-image:
             linear-gradient(180deg, rgba(3, 14, 30, 0.25), rgba(3, 14, 30, 0.65)),
@@ -570,7 +570,7 @@ export const ProcessorQRScanView: React.FC<ProcessorQRScanViewProps> = ({ onNavi
         .find-btn-hover:active {
           transform: translateY(0);
         }
-      `}</style>
+      ` }} />
 
       {/* ── Toast Notification ── */}
       {toastMessage && (

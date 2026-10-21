@@ -1,6 +1,106 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Check, X, RefreshCw, Sparkles, Tag, Clock, Search } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Plus,
+  Edit2,
+  Check,
+  X,
+  RefreshCw,
+  Sparkles,
+  Tag,
+  Clock,
+  Search,
+  UploadCloud,
+  Image as ImageIcon,
+  Trash2,
+  Camera,
+  AlertCircle
+} from 'lucide-react';
 import { dbAdminFetchServices, dbAdminCreateService, dbAdminUpdateService } from '@laundelle/api-client';
+import { LAUNDELLE_SERVICE_IMAGES, getOptimizedImageUrl } from '@laundelle/config';
+
+// Map service names to the exact Cloudinary images used on the customer portal
+const CUSTOMER_SERVICE_IMAGES: Record<string, string> = Object.entries(LAUNDELLE_SERVICE_IMAGES).reduce(
+  (acc, [name, meta]) => {
+    acc[name] = getOptimizedImageUrl(meta);
+    return acc;
+  },
+  {} as Record<string, string>
+);
+
+const DEFAULT_SERVICE_FALLBACK =
+  CUSTOMER_SERVICE_IMAGES['Wash + Dry + Fold'] ||
+  'https://res.cloudinary.com/b2st53lu/image/upload/f_auto,q_auto/laundelle/services/wash-dry-fold';
+
+export const resolveServiceImage = (srv: any): string => {
+  if (srv?.imageUrl && !srv.imageUrl.startsWith('/Images/')) {
+    return srv.imageUrl;
+  }
+  if (srv?.image && !srv.image.startsWith('/Images/')) {
+    return srv.image;
+  }
+  if (srv?.name && CUSTOMER_SERVICE_IMAGES[srv.name]) {
+    return CUSTOMER_SERVICE_IMAGES[srv.name];
+  }
+  return DEFAULT_SERVICE_FALLBACK;
+};
+
+// Canvas-based image optimizer to keep database lean and fast
+const processImageFile = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('Please upload an image file (PNG, JPG, or WEBP).'));
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      reject(new Error('File size exceeds 5MB limit. Please choose a smaller image.'));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_WIDTH = 1200;
+        const MAX_HEIGHT = 1200;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height = Math.round((height * MAX_WIDTH) / width);
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width = Math.round((width * MAX_HEIGHT) / height);
+            height = MAX_HEIGHT;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(event.target?.result as string);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        try {
+          const dataUrl = canvas.toDataURL('image/webp', 0.85);
+          resolve(dataUrl);
+        } catch {
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => reject(new Error('Failed to read image content.'));
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = () => reject(new Error('Failed to read selected file.'));
+    reader.readAsDataURL(file);
+  });
+};
 
 export const AdminServicesView: React.FC = () => {
   const [services, setServices] = useState<any[]>([]);
@@ -20,16 +120,19 @@ export const AdminServicesView: React.FC = () => {
     basePrice: '12.00',
     pricePerKg: '3.50',
     turnaround: '24-48 Hours',
-    imageUrl: 'https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&w=800&q=80',
+    imageUrl: '',
     enabled: true
   });
   const [saving, setSaving] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadServices = async () => {
     setLoading(true);
     try {
       const data = await dbAdminFetchServices();
-      setServices(data);
+      setServices(data || []);
     } catch (e) {
       console.error('Error fetching services:', e);
     } finally {
@@ -43,6 +146,8 @@ export const AdminServicesView: React.FC = () => {
 
   const openAddModal = () => {
     setEditingService(null);
+    setUploadError(null);
+    setIsDragging(false);
     setFormData({
       name: '',
       categoryLabel: 'Wash & Fold',
@@ -50,7 +155,7 @@ export const AdminServicesView: React.FC = () => {
       basePrice: '12.00',
       pricePerKg: '3.50',
       turnaround: '24-48 Hours',
-      imageUrl: 'https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&w=800&q=80',
+      imageUrl: '',
       enabled: true
     });
     setModalOpen(true);
@@ -58,6 +163,8 @@ export const AdminServicesView: React.FC = () => {
 
   const openEditModal = (srv: any) => {
     setEditingService(srv);
+    setUploadError(null);
+    setIsDragging(false);
     setFormData({
       name: srv.name || '',
       categoryLabel: srv.categoryLabel || srv.category || 'Wash & Fold',
@@ -65,10 +172,50 @@ export const AdminServicesView: React.FC = () => {
       basePrice: String(srv.basePrice || srv.price || '0'),
       pricePerKg: String(srv.pricePerKg || '0'),
       turnaround: srv.turnaround || '24-48 Hours',
-      imageUrl: srv.imageUrl || srv.image || 'https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&w=800&q=80',
+      imageUrl: resolveServiceImage(srv),
       enabled: srv.enabled !== false
     });
     setModalOpen(true);
+  };
+
+  const handleFileSelect = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploadError(null);
+    try {
+      const dataUrl = await processImageFile(files[0]);
+      setFormData(prev => ({ ...prev, imageUrl: dataUrl }));
+    } catch (err: any) {
+      setUploadError(err.message || 'Error processing image.');
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await handleFileSelect(e.dataTransfer.files);
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    setFormData(prev => ({ ...prev, imageUrl: '' }));
+    setUploadError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -86,13 +233,13 @@ export const AdminServicesView: React.FC = () => {
         basePrice: parseFloat(formData.basePrice) || 0,
         pricePerKg: parseFloat(formData.pricePerKg) || 0,
         turnaround: formData.turnaround,
-        imageUrl: formData.imageUrl.trim(),
-        image: formData.imageUrl.trim(),
+        imageUrl: (formData.imageUrl || '').trim(),
+        image: (formData.imageUrl || '').trim(),
         enabled: formData.enabled
       };
 
       if (editingService) {
-        const id = editingService.id || editingService._id;
+        const id = editingService.id || editingService._id || editingService.publicId;
         await dbAdminUpdateService(id, payload);
       } else {
         await dbAdminCreateService(payload);
@@ -253,13 +400,20 @@ export const AdminServicesView: React.FC = () => {
             const srvId = srv.id || srv._id;
             const basePrice = srv.basePrice !== undefined ? srv.basePrice : srv.price || 0;
             const pricePerKg = srv.pricePerKg || 0;
-            const img = srv.imageUrl || srv.image || 'https://images.unsplash.com/photo-1545173168-9f1947eebb7f?auto=format&fit=crop&w=800&q=80';
+            const img = resolveServiceImage(srv);
 
             return (
               <div key={srvId} className="bg-white rounded-3xl overflow-hidden shadow-xs border border-gray-100 flex flex-col justify-between group">
                 <div>
-                  <div className="relative h-44 overflow-hidden">
-                    <img src={img} alt={srv.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                  <div className="relative h-44 overflow-hidden bg-slate-100">
+                    <img
+                      src={img}
+                      alt={srv.name}
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = CUSTOMER_SERVICE_IMAGES[srv.name] || DEFAULT_SERVICE_FALLBACK;
+                      }}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
                     <span className={`absolute top-3 right-3 px-2 py-0.5 rounded-full text-[10px] font-bold shadow-xs ${
                       srv.enabled !== false ? 'bg-emerald-500 text-white' : 'bg-gray-500 text-white'
                     }`}>
@@ -326,10 +480,25 @@ export const AdminServicesView: React.FC = () => {
                 const srvId = srv.id || srv._id;
                 const basePrice = srv.basePrice !== undefined ? srv.basePrice : srv.price || 0;
                 const pricePerKg = srv.pricePerKg || 0;
+                const img = resolveServiceImage(srv);
 
                 return (
                   <tr key={srvId} className="hover:bg-gray-50">
-                    <td className="py-3.5 px-4 font-bold text-[#03045E]">{srv.name}</td>
+                    <td className="py-3.5 px-4 font-bold text-[#03045E]">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl overflow-hidden bg-slate-100 shrink-0 border border-slate-200">
+                          <img
+                            src={img}
+                            alt={srv.name}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).src = CUSTOMER_SERVICE_IMAGES[srv.name] || DEFAULT_SERVICE_FALLBACK;
+                            }}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <span>{srv.name}</span>
+                      </div>
+                    </td>
                     <td className="py-3.5 px-4 text-gray-600">{srv.categoryLabel || srv.category}</td>
                     <td className="py-3.5 px-4 font-bold">£{Number(basePrice).toFixed(2)}</td>
                     <td className="py-3.5 px-4">{pricePerKg > 0 ? `£${Number(pricePerKg).toFixed(2)} /kg` : 'Fixed / Item'}</td>
@@ -358,13 +527,13 @@ export const AdminServicesView: React.FC = () => {
         </div>
       )}
 
-      {/* Add / Edit Service Modal */}
+      {/* Add / Edit Service Modal with Drag & Drop Photo Upload */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl p-6 shadow-2xl space-y-5 relative max-h-[90vh] overflow-y-auto">
             <button
               onClick={() => setModalOpen(false)}
-              className="absolute top-5 right-5 text-gray-400 hover:text-gray-700 bg-gray-100 p-2 rounded-full cursor-pointer"
+              className="absolute top-5 right-5 text-gray-400 hover:text-gray-700 bg-gray-100 p-2 rounded-full cursor-pointer transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
@@ -373,7 +542,7 @@ export const AdminServicesView: React.FC = () => {
               <h3 className="text-lg font-heading font-extrabold text-[#03045E]">
                 {editingService ? 'Edit Laundry Service' : 'Add New Laundry Service'}
               </h3>
-              <p className="text-xs text-gray-500">Live configuration in MongoDB services collection</p>
+              <p className="text-xs text-gray-500">Live configuration in MongoDB services catalog</p>
             </div>
 
             <form onSubmit={handleSave} className="space-y-4">
@@ -385,8 +554,113 @@ export const AdminServicesView: React.FC = () => {
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="e.g. Wash + Dry + Fold"
-                  className="w-full px-3.5 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
                 />
+              </div>
+
+              {/* Service Photo Drag & Drop / Upload */}
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1.5 flex items-center justify-between">
+                  <span>Service Photo</span>
+                  {formData.imageUrl && (
+                    <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                      <Check className="w-3 h-3" /> Photo Attached
+                    </span>
+                  )}
+                </label>
+
+                {/* Hidden File Input */}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={(e) => handleFileSelect(e.target.files)}
+                  accept="image/png,image/jpeg,image/jpg,image/webp"
+                  className="hidden"
+                />
+
+                {formData.imageUrl ? (
+                  /* Photo Preview State */
+                  <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 group">
+                    <div className="h-44 w-full overflow-hidden bg-slate-100 flex items-center justify-center">
+                      <img
+                        src={formData.imageUrl}
+                        alt="Service preview"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).src = DEFAULT_SERVICE_FALLBACK;
+                        }}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+
+                    {/* Overlay Action Bar */}
+                    <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2.5 p-4">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="px-3.5 py-2 bg-white text-slate-800 hover:bg-slate-100 rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Camera className="w-3.5 h-3.5 text-blue-600" />
+                        <span>Change Photo</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRemovePhoto}
+                        className="px-3.5 py-2 bg-red-600 text-white hover:bg-red-700 rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Remove</span>
+                      </button>
+                    </div>
+
+                    <div className="p-2.5 bg-white border-t border-slate-100 flex items-center justify-between text-xs">
+                      <span className="text-[11px] text-slate-500 font-medium truncate max-w-[220px]">
+                        Service photo ready
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-xs font-bold text-blue-600 hover:text-blue-800 cursor-pointer"
+                      >
+                        Upload Another
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Drag & Drop Zone */
+                  <div
+                    onDragOver={handleDragOver}
+                    onDragEnter={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${
+                      isDragging
+                        ? 'border-blue-600 bg-blue-50/60 scale-[1.01]'
+                        : 'border-slate-200 hover:border-blue-400 bg-slate-50/60 hover:bg-slate-50'
+                    }`}
+                  >
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${
+                      isDragging ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600'
+                    }`}>
+                      <UploadCloud className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-800">
+                        Drag and drop your photo here, or <span className="text-blue-600 underline">browse files</span>
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        High resolution PNG, JPG, or WEBP (up to 5MB)
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {uploadError && (
+                  <div className="mt-2 text-xs text-red-600 flex items-center gap-1.5 bg-red-50 p-2 rounded-xl border border-red-100">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{uploadError}</span>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -395,7 +669,7 @@ export const AdminServicesView: React.FC = () => {
                   <select
                     value={formData.categoryLabel}
                     onChange={(e) => setFormData({ ...formData, categoryLabel: e.target.value })}
-                    className="w-full px-3.5 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden cursor-pointer"
                   >
                     <option value="Wash & Fold">Wash & Fold</option>
                     <option value="Wash & Steam">Wash & Steam</option>
@@ -413,7 +687,7 @@ export const AdminServicesView: React.FC = () => {
                     value={formData.turnaround}
                     onChange={(e) => setFormData({ ...formData, turnaround: e.target.value })}
                     placeholder="e.g. 24-48 Hours"
-                    className="w-full px-3.5 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
                   />
                 </div>
               </div>
@@ -427,7 +701,7 @@ export const AdminServicesView: React.FC = () => {
                     required
                     value={formData.basePrice}
                     onChange={(e) => setFormData({ ...formData, basePrice: e.target.value })}
-                    className="w-full px-3.5 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
                   />
                 </div>
 
@@ -439,7 +713,7 @@ export const AdminServicesView: React.FC = () => {
                     value={formData.pricePerKg}
                     onChange={(e) => setFormData({ ...formData, pricePerKg: e.target.value })}
                     placeholder="0 if fixed rate"
-                    className="w-full px-3.5 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+                    className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
                   />
                 </div>
               </div>
@@ -451,18 +725,7 @@ export const AdminServicesView: React.FC = () => {
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   placeholder="Describe items covered, washing steps, detergents used..."
-                  className="w-full px-3.5 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Image URL</label>
-                <input
-                  type="text"
-                  value={formData.imageUrl}
-                  onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
-                  placeholder="https://..."
-                  className="w-full px-3.5 py-2.5 bg-gray-50 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
+                  className="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium focus:ring-2 focus:ring-[#03045E] focus:outline-hidden"
                 />
               </div>
 
@@ -472,7 +735,7 @@ export const AdminServicesView: React.FC = () => {
                   id="srvEnabled"
                   checked={formData.enabled}
                   onChange={(e) => setFormData({ ...formData, enabled: e.target.checked })}
-                  className="w-4 h-4 accent-[#03045E] rounded-md"
+                  className="w-4 h-4 accent-[#03045E] rounded-md cursor-pointer"
                 />
                 <label htmlFor="srvEnabled" className="text-xs font-bold text-gray-700 cursor-pointer">
                   Service is active and available for customer bookings
@@ -483,14 +746,14 @@ export const AdminServicesView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="w-1/2 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-2xl text-xs font-bold cursor-pointer"
+                  className="w-1/2 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-2xl text-xs font-bold cursor-pointer transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={saving || !formData.name.trim()}
-                  className="w-1/2 py-3 bg-[#03045E] hover:bg-[#023E8A] text-white rounded-2xl text-xs font-bold cursor-pointer shadow-md disabled:opacity-50"
+                  className="w-1/2 py-3 bg-[#03045E] hover:bg-[#023E8A] text-white rounded-2xl text-xs font-bold cursor-pointer shadow-md disabled:opacity-50 transition-colors"
                 >
                   {saving ? 'Saving...' : editingService ? 'Update Service' : 'Create Service'}
                 </button>

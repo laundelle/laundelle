@@ -5,10 +5,17 @@ import { getDb } from './mongodb';
 import { hasPermission, normalizeRole } from '@laundelle/auth';
 import { AuditService } from '@/services/AuditService';
 import { generateStaffId } from '@laundelle/ids';
+import { SessionService, SessionDoc } from '@/services/SessionService';
 
 // ---------------------------------------------------------------------------
-// Standard API Responses
+// Standard API Responses & Security Headers
 // ---------------------------------------------------------------------------
+
+export const secureAuthResponseHeaders: Record<string, string> = {
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    'Pragma': 'no-cache',
+    'X-Content-Type-Options': 'nosniff',
+};
 
 export interface ApiResponse<T = any> {
     success: boolean;
@@ -28,6 +35,7 @@ export function successResponse<T>(data: T, status: number = 200, additionalHead
         status,
         headers: {
             ...corsHeaders,
+            ...secureAuthResponseHeaders,
             ...(additionalHeaders as Record<string, string> || {}),
         }
     });
@@ -41,6 +49,7 @@ export function errorResponse(code: string, message: string, status: number = 40
         status,
         headers: {
             ...corsHeaders,
+            ...secureAuthResponseHeaders,
             ...(additionalHeaders as Record<string, string> || {}),
         }
     });
@@ -96,7 +105,8 @@ export function getAuthenticatedUser(req: NextRequest): JwtPayload | null {
     const authHeader = req.headers.get('authorization');
     if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.substring(7);
-        return verifyJwt(token);
+        const user = verifyJwt(token);
+        if (user) return user;
     }
     // Cookie-based session extraction fallback
     const cookieToken = req.cookies.get('laundelle_token')?.value || req.cookies.get('l2u_token')?.value;
@@ -107,15 +117,67 @@ export function getAuthenticatedUser(req: NextRequest): JwtPayload | null {
 }
 
 export async function getAuthenticatedUserAsync(req: NextRequest): Promise<JwtPayload | null> {
+    // 1. Primary API / Mobile flow: Authorization Bearer header
     const authHeader = req.headers.get('authorization');
     if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.substring(7);
-        return verifyJwtAsync(token);
+        const user = await verifyJwtAsync(token);
+        if (user) return user;
     }
+
+    // 2. Web Portal BFF flow: Server-side Session Cookie with Anti-CSRF protection
+    const sessionId = 
+        req.cookies.get('__Host-laundelle_customer_session')?.value ||
+        req.cookies.get('__Host-laundelle_ops_session')?.value ||
+        req.cookies.get('__Host-laundelle_admin_session')?.value ||
+        req.cookies.get('__Host-laundelle_session')?.value ||
+        req.cookies.get('laundelle_customer_session')?.value ||
+        req.cookies.get('laundelle_ops_session')?.value ||
+        req.cookies.get('laundelle_admin_session')?.value ||
+        req.cookies.get('laundelle_session')?.value;
+
+    if (sessionId) {
+        const session = await SessionService.getSession(sessionId);
+        if (session) {
+            // Anti-CSRF validation for cookie-authenticated mutating requests
+            if (!SessionService.validateCsrf(session, req)) {
+                throw new ApiError(
+                    'Cross-Site Request Forgery (CSRF) validation failed. Please refresh your browser.',
+                    'CSRF_VALIDATION_FAILED',
+                    403
+                );
+            }
+            return {
+                sub: session.userId,
+                userId: session.userId,
+                publicId: session.publicId || session.userId,
+                auth0UserId: session.auth0UserId,
+                email: session.email,
+                role: session.role,
+                plantId: session.plantId,
+                portal: session.portal,
+                sessionId: session.sessionId,
+                exp: Math.floor(new Date(session.expiresAt).getTime() / 1000),
+                iat: Math.floor(new Date(session.createdAt).getTime() / 1000),
+            };
+        }
+    }
+
+    // 3. Legacy cookie-based token fallback during migration
     const cookieToken = req.cookies.get('laundelle_token')?.value || req.cookies.get('l2u_token')?.value;
     if (cookieToken) {
+        const method = req.method.toUpperCase();
+        if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+            const secFetchSite = req.headers.get('sec-fetch-site');
+            const origin = req.headers.get('origin');
+            const host = req.headers.get('host');
+            if (secFetchSite && secFetchSite !== 'same-origin' && origin && host && !origin.includes(host)) {
+                throw new ApiError('Cross-Site Request Forgery (CSRF) detected on legacy cookie request.', 'CSRF_VALIDATION_FAILED', 403);
+            }
+        }
         return verifyJwtAsync(cookieToken);
     }
+
     return null;
 }
 

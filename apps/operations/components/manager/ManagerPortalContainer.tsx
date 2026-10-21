@@ -18,17 +18,20 @@ import { ManagerSettingsView } from './ManagerSettingsView';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
 import { ManagerStaffWarningBanner } from './ManagerStaffWarningBanner';
 import { dbFetchManagerOrders, dbFetchManagerStaff } from '@laundelle/api-client';
+import { UserGuideView } from '@laundelle/ui';
 
 interface ManagerPortalContainerProps {
   userName?: string;
   onSignOut: () => void;
+  initialTab?: AdminViewTab;
 }
 
 export const ManagerPortalContainer: React.FC<ManagerPortalContainerProps> = ({
   userName,
   onSignOut,
+  initialTab,
 }) => {
-  const [activeTab, setActiveTab] = useState<AdminViewTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<AdminViewTab>(initialTab || 'dashboard');
   const [selectedLocation, setSelectedLocation] = useState('All Locations');
   const [dateFilter, setDateFilter] = useState('Today');
   const [customStartDate, setCustomStartDate] = useState(() => {
@@ -40,6 +43,7 @@ export const ManagerPortalContainer: React.FC<ManagerPortalContainerProps> = ({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [orders, setOrders] = useState<any[]>([]);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [guideInitialTab, setGuideInitialTab] = useState<AdminViewTab | undefined>(initialTab);
 
   // Manager staff list for minimum staffing verification
   const [staffList, setStaffList] = useState<any[]>([]);
@@ -117,6 +121,10 @@ export const ManagerPortalContainer: React.FC<ManagerPortalContainerProps> = ({
             fetchOrders(dateFilter, customStartDate, ed);
           }}
           onOpenGlobalSearch={() => {}}
+          onOpenUserGuide={() => {
+            setGuideInitialTab(activeTab);
+            setActiveTab('user_guide');
+          }}
           onExitAdmin={() => setShowLogoutModal(true)}
           onRequestLogout={() => setShowLogoutModal(true)}
         />
@@ -152,6 +160,13 @@ export const ManagerPortalContainer: React.FC<ManagerPortalContainerProps> = ({
           {activeTab === 'complaints' && <ManagerIncidentsView />}
           {activeTab === 'areas' && <AdminAreasView />}
           {activeTab === 'settings' && <ManagerSettingsView />}
+          {activeTab === 'user_guide' && (
+            <UserGuideView
+              portalRole="manager"
+              initialTab={guideInitialTab}
+              onNavigateTab={setActiveTab}
+            />
+          )}
         </main>
       </div>
 

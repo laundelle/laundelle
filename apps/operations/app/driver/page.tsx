@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth0 } from '@auth0/auth0-react';
 import { getStoredSession, clearSession, saveSession, AuthSession } from '@laundelle/auth';
-import { dbAuth0Sync } from '@laundelle/api-client';
+import { dbAuth0Sync, setCsrfToken } from '@laundelle/api-client';
 import { DriverPortal } from '@/components/driver/DriverPortal';
 import { DriverLoginPage } from '@/components/driver/DriverLoginPage';
 
@@ -121,6 +121,9 @@ export default function DriverPage() {
             },
           };
 
+          if (syncResult.csrfToken) {
+            setCsrfToken(syncResult.csrfToken);
+          }
           saveSession(driverSession);
           setSession(driverSession);
           setAuthError(null);

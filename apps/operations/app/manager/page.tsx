@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth0 } from '@auth0/auth0-react';
-import { getStoredSession, clearSession, saveSession, AuthSession, normalizeRole } from '@laundelle/auth';
+import { getStoredSession, clearSession, saveSession, setCsrfToken, AuthSession, normalizeRole } from '@laundelle/auth';
 import { dbAuth0Sync } from '@laundelle/api-client';
 import { ManagerPortalContainer } from '@/components/manager/ManagerPortalContainer';
 import { ManagerLoginPage } from '@/components/manager/ManagerLoginPage';
@@ -61,6 +61,10 @@ export default function ManagerPage() {
             return;
           }
 
+          if ((syncResult as any).csrfToken) {
+            setCsrfToken((syncResult as any).csrfToken);
+          }
+
           const role = syncResult.user.role;
           if (role === 'driver') {
             const driverSession: AuthSession = {
@@ -113,15 +117,21 @@ export default function ManagerPage() {
             isAuthenticated: true,
             role: role as any,
             token: syncResult.token || '',
+            csrfToken: (syncResult as any).csrfToken,
             user: {
               id: syncResult.user.id || syncResult.user.publicId || sub,
               name: syncResult.user.name || name,
               email: syncResult.user.email || email,
               role: role as any,
               roleLabel: role === 'super_admin' ? 'Super Administrator' : role === 'admin' ? 'Administrator' : 'Plant Manager',
+              plantId: syncResult.user.plant_id || syncResult.user.plantId,
+              plant_id: syncResult.user.plant_id || syncResult.user.plantId,
             },
           };
 
+          if ((syncResult as any).csrfToken) {
+            setCsrfToken((syncResult as any).csrfToken);
+          }
           saveSession(managerSession);
           setSession(managerSession);
           setAuthError(null);

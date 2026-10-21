@@ -32,8 +32,61 @@ export const getApiBase = (): string => {
   return 'http://localhost:4000';
 };
 export const apiUrl = (path: string): string => `${getApiBase()}${path.startsWith('/') ? path : '/' + path}`;
+
+import {
+  setCsrfToken as setSharedCsrfToken,
+  getCsrfToken as getSharedCsrfToken,
+  getAuthToken as getSharedAuthToken,
+  saveSession as saveSharedSession,
+  clearSession as clearSharedSession,
+  getStoredSession as getSharedStoredSession
+} from '@laundelle/auth';
+
+// In-memory token and CSRF state (protects against XSS token exfiltration)
+let inMemoryCsrfToken: string | null = null;
+let inMemoryAuthToken: string | null = null;
+let inMemorySession: MongoAuthSession | null = null;
+
+export function setCsrfToken(csrf: string | null): void {
+  inMemoryCsrfToken = csrf;
+  try {
+    setSharedCsrfToken(csrf);
+  } catch {}
+}
+
+export function getCsrfToken(): string | null {
+  if (inMemoryCsrfToken) return inMemoryCsrfToken;
+  try {
+    const shared = getSharedCsrfToken();
+    if (shared) {
+      inMemoryCsrfToken = shared;
+      return shared;
+    }
+  } catch {}
+  return null;
+}
+
 export const apiFetch = (path: string, init?: RequestInit): Promise<Response> => {
-  return fetch(apiUrl(path), init);
+  const headers = new Headers(init?.headers || {});
+  
+  // Attach CSRF token on mutating requests if present
+  const method = (init?.method || 'GET').toUpperCase();
+  const csrf = getCsrfToken();
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && csrf && !headers.has('x-csrf-token')) {
+    headers.set('x-csrf-token', csrf);
+  }
+
+  // Attach Authorization Bearer token if present in memory
+  const token = inMemoryAuthToken || getAuthToken();
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  return fetch(apiUrl(path), {
+    ...init,
+    credentials: init?.credentials || 'include',
+    headers,
+  });
 };
 
 import { UserProfile, UserAddress, UserPreferences, Order, CustomerNotification } from '@laundelle/types';
@@ -48,58 +101,136 @@ export interface MongoAuthSession {
         email: string;
         name: string;
         role?: string;
+        plantId?: string;
+        publicId?: string;
+        phone?: string;
     };
     isAuthenticated: boolean;
+    csrfToken?: string;
 }
 
 const SESSION_KEY = 'l2u_auth_session';
 
 export function getStoredSession(): MongoAuthSession | null {
+    if (inMemorySession) return inMemorySession;
+    try {
+        const shared = getSharedStoredSession();
+        if (shared && (shared.token || shared.isAuthenticated)) {
+            inMemorySession = shared as any;
+            if (shared.token) inMemoryAuthToken = shared.token;
+            if (shared.csrfToken) inMemoryCsrfToken = shared.csrfToken;
+            return inMemorySession;
+        }
+    } catch {}
     if (typeof window === 'undefined') return null;
     try {
         const raw = localStorage.getItem(SESSION_KEY);
         if (!raw) return null;
         const parsed = JSON.parse(raw);
-        return parsed?.token ? (parsed as MongoAuthSession) : null;
+        if (parsed && (parsed.token || parsed.isAuthenticated)) {
+            if (!parsed.token) {
+                const storedToken = localStorage.getItem('l2u_token');
+                if (storedToken) parsed.token = storedToken;
+            }
+            inMemorySession = parsed as MongoAuthSession;
+            if (parsed.token) inMemoryAuthToken = parsed.token;
+            if (parsed.csrfToken) inMemoryCsrfToken = parsed.csrfToken;
+            return inMemorySession;
+        }
+        return null;
     } catch {
         return null;
     }
 }
 
 export function saveSession(session: MongoAuthSession): void {
+    inMemorySession = session;
+    if (session.token) inMemoryAuthToken = session.token;
+    if (session.csrfToken) inMemoryCsrfToken = session.csrfToken;
+    try {
+        saveSharedSession(session as any);
+    } catch {}
     if (typeof window === 'undefined') return;
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    window.dispatchEvent(new Event('l2u_auth_change'));
+    try {
+        // Do not persist raw secret token in localStorage (prevents token exfiltration).
+        // Only safe session metadata (user, role, isAuthenticated) is stored.
+        const safeSession = {
+            user: session.user,
+            isAuthenticated: session.isAuthenticated,
+        };
+        const prevRaw = localStorage.getItem(SESSION_KEY);
+        const nextRaw = JSON.stringify(safeSession);
+        if (prevRaw !== nextRaw) {
+            localStorage.setItem(SESSION_KEY, JSON.stringify(safeSession));
+            window.dispatchEvent(new Event('l2u_auth_change'));
+        }
+    } catch (err) {
+        console.error('Failed to save session:', err);
+    }
 }
 
 export function clearSession(): void {
+    inMemorySession = null;
+    inMemoryAuthToken = null;
+    inMemoryCsrfToken = null;
+    try {
+        clearSharedSession();
+    } catch {}
     if (typeof window === 'undefined') return;
-    localStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem(LOCAL_PROFILE_KEY);
-    localStorage.removeItem(LOCAL_ORDERS_KEY);
-    localStorage.removeItem(LOCAL_NOTIF_KEY);
-    window.dispatchEvent(new Event('l2u_auth_change'));
+    try {
+        localStorage.removeItem(SESSION_KEY);
+        localStorage.removeItem('l2u_token');
+        localStorage.removeItem(LOCAL_PROFILE_KEY);
+        localStorage.removeItem(LOCAL_ORDERS_KEY);
+        localStorage.removeItem(LOCAL_NOTIF_KEY);
+        window.dispatchEvent(new Event('l2u_auth_change'));
+    } catch (err) {
+        console.error('Failed to clear session:', err);
+    }
 }
 
-function getAuthToken(): string | null {
-    return getStoredSession()?.token ?? null;
+export function getAuthToken(): string | null {
+    if (inMemoryAuthToken) return inMemoryAuthToken;
+    if (inMemorySession?.token) return inMemorySession.token;
+    try {
+        const shared = getSharedAuthToken();
+        if (shared) return shared;
+    } catch {}
+    if (typeof window !== 'undefined') {
+        try {
+            const stored = getStoredSession();
+            if (stored?.token) {
+                inMemoryAuthToken = stored.token;
+                return stored.token;
+            }
+            const direct = localStorage.getItem('l2u_token');
+            if (direct) {
+                inMemoryAuthToken = direct;
+                return direct;
+            }
+        } catch {}
+    }
+    return null;
 }
 
 export function authHeaders(): HeadersInit {
     const token = getAuthToken();
+    const csrf = getCsrfToken();
     return {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
     };
 }
 
 // ─── Auth Actions ─────────────────────────────────────────────────────────────
 
 export interface AuthResult {
-    user: { id: string; publicId?: string; email: string; name: string; phone?: string; role?: string } | null;
+    user: { id: string; publicId?: string; email: string; name: string; phone?: string; role?: string; plantId?: string; plant_id?: string } | null;
     token: string | null;
     error: string | null;
     needsProfileCompletion?: boolean;
+    csrfToken?: string;
 }
 
 
@@ -127,10 +258,14 @@ export async function mongoSignIn(email: string, password: string): Promise<Auth
         if (!res.ok || data.error) return { user: null, token: null, error: getErrorMessage(data.error, 'Login failed') };
 
         const session: MongoAuthSession = {
-            token: data.token,
+            token: data.token || '',
             user: data.user,
             isAuthenticated: true,
+            csrfToken: data.csrfToken,
         };
+        if (data.csrfToken) {
+            setCsrfToken(data.csrfToken);
+        }
         saveSession(session);
         return { user: data.user, token: data.token, error: null };
     } catch (e: any) {
@@ -155,10 +290,14 @@ export async function mongoSignUp(
         if (!res.ok || data.error) return { user: null, token: null, error: getErrorMessage(data.error, 'Registration failed') };
 
         const session: MongoAuthSession = {
-            token: data.token,
+            token: data.token || '',
             user: data.user,
             isAuthenticated: true,
+            csrfToken: data.csrfToken,
         };
+        if (data.csrfToken) {
+            setCsrfToken(data.csrfToken);
+        }
         saveSession(session);
         return { user: data.user, token: data.token, error: null };
     } catch (e: any) {
@@ -189,35 +328,60 @@ export async function dbAuth0Sync(auth0User: {
             return { user: null, token: null, error: getErrorMessage(data.error, 'Auth0 synchronization failed') };
         }
 
-        const effectiveToken = data.token || accessToken;
+        const effectiveToken = data.token || accessToken || '';
         const session: MongoAuthSession = {
             token: effectiveToken,
             user: data.user,
             isAuthenticated: true,
+            csrfToken: data.csrfToken,
         };
+        if (data.csrfToken) {
+            setCsrfToken(data.csrfToken);
+        }
         saveSession(session);
         return { 
             user: data.user, 
             token: effectiveToken, 
             error: null,
-            needsProfileCompletion: Boolean(data.needsProfileCompletion || !data.user?.phone)
+            needsProfileCompletion: Boolean(data.needsProfileCompletion || !data.user?.phone),
+            csrfToken: data.csrfToken
         };
     } catch (e: any) {
         return { user: null, token: null, error: e.message || 'Network error' };
     }
 }
 
-export function mongoSignOut(): void {
-    const token = getAuthToken();
-    if (token) {
-        apiFetch('/api/v1/auth/logout', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
+/**
+ * Queries current server-side session via BFF endpoint without reading tokens from localStorage.
+ */
+export async function dbFetchSession(): Promise<{ isAuthenticated: boolean; user: any; csrfToken?: string | null }> {
+    try {
+        const res = await apiFetch('/api/v1/auth/session', { method: 'GET' });
+        const json = await res.json();
+        const data = json.success ? json.data : json;
+        if (data && data.isAuthenticated && data.user) {
+            if (data.csrfToken) {
+                setCsrfToken(data.csrfToken);
             }
-        }).catch(() => {});
+            const session: MongoAuthSession = {
+                token: '',
+                user: data.user,
+                isAuthenticated: true,
+                csrfToken: data.csrfToken,
+            };
+            saveSession(session);
+            return { isAuthenticated: true, user: data.user, csrfToken: data.csrfToken };
+        }
+        return { isAuthenticated: false, user: null, csrfToken: null };
+    } catch {
+        return { isAuthenticated: false, user: null, csrfToken: null };
     }
+}
+
+export function mongoSignOut(): void {
+    apiFetch('/api/v1/auth/logout', {
+        method: 'POST',
+    }).catch(() => {});
     clearSession();
 }
 
@@ -416,13 +580,19 @@ export async function dbFetchProfile(_userId?: string): Promise<UserProfile> {
         });
         const json = await res.json().catch(() => ({}));
         const data = json.success ? json.data : json;
+        if (res.status === 401 || data?.code === 'UNAUTHORIZED' || data?.error === 'Authentication required') {
+            clearSession();
+            return cached;
+        }
         if (!res.ok || data?.error) {
             throw new Error(getErrorMessage(data?.error, !res.ok ? `HTTP ${res.status} Error fetching profile` : 'Failed to fetch profile'));
         }
         setLocal(LOCAL_PROFILE_KEY, data);
         return data as UserProfile;
     } catch (e: any) {
-        console.error('[db] dbFetchProfile:', e?.message || e);
+        if (!e?.message?.includes('Authentication required') && !e?.message?.includes('401')) {
+            console.error('[db] dbFetchProfile:', e?.message || e);
+        }
         return cached;
     }
 }
@@ -520,6 +690,10 @@ export async function dbFetchOrders(_userId?: string): Promise<Order[]> {
         });
         const json = await res.json().catch(() => ({}));
         const data = json.success ? json.data : json;
+        if (res.status === 401 || data?.code === 'UNAUTHORIZED' || data?.error === 'Authentication required') {
+            clearSession();
+            return getLocal<Order[]>(LOCAL_ORDERS_KEY, []);
+        }
         if (!res.ok || data?.error) {
             throw new Error(getErrorMessage(data?.error, !res.ok ? `HTTP ${res.status} Error fetching orders` : 'Failed to fetch orders'));
         }
@@ -527,7 +701,9 @@ export async function dbFetchOrders(_userId?: string): Promise<Order[]> {
         setLocal(LOCAL_ORDERS_KEY, ordersArray);
         return ordersArray;
     } catch (e: any) {
-        console.error('[db] dbFetchOrders:', e?.message || e);
+        if (!e?.message?.includes('Authentication required') && !e?.message?.includes('401')) {
+            console.error('[db] dbFetchOrders:', e?.message || e);
+        }
         return getLocal<Order[]>(LOCAL_ORDERS_KEY, []);
     }
 }
@@ -598,13 +774,19 @@ export async function dbFetchNotifications(_userId?: string): Promise<CustomerNo
         });
         const json = await res.json().catch(() => ({}));
         const data = json.success ? json.data : json;
+        if (res.status === 401 || data?.code === 'UNAUTHORIZED' || data?.error === 'Authentication required') {
+            clearSession();
+            return getLocal<CustomerNotification[]>(LOCAL_NOTIF_KEY, []);
+        }
         if (!res.ok || data?.error) {
             throw new Error(getErrorMessage(data?.error, !res.ok ? `HTTP ${res.status} Error fetching notifications` : 'Failed to fetch notifications'));
         }
         setLocal(LOCAL_NOTIF_KEY, data.items || []);
         return data.items || [];
     } catch (e: any) {
-        console.error('[db] dbFetchNotifications:', e?.message || e);
+        if (!e?.message?.includes('Authentication required') && !e?.message?.includes('401')) {
+            console.error('[db] dbFetchNotifications:', e?.message || e);
+        }
         return getLocal<CustomerNotification[]>(LOCAL_NOTIF_KEY, []);
     }
 }
@@ -736,6 +918,24 @@ export async function dbUpdateStaffMember(staffId: string, staffData: any): Prom
         return { success: false, error: e.message || 'Network error' };
     }
 }
+
+export async function dbDeleteStaffMember(staffId: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+        const res = await apiFetch(`/api/v1/admin/staff/${staffId}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            const msg = typeof data.error === 'string' ? data.error : data.error?.message;
+            return { success: false, error: msg || 'Failed to delete staff member' };
+        }
+        return { success: true, message: data.message };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Network error' };
+    }
+}
+
 
 export async function dbFetchPlants(): Promise<any[]> {
     try {
@@ -1604,6 +1804,24 @@ export async function dbAdminUpdateCustomerStatus(customerId: string, status: st
         return { success: false, error: e.message };
     }
 }
+
+export async function dbAdminDeleteCustomer(customerId: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    try {
+        const res = await apiFetch(`/api/v1/admin/customers/${customerId}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) {
+            const msg = typeof data.error === 'string' ? data.error : data.error?.message;
+            return { success: false, error: msg || 'Failed to delete customer' };
+        }
+        return { success: true, message: data.message };
+    } catch (e: any) {
+        return { success: false, error: e.message || 'Network error' };
+    }
+}
+
 
 export async function dbAdminFetchServices(): Promise<any[]> {
     try {

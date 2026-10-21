@@ -21,6 +21,7 @@ import {
   Package,
   ChevronsUpDown,
   LogOut,
+  BookOpen,
 } from 'lucide-react';
 import { AdminViewTab } from '@laundelle/types';
 
@@ -56,6 +57,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
     { id: 'complaints', label: 'Incidents & Issues', icon: AlertOctagon },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
     { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'user_guide', label: 'User Guide', icon: BookOpen },
     // Processor specific tabs
     { id: 'qr_scan', label: 'Scan QR Bag', icon: QrCode },
     { id: 'qc', label: 'Quality Check', icon: ClipboardCheck },
@@ -67,7 +69,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
 
   if (currentRole === 'manager') {
     navItems = rawNavItems
-      .filter(item => ['dashboard', 'orders', 'drivers', 'processors', 'staff', 'areas', 'settings'].includes(item.id))
+      .filter(item => ['dashboard', 'orders', 'drivers', 'processors', 'staff', 'areas', 'settings', 'user_guide'].includes(item.id))
       .map(item => {
         if (item.id === 'staff') return { ...item, label: 'Staff Team', icon: Users };
         if (item.id === 'areas') return { ...item, label: 'Plant Slots & Areas', icon: Map };

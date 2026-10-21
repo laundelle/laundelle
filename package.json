@@ -9,6 +9,8 @@
     "dev:operations": "turbo dev --filter=operations",
     "dev:admin": "turbo dev --filter=admin",
     "dev:backend": "turbo dev --filter=backend",
+    "dev:mobile:customer": "pnpm --filter=@laundelle/mobile-customer start",
+    "dev:mobile:operations": "pnpm --filter=@laundelle/mobile-operations start",
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",

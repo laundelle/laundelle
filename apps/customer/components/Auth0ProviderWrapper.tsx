@@ -30,9 +30,11 @@ export function Auth0ProviderWrapper({ children }: Auth0ProviderWrapperProps) {
       clientId={clientId}
       authorizationParams={{
         redirect_uri: redirectUri,
+        ...(process.env.NEXT_PUBLIC_AUTH0_AUDIENCE ? { audience: process.env.NEXT_PUBLIC_AUTH0_AUDIENCE } : {}),
       }}
       useRefreshTokens={true}
-      cacheLocation="localstorage"
+      useRefreshTokensFallback={false}
+      cacheLocation="memory"
       onRedirectCallback={onRedirectCallback}
     >
       {children}

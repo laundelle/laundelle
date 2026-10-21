@@ -32,7 +32,7 @@ export class PaymentService {
      *
      * This ensures that if the webhook is not running, no order is ever confirmed.
      */
-    static async verifySessionPayment(sessionId: string, authenticatedUserId: string): Promise<{
+    static async verifySessionPayment(sessionId: string, authenticatedUserId?: string, authUser?: any): Promise<{
         status: 'paid' | 'pending' | 'unpaid' | 'error';
         order?: any;
         message?: string;
@@ -56,22 +56,53 @@ export class PaymentService {
 
             // Checkout sessions are private payment credentials. Bind the redirect
             // verification to the same authenticated customer that created it.
-            if (!session.metadata?.userId || session.metadata.userId !== authenticatedUserId) {
+            const sessionUserId = session.metadata?.userId;
+            const validUserIds = [
+                authenticatedUserId,
+                authUser?.sub,
+                authUser?.userId,
+                authUser?.id,
+                authUser?.publicId,
+                authUser?.auth0UserId,
+            ].filter(Boolean).map(String);
+
+            const customerEmail = session.customer_details?.email || session.customer_email;
+            const userEmail = authUser?.email;
+            const emailMatches = Boolean(customerEmail && userEmail && customerEmail.toLowerCase() === userEmail.toLowerCase());
+
+            if (sessionUserId && validUserIds.length > 0 && !validUserIds.includes(String(sessionUserId)) && !emailMatches) {
                 return { status: 'error', message: 'This checkout session does not belong to the signed-in customer.' };
             }
 
-            // Payment IS confirmed by Stripe. Now look up the order that the WEBHOOK should have created.
+            const now = new Date().toISOString();
             const db = await getDb();
-            const existingOrder = await db.collection('orders').findOne({
-                stripe_session_id: sessionId,
-                $or: [{ payment_status: 'Paid' }, { paymentStatus: 'Paid' }, { isPaid: true }]
+            const targetOrderId = session.metadata?.orderId;
+
+            // 1. Look up existing order in orders collection
+            let existingOrder = await db.collection('orders').findOne({
+                $or: [
+                    { stripe_session_id: sessionId },
+                    { stripeSessionId: sessionId },
+                    ...(targetOrderId ? [{ id: targetOrderId }, { publicId: targetOrderId }] : []),
+                ]
             });
 
             if (existingOrder) {
-                console.log(`[PaymentService] verifySessionPayment: Order found for session ${sessionId} (webhook processed).`);
                 let orderToReturn = existingOrder;
+                const isAlreadyPaid = existingOrder.payment_status === 'Paid' || existingOrder.paymentStatus === 'Paid' || existingOrder.isPaid;
+
+                if (!isAlreadyPaid) {
+                    console.log(`[PaymentService] verifySessionPayment: Stripe confirms session ${sessionId} is paid. Updating existing order ${existingOrder.id} to Paid.`);
+                    orderToReturn = await this.updateExistingOrderToPaid(db, existingOrder, session, now);
+                    const checkoutId = session.metadata?.checkoutId;
+                    if (checkoutId) {
+                        await db.collection('pending_checkouts').deleteOne({ _id: checkoutId as any }).catch(() => {});
+                    }
+                    await db.collection('pending_checkouts').deleteMany({ stripeSessionId: sessionId }).catch(() => {});
+                }
+
                 if (!orderToReturn.pickup_pin && !orderToReturn.pickup_otp && !orderToReturn.pickup_pin_enc) {
-                    const custIdent = String(orderToReturn.customer_id || orderToReturn.customerId || authenticatedUserId || '');
+                    const custIdent = String(orderToReturn.customer_id || orderToReturn.customerId || authenticatedUserId || sessionUserId || '');
                     const newPickupPin = generateSecureNumericPin(6);
                     const newSalt = generatePinSalt();
                     const newHash = hashOrderPin(newPickupPin, newSalt, orderToReturn.id, custIdent);
@@ -95,7 +126,7 @@ export class PaymentService {
                 }
 
                 if (!orderToReturn.delivery_pin && !orderToReturn.delivery_otp && !orderToReturn.delivery_pin_enc) {
-                    const custIdent = String(orderToReturn.customer_id || orderToReturn.customerId || authenticatedUserId || '');
+                    const custIdent = String(orderToReturn.customer_id || orderToReturn.customerId || authenticatedUserId || sessionUserId || '');
                     const newDeliveryPin = generateSecureNumericPin(4);
                     const newDeliverySalt = generatePinSalt();
                     const newDeliveryHash = hashOrderPin(newDeliveryPin, newDeliverySalt, orderToReturn.id, custIdent);
@@ -117,18 +148,35 @@ export class PaymentService {
                     );
                     orderToReturn = await db.collection('orders').findOne({ _id: orderToReturn._id });
                 }
+
                 return { status: 'paid', order: OrderService.sanitizeOrderForCustomer(orderToReturn) };
             }
 
+            // 2. Check pending_checkouts collection
+            const checkoutId = session.metadata?.checkoutId;
+            let pendingCheckout = null;
+            if (checkoutId) {
+                pendingCheckout = await db.collection('pending_checkouts').findOne({ _id: checkoutId as any });
+            }
+            if (!pendingCheckout) {
+                pendingCheckout = await db.collection('pending_checkouts').findOne({ stripeSessionId: sessionId });
+            }
 
-            // Stripe says paid, but webhook hasn't processed it yet (or webhook is not running).
-            // We NEVER create the order here. Do not auto-refund after an arbitrary
-            // browser timeout: Stripe can legitimately retry delivery later, and a
-            // refund plus a later fulfilled order would be worse than a pending state.
-            console.warn(`[PaymentService] verifySessionPayment: Stripe reports paid for ${sessionId} but no order found in DB. Webhook may not have processed yet or is not running.`);
+            if (pendingCheckout) {
+                const effectiveOwner = pendingCheckout.userId || sessionUserId || authenticatedUserId || 'guest';
+                const createdOrder = await OrderService.createPaidOrderFromCheckout(
+                    effectiveOwner,
+                    pendingCheckout,
+                    session
+                );
+                await db.collection('pending_checkouts').deleteOne({ _id: pendingCheckout._id }).catch(() => {});
+                return { status: 'paid', order: OrderService.sanitizeOrderForCustomer(createdOrder) };
+            }
+
+            console.warn(`[PaymentService] verifySessionPayment: Stripe reports paid for ${sessionId} but no order found in DB.`);
             return {
                 status: 'pending',
-                message: 'Payment received by Stripe, but your order confirmation is still being processed by the webhook. Please wait a moment.'
+                message: 'Payment received by Stripe, but your order confirmation is still being processed. Please wait a moment.'
             };
         } catch (e: any) {
             console.error('[PaymentService] verifySessionPayment error:', e);

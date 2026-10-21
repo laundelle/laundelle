@@ -27,12 +27,14 @@ import { Search, X, QrCode, User, ShoppingBag, LayoutDashboard, Users, Settings,
 import { dbAdminFetchOrders, dbFetchManagerOrders, dbAdminFetchCustomers, dbFetchManagerStaff } from '@laundelle/api-client';
 import { LogoutConfirmModal } from './LogoutConfirmModal';
 import { ManagerStaffWarningBanner } from './ManagerStaffWarningBanner';
+import { UserGuideView } from '@laundelle/ui';
 
 interface AdminPortalProps {
   orders: Order[]; // Left for backwards compatibility, but not used for actual display anymore
   onExitAdmin: () => void;
   userRole?: string;
   userName?: string;
+  initialTab?: AdminViewTab;
 }
 
 export const AdminPortal: React.FC<AdminPortalProps> = ({
@@ -40,10 +42,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   onExitAdmin,
   userRole,
   userName,
+  initialTab,
 }) => {
   const [currentRole, setCurrentRole] = useState<AdminRole>((userRole as AdminRole) || 'super_admin');
   const [activeTab, setActiveTab] = useState<AdminViewTab>(
-    userRole === 'processor' ? 'qr_scan' : 'dashboard'
+    initialTab || (userRole === 'processor' ? 'qr_scan' : 'dashboard')
   );
   const [selectedLocation, setSelectedLocation] = useState('All Locations');
   const [dateFilter, setDateFilter] = useState('Today');
@@ -55,6 +58,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [guideInitialTab, setGuideInitialTab] = useState<AdminViewTab | undefined>(initialTab);
 
   const [orders, setOrders] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
@@ -177,6 +181,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             customEndDate={customEndDate}
             onChangeCustomEndDate={setCustomEndDate}
             onOpenGlobalSearch={() => setGlobalSearchOpen(true)}
+            onOpenUserGuide={() => {
+              setGuideInitialTab(activeTab);
+              setActiveTab('user_guide');
+            }}
             onExitAdmin={() => setShowLogoutModal(true)}
             onRequestLogout={() => setShowLogoutModal(true)}
           />
@@ -241,6 +249,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             {activeTab === 'complaints' && <ManagerIncidentsView />}
             {activeTab === 'reports' && <AdminReportsView />}
             {activeTab === 'settings' && <AdminSettingsView />}
+            {activeTab === 'user_guide' && (
+              <UserGuideView
+                portalRole={currentRole}
+                initialTab={guideInitialTab}
+                onNavigateTab={setActiveTab}
+              />
+            )}
           </main>
         </div>
 

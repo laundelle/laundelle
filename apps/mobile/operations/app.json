@@ -1,0 +1,54 @@
+{
+  "expo": {
+    "name": "Laundelle Operations",
+    "slug": "laundelle-operations",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "laundelle-ops",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "uk.co.laundelle.operations",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Laundelle Operations needs camera access to scan order QR tags and record garment quality photos."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#03045E"
+      },
+      "package": "uk.co.laundelle.operations",
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#03045E"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Laundelle Operations to scan order QR codes and take item photos."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {}
+  }
+}

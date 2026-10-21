@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Search, ShieldAlert, Phone, Mail, AlertTriangle, RefreshCw, X, Eye, RotateCcw, MapPin, Calendar, ShoppingBag } from 'lucide-react';
+import { Search, ShieldAlert, Phone, Mail, AlertTriangle, RefreshCw, X, Eye, RotateCcw, MapPin, Calendar, ShoppingBag, Trash2 } from 'lucide-react';
 import { CustomerCRM, CustomerFlag, CustomerNote } from '@laundelle/types';
-import { dbAdminFetchCustomers, dbAdminAddCustomerFlag, dbAdminAddCustomerNote } from '@laundelle/api-client';
+import { dbAdminFetchCustomers, dbAdminAddCustomerFlag, dbAdminAddCustomerNote, dbAdminDeleteCustomer } from '@laundelle/api-client';
 
 export const AdminCustomersView: React.FC = () => {
   const [customers, setCustomers] = useState<CustomerCRM[]>([]);
@@ -20,6 +20,11 @@ export const AdminCustomersView: React.FC = () => {
   const [notes, setNotes] = useState<CustomerNote[]>([]);
   const [newNote, setNewNote] = useState('');
   const [savingAction, setSavingAction] = useState(false);
+
+  // Deletion confirmation state
+  const [deleteConfirmCustomer, setDeleteConfirmCustomer] = useState<CustomerCRM | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const loadCustomerData = async () => {
     setLoading(true);
@@ -86,6 +91,28 @@ export const AdminCustomersView: React.FC = () => {
       }
     } finally {
       setSavingAction(false);
+    }
+  };
+
+  const handleDeleteCustomer = async (cust: CustomerCRM) => {
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await dbAdminDeleteCustomer(cust.id);
+      if (res.success) {
+        setDeleteConfirmCustomer(null);
+        if (selectedCustomer?.id === cust.id) {
+          setIsCustomerModalOpen(false);
+          setSelectedCustomer(null);
+        }
+        await loadCustomerData();
+      } else {
+        setDeleteError(res.error || 'Failed to delete customer.');
+      }
+    } catch (e: any) {
+      setDeleteError(e.message || 'An unexpected error occurred while deleting customer.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -245,17 +272,30 @@ export const AdminCustomersView: React.FC = () => {
                       <td className="py-3 px-4 font-bold text-slate-900 text-sm">£{cust.lifetimeSpend.toFixed(2)}</td>
                       <td className="py-3 px-4 font-semibold text-emerald-600">{cust.repeatRate}%</td>
                       <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedCustomer(cust);
-                            setIsCustomerModalOpen(true);
-                          }}
-                          className="px-3 py-1 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-medium transition-all cursor-pointer inline-flex items-center gap-1.5 shadow-2xs group-hover:border-slate-300"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-blue-600" />
-                          <span>Profile</span>
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedCustomer(cust);
+                              setIsCustomerModalOpen(true);
+                            }}
+                            className="px-3 py-1 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-medium transition-all cursor-pointer inline-flex items-center gap-1.5 shadow-2xs group-hover:border-slate-300"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-blue-600" />
+                            <span>Profile</span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteError(null);
+                              setDeleteConfirmCustomer(cust);
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
+                            title="Delete Customer from MongoDB & Auth0"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -452,6 +492,26 @@ export const AdminCustomersView: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Modal Actions Footer */}
+            <div className="flex items-center justify-between pt-4 border-t border-gray-100">
+              <button
+                onClick={() => {
+                  setDeleteError(null);
+                  setDeleteConfirmCustomer(selectedCustomer);
+                }}
+                className="px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Customer Account</span>
+              </button>
+              <button
+                onClick={() => setIsCustomerModalOpen(false)}
+                className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Close Profile
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -514,6 +574,75 @@ export const AdminCustomersView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Delete Customer Confirmation Modal */}
+      {deleteConfirmCustomer && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl border border-red-100 space-y-4 relative">
+            <div className="w-12 h-12 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <div className="text-center space-y-1.5">
+              <h3 className="text-base font-bold text-slate-900">
+                Delete Customer Account?
+              </h3>
+              <p className="text-xs text-slate-500">
+                Are you sure you want to delete customer <span className="font-bold text-slate-800">{deleteConfirmCustomer.fullName}</span> ({deleteConfirmCustomer.email})?
+              </p>
+            </div>
+
+            <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200/70 text-xs text-amber-900 space-y-1">
+              <div className="flex items-center gap-1.5 font-bold">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span>Permanent Synchronization Notice</span>
+              </div>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                This action will delete the customer profile from <strong>MongoDB</strong> and permanently delete their authentication account in <strong>Auth0</strong>.
+              </p>
+            </div>
+
+            {deleteError && (
+              <div className="p-3 bg-red-50 rounded-2xl border border-red-200 text-xs text-red-700 font-semibold">
+                {deleteError}
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => {
+                  setDeleteConfirmCustomer(null);
+                  setDeleteError(null);
+                }}
+                className="w-1/2 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => handleDeleteCustomer(deleteConfirmCustomer)}
+                className="w-1/2 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                {isDeleting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Customer</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

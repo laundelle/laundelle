@@ -40,6 +40,12 @@ async function postAdminCustomersHandler(req: NextRequest) {
     } else if (action === 'status') {
         const res = await AdminService.updateCustomerStatus(actorId, body.customerId, body.status);
         return NextResponse.json(res);
+    } else if (action === 'delete') {
+        if (!body.customerId) {
+            throw new BadRequestError('customerId is required for customer deletion.');
+        }
+        const res = await AdminService.deleteCustomer(actorId, body.customerId);
+        return NextResponse.json(res);
     } else {
         throw new BadRequestError('Invalid administrative customer action.');
     }

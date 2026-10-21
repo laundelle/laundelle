@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
-import { withErrorHandler, successResponse, requireRole } from '@/lib/api';
+import { withErrorHandler, successResponse, requireRoleAsync } from '@/lib/api';
 import { PlatformService } from '@/services/PlatformService';
 
 async function updateSlotHandler(req: NextRequest, context: any) {
-    const user = requireRole(req, ['admin', 'super_admin', 'manager']);
+    const user = await requireRoleAsync(req, ['admin', 'super_admin', 'manager', 'plant_manager']);
     const params = await context.params;
     const slotId = params.id;
     const body = await req.json();
@@ -13,7 +13,7 @@ async function updateSlotHandler(req: NextRequest, context: any) {
 }
 
 async function deleteSlotHandler(req: NextRequest, context: any) {
-    const user = requireRole(req, ['admin', 'super_admin', 'manager']);
+    const user = await requireRoleAsync(req, ['admin', 'super_admin', 'manager', 'plant_manager']);
     const params = await context.params;
     const slotId = params.id;
     

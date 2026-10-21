@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth0 } from '@auth0/auth0-react';
 import { getStoredSession, saveSession, clearSession, AuthSession } from '@laundelle/auth';
-import { dbAuth0Sync } from '@laundelle/api-client';
+import { dbAuth0Sync, dbFetchSession, setCsrfToken } from '@laundelle/api-client';
 import { OperationsLoginPage } from '@/components/OperationsLoginPage';
 
 export default function OperationsLandingPage() {
@@ -40,18 +40,42 @@ export default function OperationsLandingPage() {
     return false;
   };
 
-  // Check existing stored session on mount
+  // Check existing stored session on mount or hydrate from secure cookie
   useEffect(() => {
     const existingSession = getStoredSession();
-    setSession(existingSession);
-    setMounted(true);
-
     if (existingSession?.isAuthenticated && existingSession?.user?.role) {
+      setSession(existingSession);
+      setMounted(true);
       if (['driver', 'processor', 'manager', 'plant_manager', 'admin', 'super_admin'].includes(existingSession.user.role)) {
-        if (redirectByRole(existingSession.user.role)) {
-          return;
-        }
+        redirectByRole(existingSession.user.role);
+        return;
       }
+    } else {
+      // Re-hydrate session from secure cookie via BFF endpoint
+      dbFetchSession().then((sess) => {
+        if (sess.isAuthenticated && sess.user?.role) {
+          const opsRole = sess.user.role;
+          if (['driver', 'processor', 'manager', 'plant_manager', 'admin', 'super_admin'].includes(opsRole)) {
+            const rehydrated: AuthSession = {
+              isAuthenticated: true,
+              role: opsRole,
+              token: '',
+              user: {
+                id: sess.user.id || sess.user.publicId,
+                name: sess.user.name,
+                email: sess.user.email,
+                role: opsRole,
+                plantId: sess.user.plantId,
+              }
+            };
+            saveSession(rehydrated);
+            setSession(rehydrated);
+            redirectByRole(opsRole);
+          }
+        }
+      }).catch(() => {}).finally(() => {
+        setMounted(true);
+      });
     }
 
     const handleAuthChange = () => {
@@ -136,6 +160,9 @@ export default function OperationsLandingPage() {
             },
           };
 
+          if (syncResult.csrfToken) {
+            setCsrfToken(syncResult.csrfToken);
+          }
           saveSession(opsSession);
           setSession(opsSession);
           setAuthError(null);

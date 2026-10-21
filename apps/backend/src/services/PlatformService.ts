@@ -1,4 +1,6 @@
 import { getDb } from '@/lib/mongodb';
+import { ObjectId } from 'mongodb';
+import { normalizeRole } from '@laundelle/auth';
 import { BadRequestError, NotFoundError } from '@/lib/api';
 import { AuditService } from '@/services/AuditService';
 import {
@@ -41,10 +43,11 @@ export class PlatformService {
         const now = new Date().toISOString();
 
         // Whitelist fields
-        const { name, description, price, category, enabled, icon, basePrice } = data;
+        const { name, description, price, category, enabled, icon, basePrice, imageUrl, image, pricePerKg, categoryLabel, turnaround } = data;
         if (!name) throw new BadRequestError('Service name is required.');
 
         const serviceId = generateServiceId();
+        const finalImage = imageUrl || image || '';
         const newService = {
             id: serviceId,
             publicId: serviceId,
@@ -53,9 +56,14 @@ export class PlatformService {
             description: description || '',
             price: price || 0,
             basePrice: basePrice || price || 0,
+            pricePerKg: pricePerKg || 0,
             category: category || 'General',
+            categoryLabel: categoryLabel || category || 'General',
+            turnaround: turnaround || '24-48 Hours',
             enabled: enabled !== false, // default true
             icon: icon || '',
+            imageUrl: finalImage,
+            image: finalImage,
             created_at: now,
             createdBy: adminId
         };
@@ -83,12 +91,29 @@ export class PlatformService {
         if (updates.description !== undefined) safeUpdates.description = updates.description;
         if (updates.price !== undefined) safeUpdates.price = updates.price;
         if (updates.basePrice !== undefined) safeUpdates.basePrice = updates.basePrice;
+        if (updates.pricePerKg !== undefined) safeUpdates.pricePerKg = updates.pricePerKg;
         if (updates.category !== undefined) safeUpdates.category = updates.category;
+        if (updates.categoryLabel !== undefined) safeUpdates.categoryLabel = updates.categoryLabel;
+        if (updates.turnaround !== undefined) safeUpdates.turnaround = updates.turnaround;
         if (updates.enabled !== undefined) safeUpdates.enabled = updates.enabled;
         if (updates.icon !== undefined) safeUpdates.icon = updates.icon;
+        if (updates.imageUrl !== undefined || updates.image !== undefined) {
+            const finalImg = updates.imageUrl !== undefined ? updates.imageUrl : updates.image;
+            safeUpdates.imageUrl = finalImg;
+            safeUpdates.image = finalImg;
+        }
+
+        const idQuery = {
+            $or: [
+                { id: serviceId },
+                { _id: serviceId },
+                { publicId: serviceId },
+                { serviceId }
+            ]
+        };
 
         const result = await db.collection('services').updateOne(
-            { id: serviceId },
+            idQuery as any,
             { $set: safeUpdates }
         );
 
@@ -209,14 +234,57 @@ export class PlatformService {
     static async getAdminSlots(actorId?: string) {
         const db = await getDb();
         if (actorId) {
-            const user = await db.collection('users').findOne({ _id: actorId as any });
-            if (user?.role === 'manager') {
-                const plantId = user.plant_id;
-                if (plantId) {
+            const user = await db.collection('users').findOne({
+                $or: [
+                    { _id: actorId as any },
+                    { _id: String(actorId) },
+                    { id: actorId },
+                    { publicId: actorId },
+                    { auth0UserId: actorId },
+                    { auth0_sub: actorId },
+                    { email: actorId }
+                ]
+            });
+            const normRole = normalizeRole(user?.role) || user?.role?.toLowerCase();
+            if (normRole === 'manager' || normRole === 'plant_manager') {
+                const userPlantId = user?.plant_id || (user as any)?.plantId;
+                const plant = await db.collection('plants').findOne({
+                    $or: [
+                        ...(userPlantId ? [
+                            { _id: userPlantId as any },
+                            { _id: String(userPlantId) },
+                            { id: userPlantId },
+                            { publicId: userPlantId },
+                            { code: userPlantId }
+                        ] : []),
+                        { manager_id: user?._id as any },
+                        { manager_id: String(user?._id) },
+                        { manager_id: user?.id },
+                        { manager_id: user?.publicId },
+                        { manager_email: user?.email }
+                    ]
+                });
+
+                const plantMatchIds: any[] = [];
+                if (userPlantId) {
+                    plantMatchIds.push(userPlantId, String(userPlantId));
+                }
+                if (plant) {
+                    if (plant._id) plantMatchIds.push(plant._id, String(plant._id));
+                    if (plant.id) plantMatchIds.push(plant.id);
+                    if (plant.publicId) plantMatchIds.push(plant.publicId);
+                    if (plant.code) plantMatchIds.push(plant.code);
+                }
+
+                if (plantMatchIds.length > 0) {
                     return db.collection('booking_slots').find({
                         $or: [
-                            { plant_id: String(plantId) },
-                            { plant_id: plantId as any }
+                            { plant_id: { $in: plantMatchIds } },
+                            ...(plant?.code ? [{ plant_code: plant.code }] : []),
+                            ...(plant?.name ? [{ plant_name: plant.name }] : []),
+                            { plant_id: null },
+                            { plant_id: '' },
+                            { plant_id: 'all' }
                         ]
                     }).toArray();
                 }
@@ -229,14 +297,32 @@ export class PlatformService {
         const db = await getDb();
         const now = new Date().toISOString();
 
-        const user = await db.collection('users').findOne({ _id: actorId as any });
-        let plantId = data.plant_id || user?.plant_id || null;
+        const user = await db.collection('users').findOne({
+            $or: [
+                { _id: actorId as any },
+                { _id: String(actorId) },
+                { id: actorId },
+                { publicId: actorId },
+                { auth0UserId: actorId },
+                { auth0_sub: actorId },
+                { email: actorId }
+            ]
+        });
+        let plantId = data.plant_id || user?.plant_id || (user as any)?.plantId || null;
         let plantName = data.plant_name || '';
         let plantCode = data.plant_code || '';
 
         // If plantId not set, check if user is manager of a plant
-        if (!plantId && user?._id) {
-            const plant = await db.collection('plants').findOne({ manager_id: user._id } as any);
+        if (!plantId && user) {
+            const plant = await db.collection('plants').findOne({
+                $or: [
+                    { manager_id: user._id as any },
+                    { manager_id: String(user._id) },
+                    { manager_id: user.id },
+                    { manager_id: user.publicId },
+                    { manager_email: user.email }
+                ]
+            });
             if (plant) {
                 plantId = plant._id;
                 plantName = plant.name;
@@ -244,8 +330,14 @@ export class PlatformService {
             }
         } else if (plantId && (!plantName || !plantCode)) {
             const plant = await db.collection('plants').findOne({
-                $or: [{ _id: plantId as any }, { id: plantId }]
-            } as any);
+                $or: [
+                    { _id: plantId as any },
+                    { _id: String(plantId) },
+                    { id: plantId },
+                    { publicId: plantId },
+                    { code: plantId }
+                ]
+            });
             if (plant) {
                 plantName = plant.name;
                 plantCode = plant.code;
@@ -277,7 +369,7 @@ export class PlatformService {
             plant_code: plantCode,
             created_at: now,
             createdBy: actorId,
-            createdByName: user?.full_name || 'Manager'
+            createdByName: user?.full_name || user?.name || 'Manager'
         };
 
         await db.collection('booking_slots').insertOne(newSlot);
@@ -304,18 +396,59 @@ export class PlatformService {
         if (updates.startTime !== undefined) safeUpdates.startTime = updates.startTime;
         if (updates.endTime !== undefined) safeUpdates.endTime = updates.endTime;
         if (updates.startTime && updates.endTime) safeUpdates.slot = `${updates.startTime} - ${updates.endTime}`;
+        else if (updates.slot !== undefined) safeUpdates.slot = updates.slot;
+
         if (updates.capacity !== undefined) {
             safeUpdates.capacity = Number(updates.capacity);
             safeUpdates.maxCapacity = Number(updates.capacity);
+        }
+        if (updates.maxCapacity !== undefined && safeUpdates.capacity === undefined) {
+            safeUpdates.capacity = Number(updates.maxCapacity);
+            safeUpdates.maxCapacity = Number(updates.maxCapacity);
         }
         if (updates.isActive !== undefined) safeUpdates.isActive = updates.isActive;
         if (updates.slotType !== undefined) {
             safeUpdates.slotType = updates.slotType;
             safeUpdates.type = updates.slotType;
         }
+        if (updates.type !== undefined && safeUpdates.slotType === undefined) {
+            safeUpdates.slotType = updates.type;
+            safeUpdates.type = updates.type;
+        }
+        if (updates.plant_id !== undefined) safeUpdates.plant_id = updates.plant_id;
+        if (updates.plant_name !== undefined) safeUpdates.plant_name = updates.plant_name;
+        if (updates.plant_code !== undefined) safeUpdates.plant_code = updates.plant_code;
+        if (updates.daysOfWeek !== undefined) safeUpdates.daysOfWeek = updates.daysOfWeek;
+
+        if (safeUpdates.plant_id && (!safeUpdates.plant_name || !safeUpdates.plant_code)) {
+            const plant = await db.collection('plants').findOne({
+                $or: [
+                    { _id: safeUpdates.plant_id as any },
+                    { _id: String(safeUpdates.plant_id) },
+                    { id: safeUpdates.plant_id },
+                    { publicId: safeUpdates.plant_id },
+                    { code: safeUpdates.plant_id }
+                ]
+            });
+            if (plant) {
+                if (!safeUpdates.plant_name) safeUpdates.plant_name = plant.name;
+                if (!safeUpdates.plant_code) safeUpdates.plant_code = plant.code;
+            }
+        }
+
+        const queryList: any[] = [
+            { id: slotId },
+            { publicId: slotId },
+            { slotId: slotId },
+            { _id: slotId as any },
+            { _id: String(slotId) }
+        ];
+        if (typeof slotId === 'string' && ObjectId.isValid(slotId) && slotId.length === 24) {
+            queryList.push({ _id: new ObjectId(slotId) });
+        }
 
         const result = await db.collection('booking_slots').updateOne(
-            { $or: [{ id: slotId }, { _id: slotId as any }] },
+            { $or: queryList },
             { $set: safeUpdates }
         );
 
@@ -334,25 +467,65 @@ export class PlatformService {
 
     static async deleteSlot(actorId: string, slotId: string) {
         const db = await getDb();
-        const user = await db.collection('users').findOne({ _id: actorId as any });
+        const userQuery: any[] = [
+            { _id: actorId as any },
+            { _id: String(actorId) },
+            { id: actorId },
+            { publicId: actorId },
+            { auth0UserId: actorId },
+            { auth0_sub: actorId },
+            { sub: actorId },
+            { email: actorId }
+        ];
+        if (typeof actorId === 'string' && ObjectId.isValid(actorId) && actorId.length === 24) {
+            userQuery.push({ _id: new ObjectId(actorId) });
+        }
+        const user = await db.collection('users').findOne({ $or: userQuery });
 
-        const slot = await db.collection('booking_slots').findOne({
-            $or: [{ id: slotId }, { _id: slotId as any }]
-        });
+        const queryList: any[] = [
+            { id: slotId },
+            { publicId: slotId },
+            { slotId: slotId },
+            { _id: slotId as any },
+            { _id: String(slotId) }
+        ];
+        if (typeof slotId === 'string' && ObjectId.isValid(slotId) && slotId.length === 24) {
+            queryList.push({ _id: new ObjectId(slotId) });
+        }
+
+        const slot = await db.collection('booking_slots').findOne({ $or: queryList });
 
         if (!slot) throw new NotFoundError('Slot not found.');
 
         // If manager, check that slot belongs to their plant
-        if (user?.role === 'manager') {
-            const userPlantId = user.plant_id;
-            if (userPlantId && slot.plant_id && String(slot.plant_id) !== String(userPlantId)) {
+        const normRole = normalizeRole(user?.role) || user?.role?.toLowerCase();
+        if (normRole === 'manager' || normRole === 'plant_manager') {
+            const userPlantId = user?.plant_id || (user as any)?.plantId;
+            const plant = await db.collection('plants').findOne({
+                $or: [
+                    ...(userPlantId ? [
+                        { _id: userPlantId as any },
+                        { _id: String(userPlantId) },
+                        { id: userPlantId },
+                        { publicId: userPlantId },
+                        { code: userPlantId }
+                    ] : []),
+                    { manager_id: user?._id as any },
+                    { manager_id: String(user?._id) },
+                    { manager_id: user?.id },
+                    { manager_id: user?.publicId }
+                ]
+            });
+            const allowedPlantIds = [
+                ...(userPlantId ? [userPlantId, String(userPlantId)] : []),
+                ...(plant ? [plant._id, String(plant._id), plant.id, plant.publicId, plant.code] : [])
+            ];
+            if (slot.plant_id && !allowedPlantIds.includes(slot.plant_id) && !allowedPlantIds.includes(String(slot.plant_id))) {
                 throw new BadRequestError('You can only delete slots for your assigned plant.');
             }
         }
 
-        await db.collection('booking_slots').deleteOne({
-            $or: [{ id: slotId }, { _id: slotId as any }]
-        });
+        await db.collection('booking_slots').deleteOne({ $or: queryList });
 
         await AuditService.recordEvent({
             entityType: 'slot',

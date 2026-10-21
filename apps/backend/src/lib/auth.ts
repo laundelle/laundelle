@@ -520,6 +520,11 @@ function verifyLegacyHs256(token: string): JwtPayload | null {
     const parsed = parseTokenParts(token);
     if (!parsed || parsed.header.alg !== 'HS256') return null;
 
+    if (process.env.ALLOW_HS256_LEGACY === 'false') {
+        console.warn('[AUTH REJECTED] HS256 legacy token rejected because ALLOW_HS256_LEGACY is set to false.');
+        return null;
+    }
+
     if (process.env.NODE_ENV !== 'test') {
         console.warn('[AUTH DEPRECATION] Received deprecated HS256 JWT. Migration to Auth0 RS256 is in progress.');
     }

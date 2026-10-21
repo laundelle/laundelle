@@ -91,7 +91,7 @@ export function getCorsHeaders(req?: NextRequest): Record<string, string> {
 
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, laundelle_token, l2u_token',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, X-CSRF-Token, x-csrf-token, laundelle_token, l2u_token',
     'Vary': 'Origin',
   };
 
@@ -111,7 +111,7 @@ export function getCorsHeaders(req?: NextRequest): Record<string, string> {
 
 export const corsHeaders: Record<string, string> = {
   'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, laundelle_token, l2u_token',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, X-CSRF-Token, x-csrf-token, laundelle_token, l2u_token',
   'Vary': 'Origin',
 };
 

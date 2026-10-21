@@ -327,11 +327,14 @@ export class AuthService {
         const name = verifiedToken.name || body?.name;
         const picture = body?.picture;
 
+        const isCustomerPortal = body?.portal === 'customer';
+        const isAdminPortal = body?.portal === 'admin';
+
         const envAdminEmails = [
             process.env.ADMIN_EMAIL,
             ...(process.env.ADDITIONAL_ADMIN_EMAILS || '').split(','),
         ].filter(Boolean).map(e => String(e).trim().toLowerCase());
-        const isAdminEmail = envAdminEmails.length > 0 && envAdminEmails.includes(formatted);
+        const isAdminEmail = !isCustomerPortal && isAdminPortal && envAdminEmails.length > 0 && envAdminEmails.includes(formatted);
 
         // Administrative accounts require authentic RS256 Auth0 token
         if (isAdminEmail) {
@@ -391,16 +394,16 @@ export class AuthService {
             const internalDbId = new ObjectId().toHexString();
             const customerId = generateCustomerId();
             const staffId = generateStaffId();
-            const isSuperAdmin = isAdminEmail;
-            const role = isSuperAdmin ? 'super_admin' : 'customer';
-            const fullName = (name || formatted.split('@')[0] || (isSuperAdmin ? 'System Administrator' : 'Customer')).trim();
+            const isSuperAdmin = !isCustomerPortal && isAdminPortal && isAdminEmail;
+            const role = isCustomerPortal ? 'customer' : (isSuperAdmin ? 'super_admin' : 'customer');
+            const fullName = (name || formatted.split('@')[0] || (role === 'customer' ? 'Customer' : 'System Administrator')).trim();
 
             const newUser: any = {
                 _id: internalDbId as any,
-                publicId: isSuperAdmin ? staffId : customerId,
-                customerId: isSuperAdmin ? undefined : customerId,
-                staffId: isSuperAdmin ? staffId : undefined,
-                id: isSuperAdmin ? staffId : customerId,
+                publicId: role === 'customer' ? customerId : staffId,
+                customerId: role === 'customer' ? customerId : undefined,
+                staffId: role === 'customer' ? undefined : staffId,
+                id: role === 'customer' ? customerId : staffId,
                 email: formatted,
                 auth0UserId: sub,
                 auth0_sub: sub,
@@ -433,7 +436,7 @@ export class AuthService {
             await db.collection('users').insertOne(newUser);
             user = newUser;
 
-            if (!isSuperAdmin) {
+            if (role === 'customer') {
                 await OrderService.linkGuestOrdersToCustomer(formatted, customerId, String(internalDbId)).catch(err => {
                     console.error('[AuthService] Error linking guest orders on Auth0 registration:', err);
                 });
@@ -441,15 +444,46 @@ export class AuthService {
 
             await AuditService.recordEvent({
                 entityType: 'user',
-                entityId: isSuperAdmin ? String(internalDbId) : customerId,
-                action: isSuperAdmin ? 'super_admin_registered_auth0' : 'user_registered_auth0',
+                entityId: role === 'customer' ? customerId : String(internalDbId),
+                action: role === 'customer' ? 'user_registered_auth0' : 'super_admin_registered_auth0',
                 actorId: sub || customerId,
                 actorRole: role,
                 ipAddress: clientIp
             });
         } else {
             const updateDoc: any = { updated_at: now, last_login_at: now };
-            if (!['super_admin', 'admin', 'plant_manager', 'driver', 'processor'].includes(user.role)) {
+            const unsetDoc: any = {};
+
+            if (isCustomerPortal) {
+                // Ensure 100% customer role when authenticating through customer portal
+                if (user.role !== 'customer') {
+                    updateDoc.role = 'customer';
+                    user.role = 'customer';
+                }
+                const existingCustId = user.customerId && String(user.customerId).startsWith('CUST-') ? user.customerId : null;
+                const finalCustId = existingCustId || generateCustomerId();
+                if (!user.customerId || user.customerId !== finalCustId) {
+                    updateDoc.customerId = finalCustId;
+                    user.customerId = finalCustId;
+                }
+                if (user.publicId !== finalCustId) {
+                    updateDoc.publicId = finalCustId;
+                    user.publicId = finalCustId;
+                }
+                if (user.id !== finalCustId) {
+                    updateDoc.id = finalCustId;
+                    user.id = finalCustId;
+                }
+                if (user.staffId) {
+                    unsetDoc.staffId = '';
+                    delete user.staffId;
+                }
+            } else if (isAdminEmail && isAdminPortal && user.role !== 'admin' && user.role !== 'super_admin') {
+                updateDoc.role = 'super_admin';
+                user.role = 'super_admin';
+            }
+
+            if (user.role === 'customer') {
                 await OrderService.linkGuestOrdersToCustomer(
                     formatted,
                     user.customerId || user.publicId || String(user._id),
@@ -458,6 +492,7 @@ export class AuthService {
                     console.error('[AuthService] Error linking guest orders on Auth0 login:', err);
                 });
             }
+
             if (sub && user.auth0UserId !== sub) updateDoc.auth0UserId = sub;
             if (sub && user.auth0_sub !== sub) updateDoc.auth0_sub = sub;
             if (picture && (!user.avatar_url || String(user.avatar_url).includes('ui-avatars.com'))) {
@@ -466,14 +501,19 @@ export class AuthService {
             if (name && (!user.full_name || user.full_name === formatted.split('@')[0])) {
                 updateDoc.full_name = name;
             }
-            if (isAdminEmail && user.role !== 'admin' && user.role !== 'super_admin') {
-                updateDoc.role = 'super_admin';
-                user.role = 'super_admin';
+
+            const updateOps: any = {};
+            if (Object.keys(updateDoc).length > 0) {
+                updateOps.$set = updateDoc;
             }
-            if (Object.keys(updateDoc).length > 1) {
+            if (Object.keys(unsetDoc).length > 0) {
+                updateOps.$unset = unsetDoc;
+            }
+
+            if (Object.keys(updateOps).length > 0) {
                 await db.collection('users').updateOne(
                     { _id: user._id } as any,
-                    { $set: updateDoc }
+                    updateOps
                 );
             }
         }

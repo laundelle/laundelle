@@ -52,3 +52,28 @@ export async function PATCH(req: NextRequest, context: any) {
         );
     }
 }
+
+export async function DELETE(req: NextRequest, context: any) {
+    try {
+        const token = await requireAuthAsync(req);
+        const dbUser = await resolveLaundelleUser(token);
+        if (!dbUser) throw new UnauthorizedError();
+        const role = normalizeRole(dbUser.role);
+        if (role !== 'super_admin' && role !== 'plant_manager') {
+            throw new ForbiddenError('Super Admin or Plant Manager authorization required.');
+        }
+
+        const params = await context.params;
+        const result = await StaffProvisioningService.deleteStaff(
+            { token, dbUser },
+            params.id
+        );
+        return NextResponse.json(result);
+    } catch (e: any) {
+        return NextResponse.json(
+            { success: false, error: e.message, code: e.code || 'BAD_REQUEST' },
+            { status: e.status || 400 }
+        );
+    }
+}
+
