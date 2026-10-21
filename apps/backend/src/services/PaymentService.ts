@@ -490,8 +490,8 @@ export class PaymentService {
             }
         }
 
-        const status = assignedDriverId ? 'collection_scheduled' : 'booking_confirmed';
-        const statusLabel = assignedDriverId ? 'Collection Scheduled' : 'Booking Confirmed';
+        const status = assignedDriverId ? 'collection_scheduled' : 'waiting_for_driver';
+        const statusLabel = assignedDriverId ? 'Collection Scheduled' : 'Waiting for Driver';
 
         let pickupPin = order.pickup_pin || order.pickup_otp;
         let deliveryPin = order.delivery_pin || order.delivery_otp;

@@ -9,7 +9,7 @@ import {
     Bell, Calendar, ChevronDown, ChevronRight, ChevronLeft, CalendarDays, ShoppingBag, LayoutGrid, ClipboardList, Check,
     BarChart2, Waves, Send, Phone, X, Copy, ExternalLink, Camera, Upload, Image as ImageIcon
 } from 'lucide-react';
-import { dbDriverFetchAssignments, dbDriverConfirmPickup, dbDriverSendOtp, dbDriverConfirmDelivery, clearSession, apiFetch } from '@laundelle/api-client';
+import { dbDriverFetchAssignments, dbDriverUpdateAvailability, dbDriverConfirmPickup, dbDriverSendOtp, dbDriverConfirmDelivery, clearSession, apiFetch } from '@laundelle/api-client';
 import { compressImageFile } from '@laundelle/utils';
 import { GenerateQRModal } from '@laundelle/ui';
 import { PinInput } from '@laundelle/ui';
@@ -94,6 +94,8 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
     const [availableDeliveries, setAvailableDeliveries] = useState<any[]>([]);
     const [toastMsg, setToastMsg] = useState<string | null>(null);
     const [toastType, setToastType] = useState<'success' | 'error'>('success');
+    const [driverActive, setDriverActive] = useState<boolean>(true);
+    const [togglingActive, setTogglingActive] = useState<boolean>(false);
 
     // My Jobs Filter & Header states
     const [filterTab, setFilterTab] = useState<'all' | 'collections' | 'deliveries'>('all');
@@ -265,10 +267,41 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
         if (!silent) setLoading(true);
         const data = await dbDriverFetchAssignments();
         setDriverInfo(data.driver);
+        const isAct = data.driver?.status !== 'suspended' && data.driver?.availability !== 'off-duty' && data.driver?.availability !== 'offline';
+        setDriverActive(isAct);
         setAssigned(data.assigned);
         setCompleted(data.completed);
         setAvailableDeliveries(data.available_deliveries || []);
         if (!silent) setLoading(false);
+    };
+
+    const handleToggleDriverActive = async () => {
+        if (togglingActive) return;
+        const nextActive = !driverActive;
+        setTogglingActive(true);
+        setDriverActive(nextActive);
+
+        try {
+            const res = await dbDriverUpdateAvailability(nextActive ? 'available' : 'offline');
+            if (res.success) {
+                if (nextActive && (res.queuedAssigned ?? 0) > 0) {
+                    showToast(`You are now ONLINE. ${res.queuedAssigned} queued order(s) assigned!`, 'success');
+                } else if (nextActive) {
+                    showToast('You are now ONLINE. Ready for order assignments.', 'success');
+                } else {
+                    showToast('You are now OFFLINE. New orders will be queued.', 'success');
+                }
+                await loadData(true);
+            } else {
+                setDriverActive(!nextActive);
+                showToast(res.error || 'Failed to update status', 'error');
+            }
+        } catch (e: any) {
+            setDriverActive(!nextActive);
+            showToast(e.message || 'Error updating status', 'error');
+        } finally {
+            setTogglingActive(false);
+        }
     };
 
     useEffect(() => {
@@ -887,7 +920,7 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
             <div className="flex-1 overflow-y-auto flex flex-col overscroll-contain">
                 {/* ── 1. Scrollable Brand & Greeting Section (Scrolls naturally with page) ── */}
                 <div className="bg-gradient-to-b from-[#1877F2] via-[#166CE1] to-[#1565D8] text-white px-5 pt-6 pb-4 shrink-0 transition-all">
-                    {/* Laundelle Logo with Wave Accent */}
+                    {/* Laundelle Logo with Wave Accent & Active Status Toggle */}
                     <div className="flex items-center justify-between">
                         <div className="flex flex-col">
                             <span className="text-2xl font-black tracking-tight text-white font-sans">Laundelle</span>
@@ -895,6 +928,37 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
                                 <path d="M2 6C15 1 25 11 40 6C55 1 65 11 80 6C88 3 95 6 98 8" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
                             </svg>
                         </div>
+
+                        {/* Duty Status Toggle Button (Desktop & Mobile) */}
+                        <button
+                            type="button"
+                            onClick={handleToggleDriverActive}
+                            disabled={togglingActive}
+                            title={`Click to switch to ${driverActive ? 'Offline' : 'Online'} duty`}
+                            className={`flex items-center gap-2.5 px-3.5 py-1.5 rounded-full border transition-all cursor-pointer shadow-sm active:scale-95 ${
+                                driverActive
+                                    ? 'bg-emerald-500/25 hover:bg-emerald-500/35 text-white border-emerald-400/50 backdrop-blur-md'
+                                    : 'bg-black/20 hover:bg-black/30 text-white/90 border-white/20 backdrop-blur-md'
+                            }`}
+                        >
+                            <span className="relative flex h-2.5 w-2.5">
+                                {driverActive && (
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                )}
+                                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${driverActive ? 'bg-emerald-400 ring-2 ring-emerald-300/40' : 'bg-slate-400'}`}></span>
+                            </span>
+                            <div className="flex flex-col text-left leading-none">
+                                <span className="text-[9px] uppercase tracking-wider font-extrabold text-blue-100/80">Duty Status</span>
+                                <span className="text-xs font-black tracking-tight mt-0.5">
+                                    {togglingActive ? 'Updating...' : (driverActive ? 'Active (Online)' : 'Offline')}
+                                </span>
+                            </div>
+                            <div className={`w-8 h-4.5 rounded-full p-0.5 transition-colors duration-200 ease-in-out flex items-center ml-1 ${
+                                driverActive ? 'bg-emerald-400 justify-end' : 'bg-slate-400/60 justify-start'
+                            }`}>
+                                <div className="w-3.5 h-3.5 rounded-full bg-white shadow-xs transform transition-transform" />
+                            </div>
+                        </button>
                     </div>
 
                     {/* Contextual Subtitle or Greeting in Scrollable Hero */}
@@ -935,6 +999,21 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({ onSignOut, userName 
 
                     {/* Context Filter Controls & Adjusted Notification Bell on Right */}
                     <div className="flex items-center gap-2">
+                        {/* Compact Status Toggle when scrolled */}
+                        <button
+                            type="button"
+                            onClick={handleToggleDriverActive}
+                            disabled={togglingActive}
+                            title={`Duty Status: ${driverActive ? 'Online' : 'Offline'}. Tap to toggle.`}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-all cursor-pointer ${
+                                driverActive
+                                    ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border-emerald-400/40'
+                                    : 'bg-white/10 hover:bg-white/20 text-slate-200 border-white/20'
+                            }`}
+                        >
+                            <span className={`w-2 h-2 rounded-full ${driverActive ? 'bg-emerald-400' : 'bg-slate-400'}`} />
+                            <span>{driverActive ? 'Online' : 'Offline'}</span>
+                        </button>
                         {/* Date Filter Dropdown for My Jobs */}
                         {view === 'assignments' && (
                             <div className="relative">

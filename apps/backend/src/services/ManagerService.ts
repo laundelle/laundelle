@@ -16,96 +16,367 @@ import { StaffProvisioningService } from './StaffProvisioningService';
 import { OrderCustomerEnrichmentService } from './OrderCustomerEnrichmentService';
 import { buildPostcodeDistrictRegex, buildAddressDistrictRegex } from '@laundelle/utils';
 import { BadRequestError } from '@/lib/api';
+import { SlaService } from './SlaService';
 
 export class ManagerService {
-    private static async getManagerPlantId(managerId: string) {
-        const db = await getDb();
-        const managerLookup = buildEntityLookupQuery(managerId, 'user');
-        const user = await db.collection('users').findOne({
-            ...managerLookup,
-            role: { $in: ['manager', 'plant_manager', 'admin', 'super_admin'] },
-            is_active: { $ne: false }
-        } as any);
-        if (!user) {
-            throw new Error('Access denied: User is inactive or does not exist.');
-        }
-        const userNormRole = normalizeRole(user.role);
-        if (userNormRole === 'super_admin') {
-            return user.plant_id || user.plantId || null;
-        }
-        let plantId = user.plant_id || user.plantId;
-        if (!plantId) {
-            const userInternalId = String(user._id);
-            let plant = await db.collection('plants').findOne({
-                $or: [
-                    { manager_id: userInternalId },
-                    { manager_id: user.publicId },
-                    { manager_id: managerId },
-                    { manager_public_id: user.publicId },
-                    { manager_public_id: userInternalId }
-                ]
-            } as any);
-            if (!plant && user.email) {
-                plant = await db.collection('plants').findOne({
+    static async resolveManagerAndPlant(db: any, managerId: string) {
+        // 1. Resolve User
+        let user: any = null;
+        if (managerId) {
+            const managerLookup = buildEntityLookupQuery(managerId, 'user', (id) => ObjectId.isValid(id) ? new ObjectId(id) : null);
+            user = await db.collection('users').findOne(managerLookup as any);
+            if (!user && ObjectId.isValid(managerId)) {
+                user = await db.collection('users').findOne({ _id: new ObjectId(managerId) } as any);
+            }
+            if (!user) {
+                user = await db.collection('users').findOne({
                     $or: [
-                        { manager_email: user.email },
-                        { manager_name: user.full_name || user.name }
+                        { _id: managerId },
+                        { id: managerId },
+                        { publicId: managerId },
+                        { staffId: managerId },
+                        { auth0UserId: managerId },
+                        { auth0_sub: managerId },
+                        { email: managerId }
                     ]
                 } as any);
             }
-            if (!plant) {
-                plant = await db.collection('plants').findOne({ status: { $ne: 'inactive' } } as any);
-            }
-            if (plant) {
-                plantId = String(plant._id);
-                await db.collection('users').updateOne(
-                    { _id: user._id } as any,
-                    { $set: { plant_id: plantId, plantId: plantId, assigned_plant: plant.name } }
-                );
-            }
         }
-        if (!plantId) {
-            throw new Error('Access denied: Manager has no assigned plant.');
-        }
-        return String(plantId);
-    }
 
-    static async getDashboardMetrics(managerId: string, dateFilter: string = 'Today', startDate?: string, endDate?: string) {
-        const db = await getDb();
-        const plantId = await this.getManagerPlantId(managerId);
-        
+        // 2. Resolve Plant from user's plant fields
         let plant: any = null;
-        if (plantId) {
-            plant = await db.collection('plants').findOne(buildEntityLookupQuery(plantId, 'plant') as any);
+        const userPlantKeys: any[] = [];
+        if (user) {
+            const candidateKeys = [
+                user.plant_id,
+                user.plantId,
+                user.assigned_plant,
+                user.assignedPlant,
+                user.plant_name,
+                user.plantName,
+                user.plant_code,
+                user.plantCode,
+                typeof user.plant === 'string' ? user.plant : (user.plant?.id || user.plant?._id || user.plant?.name)
+            ].filter(Boolean);
+
+            for (const key of candidateKeys) {
+                userPlantKeys.push(key);
+                userPlantKeys.push(String(key));
+                if (ObjectId.isValid(key)) {
+                    userPlantKeys.push(new ObjectId(key));
+                }
+            }
+        }
+
+        if (userPlantKeys.length > 0) {
+            plant = await db.collection('plants').findOne({
+                $or: [
+                    { _id: { $in: userPlantKeys } },
+                    { publicId: { $in: userPlantKeys } },
+                    { plantId: { $in: userPlantKeys } },
+                    { id: { $in: userPlantKeys } },
+                    { code: { $in: userPlantKeys } },
+                    { name: { $in: userPlantKeys } }
+                ]
+            } as any);
+        }
+
+        // 3. Resolve Plant from manager fields in plants collection
+        if (!plant) {
+            const managerIdentStrings: string[] = [
+                managerId,
+                user ? String(user._id) : null,
+                user?.publicId,
+                user?.staffId,
+                user?.id,
+                user?.auth0UserId,
+                user?.auth0_sub,
+                user?.email
+            ].filter(Boolean) as string[];
+
+            const managerIdentObjectIds = managerIdentStrings
+                .filter(id => ObjectId.isValid(id))
+                .map(id => new ObjectId(id));
+
+            plant = await db.collection('plants').findOne({
+                $or: [
+                    { manager_id: { $in: [...managerIdentStrings, ...managerIdentObjectIds] } },
+                    { managerId: { $in: [...managerIdentStrings, ...managerIdentObjectIds] } },
+                    { manager_public_id: { $in: managerIdentStrings } },
+                    { managerPublicId: { $in: managerIdentStrings } },
+                    { plant_manager_id: { $in: [...managerIdentStrings, ...managerIdentObjectIds] } },
+                    { plantManagerId: { $in: [...managerIdentStrings, ...managerIdentObjectIds] } },
+                    ...(user?.email ? [
+                        { manager_email: user.email },
+                        { managerEmail: user.email }
+                    ] : []),
+                    ...(user?.full_name ? [
+                        { manager_name: user.full_name },
+                        { managerName: user.full_name }
+                    ] : []),
+                    ...(user?.name ? [
+                        { manager_name: user.name },
+                        { managerName: user.name }
+                    ] : [])
+                ]
+            } as any);
+        }
+
+        // 4. Fallback: Any active plant in system
+        if (!plant) {
+            plant = await db.collection('plants').findOne({
+                status: { $in: ['active', 'ACTIVE', 'ACTIVE_OPERATIONAL', 'operational', 'open'] }
+            } as any);
         }
         if (!plant) {
             plant = await db.collection('plants').findOne({ status: { $ne: 'inactive' } } as any);
         }
-        
-        const manager = await db.collection('users').findOne(buildEntityLookupQuery(managerId, 'user') as any);
-
-        const plantKeyConditions: any[] = [];
-        if (plantId) {
-            plantKeyConditions.push({ plant_id: plantId });
-            plantKeyConditions.push({ plantId: plantId });
+        if (!plant) {
+            plant = await db.collection('plants').findOne({} as any);
         }
+
+        // 5. Ensure synchronization between user and plant
+        let plantId = plant ? String(plant._id) : (user?.plant_id || user?.plantId || null);
+        if (plant && user) {
+            const updates: any = {};
+            if (!user.plant_id || !user.plantId) {
+                updates.plant_id = String(plant._id);
+                updates.plantId = String(plant._id);
+            }
+            if (!user.assigned_plant) {
+                updates.assigned_plant = plant.name;
+                updates.assignedPlant = plant.name;
+            }
+            if (Object.keys(updates).length > 0) {
+                await db.collection('users').updateOne(
+                    { _id: user._id } as any,
+                    { $set: updates }
+                ).catch(() => {});
+            }
+
+            if (!plant.manager_id || plant.manager_id === '') {
+                await db.collection('plants').updateOne(
+                    { _id: plant._id },
+                    {
+                        $set: {
+                            manager_id: String(user._id),
+                            manager_public_id: user.publicId || String(user._id),
+                            manager_name: user.full_name || user.name
+                        }
+                    }
+                ).catch(() => {});
+            }
+        }
+
+        return { user, plant, plantId };
+    }
+
+    private static async getManagerPlantId(managerId: string) {
+        const db = await getDb();
+        const { plant, plantId } = await this.resolveManagerAndPlant(db, managerId);
+        if (plant) return String(plant._id);
+        if (plantId) return String(plantId);
+        throw new Error('Access denied: Manager has no assigned plant.');
+    }
+
+    static async buildPlantQueryContext(db: any, managerId: string) {
+        const { user, plant, plantId } = await this.resolveManagerAndPlant(db, managerId);
+        const userNormRole = normalizeRole(user?.role);
+
+        // Collect all identifier representations for the plant
+        const plantKeys = new Set<string>();
+        const plantObjectIds: ObjectId[] = [];
         if (plant) {
-            plantKeyConditions.push({ plant_id: String(plant._id) });
-            plantKeyConditions.push({ plant_id: plant.publicId });
-            plantKeyConditions.push({ plantId: plant.publicId });
-            if (plant.code) plantKeyConditions.push({ plant_code: plant.code });
+            if (plant._id) {
+                plantKeys.add(String(plant._id));
+                if (ObjectId.isValid(plant._id)) plantObjectIds.push(new ObjectId(plant._id));
+            }
+            if (plant.publicId) plantKeys.add(String(plant.publicId));
+            if (plant.id) plantKeys.add(String(plant.id));
+            if (plant.code) plantKeys.add(String(plant.code));
+            if (plant.name) plantKeys.add(String(plant.name));
         }
-        const managerKeys = [managerId, manager ? String(manager._id) : null, manager?.publicId].filter(Boolean);
-        managerKeys.forEach(mKey => {
-            plantKeyConditions.push({ manager_id: mKey });
-        });
+        if (plantId) {
+            plantKeys.add(String(plantId));
+            if (ObjectId.isValid(plantId)) plantObjectIds.push(new ObjectId(plantId));
+        }
 
-        const orders = await db.collection('orders').find({
-            $or: plantKeyConditions.length > 0 ? plantKeyConditions : [{ status: { $ne: 'pending_payment' } }],
+        const managerKeys = [
+            managerId,
+            user ? String(user._id) : null,
+            user?.publicId,
+            user?.staffId,
+            user?.email
+        ].filter(Boolean) as string[];
+
+        // Find all staff (drivers, processors) belonging to this plant or managed by this manager
+        const staffFilter: any[] = [];
+        if (plantKeys.size > 0) {
+            const pKeys = Array.from(plantKeys);
+            staffFilter.push({ plant_id: { $in: pKeys } });
+            staffFilter.push({ plantId: { $in: pKeys } });
+            staffFilter.push({ assigned_plant: { $in: pKeys } });
+            staffFilter.push({ plant: { $in: pKeys } });
+            staffFilter.push({ plant_code: { $in: pKeys } });
+        }
+        if (plantObjectIds.length > 0) {
+            staffFilter.push({ plant_id: { $in: plantObjectIds } });
+            staffFilter.push({ plantId: { $in: plantObjectIds } });
+            staffFilter.push({ plant: { $in: plantObjectIds } });
+        }
+        if (managerKeys.length > 0) {
+            staffFilter.push({ manager_id: { $in: managerKeys } });
+            staffFilter.push({ managerId: { $in: managerKeys } });
+            staffFilter.push({ plantManagerId: { $in: managerKeys } });
+            staffFilter.push({ plant_manager_id: { $in: managerKeys } });
+            staffFilter.push({ created_by: { $in: managerKeys } });
+        }
+
+        const plantStaff = staffFilter.length > 0
+            ? await db.collection('users').find({
+                $or: staffFilter,
+                role: { $in: ['driver', 'processor'] }
+            }).toArray()
+            : [];
+
+        const staffIds = new Set<string>();
+        const staffObjectIds: ObjectId[] = [];
+        const servicePincodes: string[] = [];
+        const staffNames: string[] = [];
+
+        if (plant?.service_pincodes && Array.isArray(plant.service_pincodes)) {
+            servicePincodes.push(...plant.service_pincodes);
+        } else if (typeof plant?.service_pincodes === 'string') {
+            servicePincodes.push(...plant.service_pincodes.split(',').map((p: string) => p.trim()).filter(Boolean));
+        }
+        if (user?.assigned_postcodes && Array.isArray(user.assigned_postcodes)) {
+            servicePincodes.push(...user.assigned_postcodes);
+        }
+        if (user?.assignedSectors && Array.isArray(user.assignedSectors)) {
+            servicePincodes.push(...user.assignedSectors);
+        }
+
+        for (const s of plantStaff) {
+            if (s._id) {
+                staffIds.add(String(s._id));
+                if (ObjectId.isValid(s._id)) staffObjectIds.push(new ObjectId(s._id));
+            }
+            if (s.id) staffIds.add(String(s.id));
+            if (s.publicId) staffIds.add(String(s.publicId));
+            if (s.staffId) staffIds.add(String(s.staffId));
+            if (s.full_name) staffNames.push(s.full_name);
+            if (s.name) staffNames.push(s.name);
+            if (s.assigned_postcodes && Array.isArray(s.assigned_postcodes)) {
+                servicePincodes.push(...s.assigned_postcodes);
+            }
+            if (s.assignedSectors && Array.isArray(s.assignedSectors)) {
+                servicePincodes.push(...s.assignedSectors);
+            }
+        }
+
+        const plantOrConditions: any[] = [];
+
+        // 1. Direct plant assignment on orders
+        if (plantKeys.size > 0) {
+            const keysArray = Array.from(plantKeys);
+            plantOrConditions.push({ plant_id: { $in: keysArray } });
+            plantOrConditions.push({ plantId: { $in: keysArray } });
+            plantOrConditions.push({ plant_code: { $in: keysArray } });
+            plantOrConditions.push({ assigned_plant: { $in: keysArray } });
+            plantOrConditions.push({ plant: { $in: keysArray } });
+        }
+        if (plantObjectIds.length > 0) {
+            plantOrConditions.push({ plant_id: { $in: plantObjectIds } });
+            plantOrConditions.push({ plantId: { $in: plantObjectIds } });
+            plantOrConditions.push({ plant: { $in: plantObjectIds } });
+        }
+
+        // 2. Direct manager assignment
+        if (managerKeys.length > 0) {
+            plantOrConditions.push({ manager_id: { $in: managerKeys } });
+            plantOrConditions.push({ managerId: { $in: managerKeys } });
+            plantOrConditions.push({ plantManagerId: { $in: managerKeys } });
+            plantOrConditions.push({ plant_manager_id: { $in: managerKeys } });
+        }
+
+        // 3. Inherited orders from assigned drivers and processors of this plant
+        if (staffIds.size > 0) {
+            const staffIdsArray = Array.from(staffIds);
+            plantOrConditions.push({ assigned_driver_id: { $in: staffIdsArray } });
+            plantOrConditions.push({ driver_id: { $in: staffIdsArray } });
+            plantOrConditions.push({ 'driver.id': { $in: staffIdsArray } });
+            plantOrConditions.push({ 'driver._id': { $in: staffIdsArray } });
+            plantOrConditions.push({ 'driver.driverId': { $in: staffIdsArray } });
+            plantOrConditions.push({ assigned_processor_id: { $in: staffIdsArray } });
+            plantOrConditions.push({ processor_id: { $in: staffIdsArray } });
+            plantOrConditions.push({ 'processor.id': { $in: staffIdsArray } });
+            plantOrConditions.push({ 'processor._id': { $in: staffIdsArray } });
+            plantOrConditions.push({ 'processor.processorId': { $in: staffIdsArray } });
+        }
+        if (staffObjectIds.length > 0) {
+            plantOrConditions.push({ assigned_driver_id: { $in: staffObjectIds } });
+            plantOrConditions.push({ driver_id: { $in: staffObjectIds } });
+            plantOrConditions.push({ assigned_processor_id: { $in: staffObjectIds } });
+            plantOrConditions.push({ processor_id: { $in: staffObjectIds } });
+        }
+        if (staffNames.length > 0) {
+            plantOrConditions.push({ 'driver.name': { $in: staffNames } });
+            plantOrConditions.push({ 'processor.name': { $in: staffNames } });
+        }
+
+        // 4. Area / Postcode coverage match (unassigned orders in plant's coverage)
+        const uniquePostcodes = Array.from(new Set(servicePincodes.map(p => p.trim().toUpperCase()))).filter(Boolean);
+        if (uniquePostcodes.length > 0) {
+            const pincodeRegexes = uniquePostcodes.map((pc: string) => buildPostcodeDistrictRegex(pc));
+            const addressRegexes = uniquePostcodes.map((pc: string) => buildAddressDistrictRegex(pc));
+            plantOrConditions.push({
+                $and: [
+                    {
+                        $or: [
+                            { plant_id: null },
+                            { plant_id: { $exists: false } },
+                            { plant_id: '' },
+                            { plantId: null },
+                            { plantId: { $exists: false } },
+                            { plantId: '' }
+                        ]
+                    },
+                    {
+                        $or: [
+                            { postcode: { $in: pincodeRegexes } },
+                            ...addressRegexes.map((r: RegExp) => ({ address: r }))
+                        ]
+                    }
+                ]
+            });
+        }
+
+        const isSuperAdminNoPlant = userNormRole === 'super_admin' && !user?.plant_id && !user?.plantId;
+
+        return {
+            user,
+            plant,
+            plantId,
+            plantStaff,
+            plantOrConditions,
+            isSuperAdminNoPlant
+        };
+    }
+
+    static async getDashboardMetrics(managerId: string, dateFilter: string = 'Today', startDate?: string, endDate?: string) {
+        const db = await getDb();
+        const { user, plant, plantId, plantStaff, plantOrConditions, isSuperAdminNoPlant } = await this.buildPlantQueryContext(db, managerId);
+        const manager = user;
+
+        const baseQuery: any = {
             status: { $ne: 'pending_payment' }
-        }).toArray();
-        const activeOrders = orders.filter((o: any) => !['delivered', 'cancelled'].includes(o.status));
-        const staff = await db.collection('users').find({
+        };
+        if (plantOrConditions.length > 0 && !isSuperAdminNoPlant) {
+            baseQuery.$or = plantOrConditions;
+        }
+
+        const orders = await db.collection('orders').find(baseQuery).toArray();
+        const staff = plantStaff.length > 0 ? plantStaff : await db.collection('users').find({
             $or: [
                 { plant_id: plantId },
                 { manager_id: managerId },
@@ -115,91 +386,199 @@ export class ManagerService {
             role: { $in: ['driver', 'processor'] }
         }).toArray();
 
-        // Calculate Date Range Bounds
+        // Consistent Today Boundaries (Business Day)
         const now = new Date();
-        let rangeStart = new Date();
-        let rangeEnd = new Date();
+        const startOfToday = new Date(now);
+        startOfToday.setHours(0, 0, 0, 0);
+        const endOfToday = new Date(now);
+        endOfToday.setHours(23, 59, 59, 999);
+
+        // Calculate Date Range Bounds for Reporting Period
+        let rangeStart = new Date(startOfToday);
+        let rangeEnd = new Date(endOfToday);
         let isFilteredRange = true;
+        let reportingPeriodDays = 7;
 
         const normalizedFilter = dateFilter?.toLowerCase() || 'today';
 
         if (normalizedFilter === 'today') {
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setHours(23, 59, 59, 999);
+            rangeStart = new Date(startOfToday);
+            rangeEnd = new Date(endOfToday);
+            reportingPeriodDays = 7; // For charts, show 7-day trend ending today
         } else if (normalizedFilter === 'yesterday') {
+            rangeStart = new Date(startOfToday);
             rangeStart.setDate(rangeStart.getDate() - 1);
-            rangeStart.setHours(0, 0, 0, 0);
+            rangeEnd = new Date(endOfToday);
             rangeEnd.setDate(rangeEnd.getDate() - 1);
-            rangeEnd.setHours(23, 59, 59, 999);
-        } else if (normalizedFilter === 'this week') {
-            const dayOfWeek = rangeStart.getDay();
+            reportingPeriodDays = 7;
+        } else if (normalizedFilter === 'this week' || normalizedFilter === 'this_week' || normalizedFilter === '7_days' || normalizedFilter === '7 days') {
+            const dayOfWeek = startOfToday.getDay();
             const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+            rangeStart = new Date(startOfToday);
             rangeStart.setDate(rangeStart.getDate() - diffToMonday);
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setHours(23, 59, 59, 999);
-        } else if (normalizedFilter === 'this month') {
-            rangeStart.setDate(1);
-            rangeStart.setHours(0, 0, 0, 0);
-            rangeEnd.setHours(23, 59, 59, 999);
+            rangeEnd = new Date(endOfToday);
+            reportingPeriodDays = 7;
+        } else if (normalizedFilter === 'this month' || normalizedFilter === 'this_month' || normalizedFilter === '30_days' || normalizedFilter === '30 days') {
+            rangeStart = new Date(startOfToday.getFullYear(), startOfToday.getMonth(), 1, 0, 0, 0, 0);
+            rangeEnd = new Date(endOfToday);
+            reportingPeriodDays = 30;
         } else if (normalizedFilter === 'custom' || normalizedFilter === 'custom range') {
             if (startDate) {
                 rangeStart = new Date(startDate);
                 rangeStart.setHours(0, 0, 0, 0);
             } else {
+                rangeStart = new Date(startOfToday);
                 rangeStart.setDate(rangeStart.getDate() - 7);
-                rangeStart.setHours(0, 0, 0, 0);
             }
             if (endDate) {
                 rangeEnd = new Date(endDate);
                 rangeEnd.setHours(23, 59, 59, 999);
             } else {
-                rangeEnd.setHours(23, 59, 59, 999);
+                rangeEnd = new Date(endOfToday);
             }
+            const diffDays = Math.max(1, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / (24 * 60 * 60 * 1000)));
+            reportingPeriodDays = Math.min(60, diffDays);
         } else {
             // 'All Time'
             isFilteredRange = false;
+            reportingPeriodDays = 30;
         }
 
-        // Status counts for selected date window and overall
-        let todayOrders = 0;
-        let periodOrders = 0;
-        let pendingPickup = 0;
-        let atPlant = 0;
-        let processing = 0;
-        let readyForDelivery = 0;
-        let outForDelivery = 0;
-        let completed = 0;
+        // --- ROW 1: DAILY OPERATIONS OVERVIEW ---
+
+        // 1. Today's Orders: Count orders received or assigned to the plant during current business day
+        const getOrderCreationOrAssignmentDate = (o: any) => {
+            const d = o.createdAt || o.created_at || o.date;
+            if (d) return new Date(d);
+            if (o._id && ObjectId.isValid(o._id)) return new ObjectId(o._id).getTimestamp();
+            return new Date(0);
+        };
+
+        const todayOrders = orders.filter((o: any) => {
+            const orderDate = getOrderCreationOrAssignmentDate(o);
+            const isAssignedToday = o.assigned_at ? (new Date(o.assigned_at) >= startOfToday && new Date(o.assigned_at) <= endOfToday) : false;
+            return (orderDate >= startOfToday && orderDate <= endOfToday) || isAssignedToday;
+        }).length;
+
+        // 2. Active Orders: Count orders currently in active, nonterminal workflow stages
+        const TERMINAL_STATUSES = new Set(['delivered', 'completed', 'cancelled', 'refunded', 'returned', 'pending_payment']);
+        const activeOrdersList = orders.filter((o: any) => !TERMINAL_STATUSES.has((o.status || '').toLowerCase()));
+        const activeOrders = activeOrdersList.length;
+
+        // 3. Completed Today: Count orders that reached the plant-completion milestone during current business day
+        const isCompletedAtMilestoneToday = (o: any) => {
+            if (o.ready_for_delivery_at) {
+                const d = new Date(o.ready_for_delivery_at);
+                if (d >= startOfToday && d <= endOfToday) return true;
+            }
+            if (o.readyForDeliveryAt) {
+                const d = new Date(o.readyForDeliveryAt);
+                if (d >= startOfToday && d <= endOfToday) return true;
+            }
+            if (o.delivered_at) {
+                const d = new Date(o.delivered_at);
+                if (d >= startOfToday && d <= endOfToday) return true;
+            }
+            if (o.deliveredAt) {
+                const d = new Date(o.deliveredAt);
+                if (d >= startOfToday && d <= endOfToday) return true;
+            }
+            if (o.completedAt) {
+                const d = new Date(o.completedAt);
+                if (d >= startOfToday && d <= endOfToday) return true;
+            }
+            if (Array.isArray(o.timeline_events)) {
+                const hasMilestoneToday = o.timeline_events.some((te: any) => {
+                    if (['quality_check_passed', 'qc_passed', 'ready_for_delivery', 'order_delivered', 'delivered', 'completed'].includes(te.event)) {
+                        const t = new Date(te.timestamp || te.createdAt);
+                        return t >= startOfToday && t <= endOfToday;
+                    }
+                    return false;
+                });
+                if (hasMilestoneToday) return true;
+            }
+            const st = (o.status || '').toLowerCase();
+            if (['ready_for_delivery', 'out_for_delivery', 'delivered', 'completed'].includes(st)) {
+                const ut = new Date(o.updated_at || o.updatedAt || o.createdAt);
+                if (ut >= startOfToday && ut <= endOfToday) return true;
+            }
+            return false;
+        };
+        const completedToday = orders.filter(isCompletedAtMilestoneToday).length;
+
+        // 4. Delayed Orders: Count active orders that have exceeded their applicable deadline
+        const delayedOrdersList = activeOrdersList.filter((o: any) => {
+            try {
+                const sla = SlaService.calculateOrderSla(o);
+                if (sla.isBreached || sla.status === 'BREACHED') return true;
+                if (sla.deadlineAt && now.getTime() > new Date(sla.deadlineAt).getTime()) return true;
+            } catch {
+                if (o.sla?.isBreached || o.sla?.status === 'BREACHED') return true;
+                if (o.deadline && now.getTime() > new Date(o.deadline).getTime()) return true;
+            }
+            return false;
+        });
+        const delayedOrders = delayedOrdersList.length;
+
+        // --- ROW 2: PLANT PERFORMANCE AND RESOURCES ---
+
+        // 5. On-Time Completion Rate: (Eligible orders completed on time / Total eligible orders due in reporting period) * 100
+        // Exclude orders whose deadlines have not yet passed.
+        let eligibleOrdersDueCount = 0;
+        let completedOnTimeCount = 0;
 
         orders.forEach((o: any) => {
-            const orderDate = new Date(o.createdAt || o.date || o.created_at);
-            const inRange = !isFilteredRange || (orderDate >= rangeStart && orderDate <= rangeEnd);
+            try {
+                const sla = SlaService.calculateOrderSla(o);
+                if (!sla?.deadlineAt) return;
+                const deadline = new Date(sla.deadlineAt);
 
-            if (inRange) {
-                periodOrders++;
-            }
+                // Exclude orders whose deadlines have not yet passed
+                if (deadline.getTime() <= now.getTime()) {
+                    const isDueInReportingPeriod = !isFilteredRange || (deadline >= rangeStart && deadline <= rangeEnd);
+                    if (isDueInReportingPeriod) {
+                        eligibleOrdersDueCount++;
 
-            // Check if created today specifically
-            const startOfToday = new Date();
-            startOfToday.setHours(0, 0, 0, 0);
-            if (orderDate >= startOfToday) {
-                todayOrders++;
-            }
-
-            if (o.status === 'collection_scheduled' || o.status === 'collection_pending' || o.status === 'waiting_for_driver') {
-                pendingPickup++;
-            } else if (o.status === 'received_at_facility' || o.status === 'intake_completed') {
-                atPlant++;
-            } else if (['washing', 'drying', 'folding_steaming', 'ready_for_qc'].includes(o.status)) {
-                processing++;
-            } else if (o.status === 'ready_for_delivery') {
-                readyForDelivery++;
-            } else if (o.status === 'out_for_delivery') {
-                outForDelivery++;
-            } else if (o.status === 'delivered') {
-                completed++;
+                        const st = (o.status || '').toLowerCase();
+                        const isCompletedMilestone = ['ready_for_delivery', 'out_for_delivery', 'delivered', 'completed'].includes(st);
+                        if (isCompletedMilestone) {
+                            const completionTime = new Date(
+                                o.ready_for_delivery_at ||
+                                o.readyForDeliveryAt ||
+                                o.delivered_at ||
+                                o.deliveredAt ||
+                                o.completedAt ||
+                                o.updated_at ||
+                                o.updatedAt ||
+                                o.createdAt
+                            );
+                            if (completionTime.getTime() <= deadline.getTime()) {
+                                completedOnTimeCount++;
+                            }
+                        }
+                    }
+                }
+            } catch {
+                // Ignore parsing errors for individual corrupt orders
             }
         });
 
+        const onTimeCompletionRate = eligibleOrdersDueCount > 0
+            ? Number(((completedOnTimeCount / eligibleOrdersDueCount) * 100).toFixed(1))
+            : null;
+
+        // 6. Ready for Dispatch: Quality-approved, processed orders awaiting driver pickup or handover (prevent double-counting)
+        const readyForDispatchIds = new Set<string>();
+        orders.forEach((o: any) => {
+            const st = (o.status || '').toLowerCase();
+            // Awaiting pickup: marked ready_for_delivery or qc_passed, not yet out_for_delivery or delivered
+            if (st === 'ready_for_delivery' || (st === 'qc_passed' && !['out_for_delivery', 'delivered', 'completed'].includes(st))) {
+                readyForDispatchIds.add(String(o._id || o.id));
+            }
+        });
+        const readyForDispatch = readyForDispatchIds.size;
+
+        // 7. Staff on Duty: Confirmed on duty against scheduled/assigned for current shift
         let totalDrivers = 0;
         let availableDrivers = 0;
         let busyDrivers = 0;
@@ -210,18 +589,274 @@ export class ManagerService {
         let processingProcessors = 0;
         let offlineProcessors = 0;
 
+        let onDutyStaffCount = 0;
+        const totalStaffCount = staff.length;
+
         staff.forEach((s: any) => {
+            const avail = (s.availability || s.status || '').toLowerCase();
+            const isOnDuty = ['available', 'busy', 'processing', 'on-duty', 'on_duty'].includes(avail);
+            if (isOnDuty) onDutyStaffCount++;
+
             if (s.role === 'driver') {
                 totalDrivers++;
-                if (s.status === 'available' || s.availability === 'available') availableDrivers++;
-                else if (s.status === 'busy' || s.availability === 'busy') busyDrivers++;
+                if (avail === 'available') availableDrivers++;
+                else if (avail === 'busy') busyDrivers++;
                 else offlineDrivers++;
             } else if (s.role === 'processor') {
                 totalProcessors++;
-                if (s.status === 'available' || s.availability === 'available') availableProcessors++;
-                else if (s.status === 'processing' || s.availability === 'processing') processingProcessors++;
+                if (avail === 'available') availableProcessors++;
+                else if (avail === 'processing' || avail === 'busy') processingProcessors++;
                 else offlineProcessors++;
             }
+        });
+
+        const staffOnDuty = {
+            onDuty: onDutyStaffCount,
+            scheduled: totalStaffCount,
+            assigned: totalStaffCount,
+            label: 'Confirmed on duty vs assigned staff'
+        };
+
+        // 8. Quality Pass Rate: (Orders passing first inspection / Orders receiving first inspection) * 100
+        // Exclude orders that have not yet received their first inspection.
+        let firstInspectionTotal = 0;
+        let firstInspectionPassed = 0;
+
+        orders.forEach((o: any) => {
+            const hasInspection = !!(
+                o.qc?.checkedAt ||
+                o.qcStatus ||
+                o.qc?.passed !== undefined ||
+                (Array.isArray(o.timeline_events) && o.timeline_events.some((e: any) =>
+                    ['quality_check_passed', 'qc_failed', 'qc_passed'].includes(e.event)
+                )) ||
+                ['ready_for_delivery', 'out_for_delivery', 'delivered', 'completed', 'rewash_required'].includes((o.status || '').toLowerCase())
+            );
+
+            if (hasInspection) {
+                const inspectionDate = new Date(
+                    o.qc?.checkedAt ||
+                    o.ready_for_delivery_at ||
+                    o.readyForDeliveryAt ||
+                    o.updated_at ||
+                    o.updatedAt ||
+                    o.createdAt
+                );
+
+                const inPeriod = !isFilteredRange || (inspectionDate >= rangeStart && inspectionDate <= rangeEnd);
+                if (inPeriod) {
+                    firstInspectionTotal++;
+                    const hadDefect = !!(
+                        o.rewashRequired ||
+                        o.qc?.passed === false ||
+                        (o.qcStatus && o.qcStatus !== 'PASSED') ||
+                        o.qc?.rewash_reason ||
+                        (Array.isArray(o.timeline_events) && o.timeline_events.some((e: any) =>
+                            e.event === 'qc_failed' || e.event === 'rewash_required' || (e.label && e.label.toLowerCase().includes('rewash'))
+                        ))
+                    );
+                    if (!hadDefect) {
+                        firstInspectionPassed++;
+                    }
+                }
+            }
+        });
+
+        const qualityPassRate = firstInspectionTotal > 0
+            ? Number(((firstInspectionPassed / firstInspectionTotal) * 100).toFixed(1))
+            : null;
+
+        // Legacy Pipeline Counts
+        let periodOrders = 0;
+        let pendingPickup = 0;
+        let atPlant = 0;
+        let processing = 0;
+        let outForDelivery = 0;
+
+        orders.forEach((o: any) => {
+            const orderDate = getOrderCreationOrAssignmentDate(o);
+            const inRange = !isFilteredRange || (orderDate >= rangeStart && orderDate <= rangeEnd);
+            if (inRange) periodOrders++;
+
+            const st = (o.status || '').toLowerCase();
+            if (['collection_scheduled', 'collection_pending', 'waiting_for_driver', 'order_placed', 'booking_confirmed', 'driver_assigned'].includes(st)) {
+                pendingPickup++;
+            } else if (['received_at_facility', 'intake_completed', 'sorting'].includes(st)) {
+                atPlant++;
+            } else if (['washing', 'drying', 'ironing', 'folding_steaming', 'ready_for_qc', 'qc_ready', 'rewash_required'].includes(st)) {
+                processing++;
+            } else if (st === 'out_for_delivery') {
+                outForDelivery++;
+            }
+        });
+
+        // --- ROW 3: ANALYTICS CHARTS ---
+        // Chart 1: Order Processing Overview (Received, Processed, Completed)
+        // Chart 2: Plant Performance Trends (Daily On-Time Completion Rate & Quality Pass Rate)
+        const daysToGenerate = reportingPeriodDays;
+        const chartDaysList: Date[] = [];
+        const chartEnd = isFilteredRange && normalizedFilter !== 'today' && normalizedFilter !== 'yesterday'
+            ? new Date(rangeEnd)
+            : new Date(startOfToday);
+
+        for (let i = daysToGenerate - 1; i >= 0; i--) {
+            const d = new Date(chartEnd);
+            d.setDate(d.getDate() - i);
+            chartDaysList.push(d);
+        }
+
+        const orderProcessingOverview = chartDaysList.map((dayDate) => {
+            const dayStart = new Date(dayDate);
+            dayStart.setHours(0, 0, 0, 0);
+            const dayEnd = new Date(dayDate);
+            dayEnd.setHours(23, 59, 59, 999);
+
+            const dayLabel = dayDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' });
+            const dateStr = dayDate.toISOString().split('T')[0];
+
+            let receivedCount = 0;
+            let processedCount = 0;
+            let completedCount = 0;
+
+            orders.forEach((o: any) => {
+                const orderDate = getOrderCreationOrAssignmentDate(o);
+                const assignedDate = o.assigned_at ? new Date(o.assigned_at) : null;
+                if ((orderDate >= dayStart && orderDate <= dayEnd) || (assignedDate && assignedDate >= dayStart && assignedDate <= dayEnd)) {
+                    receivedCount++;
+                }
+
+                const isProcessedOnDay = (Array.isArray(o.timeline_events) && o.timeline_events.some((e: any) => {
+                    const et = new Date(e.timestamp || e.createdAt);
+                    return et >= dayStart && et <= dayEnd && [
+                        'sorting', 'washing', 'drying', 'ironing', 'folding_steaming',
+                        'quality_check_passed', 'qc_passed', 'ready_for_delivery'
+                    ].includes(e.event);
+                })) ||
+                (o.processingStartedAt && new Date(o.processingStartedAt) >= dayStart && new Date(o.processingStartedAt) <= dayEnd) ||
+                (['washing', 'drying', 'ironing', 'folding_steaming', 'ready_for_qc', 'qc_ready', 'ready_for_delivery', 'out_for_delivery', 'delivered'].includes((o.status || '').toLowerCase()) &&
+                new Date(o.updated_at || o.updatedAt || o.createdAt) >= dayStart && new Date(o.updated_at || o.updatedAt || o.createdAt) <= dayEnd);
+
+                if (isProcessedOnDay) {
+                    processedCount++;
+                }
+
+                const isCompletedOnDay = (o.ready_for_delivery_at && new Date(o.ready_for_delivery_at) >= dayStart && new Date(o.ready_for_delivery_at) <= dayEnd) ||
+                (o.readyForDeliveryAt && new Date(o.readyForDeliveryAt) >= dayStart && new Date(o.readyForDeliveryAt) <= dayEnd) ||
+                (o.delivered_at && new Date(o.delivered_at) >= dayStart && new Date(o.delivered_at) <= dayEnd) ||
+                (o.deliveredAt && new Date(o.deliveredAt) >= dayStart && new Date(o.deliveredAt) <= dayEnd) ||
+                (Array.isArray(o.timeline_events) && o.timeline_events.some((te: any) =>
+                    ['quality_check_passed', 'qc_passed', 'ready_for_delivery', 'order_delivered', 'delivered', 'completed'].includes(te.event) &&
+                    new Date(te.timestamp || te.createdAt) >= dayStart && new Date(te.timestamp || te.createdAt) <= dayEnd
+                )) ||
+                (['ready_for_delivery', 'out_for_delivery', 'delivered', 'completed'].includes((o.status || '').toLowerCase()) &&
+                new Date(o.updated_at || o.updatedAt || o.createdAt) >= dayStart && new Date(o.updated_at || o.updatedAt || o.createdAt) <= dayEnd);
+
+                if (isCompletedOnDay) {
+                    completedCount++;
+                }
+            });
+
+            return {
+                date: dateStr,
+                label: dayLabel,
+                received: receivedCount,
+                processed: processedCount,
+                completed: completedCount
+            };
+        });
+
+        const plantPerformanceTrends = chartDaysList.map((dayDate) => {
+            const dayStart = new Date(dayDate);
+            dayStart.setHours(0, 0, 0, 0);
+            const dayEnd = new Date(dayDate);
+            dayEnd.setHours(23, 59, 59, 999);
+
+            const dayLabel = dayDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' });
+            const dateStr = dayDate.toISOString().split('T')[0];
+
+            let dayDueCount = 0;
+            let dayOnTimeCount = 0;
+
+            let dayInspectedCount = 0;
+            let dayFirstPassCount = 0;
+
+            orders.forEach((o: any) => {
+                // On-Time metric for day
+                try {
+                    const sla = SlaService.calculateOrderSla(o);
+                    if (sla?.deadlineAt) {
+                        const deadline = new Date(sla.deadlineAt);
+                        if (deadline >= dayStart && deadline <= dayEnd && deadline.getTime() <= now.getTime()) {
+                            dayDueCount++;
+                            const st = (o.status || '').toLowerCase();
+                            if (['ready_for_delivery', 'out_for_delivery', 'delivered', 'completed'].includes(st)) {
+                                const completionTime = new Date(
+                                    o.ready_for_delivery_at ||
+                                    o.readyForDeliveryAt ||
+                                    o.delivered_at ||
+                                    o.deliveredAt ||
+                                    o.completedAt ||
+                                    o.updated_at ||
+                                    o.updatedAt ||
+                                    o.createdAt
+                                );
+                                if (completionTime.getTime() <= deadline.getTime()) {
+                                    dayOnTimeCount++;
+                                }
+                            }
+                        }
+                    }
+                } catch {
+                    // Ignore parsing error
+                }
+
+                // Quality metric for day
+                const hasInspection = !!(
+                    o.qc?.checkedAt ||
+                    o.qcStatus ||
+                    o.qc?.passed !== undefined ||
+                    (Array.isArray(o.timeline_events) && o.timeline_events.some((e: any) =>
+                        ['quality_check_passed', 'qc_failed', 'qc_passed'].includes(e.event)
+                    )) ||
+                    ['ready_for_delivery', 'out_for_delivery', 'delivered', 'completed', 'rewash_required'].includes((o.status || '').toLowerCase())
+                );
+
+                if (hasInspection) {
+                    const inspectionDate = new Date(
+                        o.qc?.checkedAt ||
+                        o.ready_for_delivery_at ||
+                        o.readyForDeliveryAt ||
+                        o.updated_at ||
+                        o.updatedAt ||
+                        o.createdAt
+                    );
+
+                    if (inspectionDate >= dayStart && inspectionDate <= dayEnd) {
+                        dayInspectedCount++;
+                        const hadDefect = !!(
+                            o.rewashRequired ||
+                            o.qc?.passed === false ||
+                            (o.qcStatus && o.qcStatus !== 'PASSED') ||
+                            o.qc?.rewash_reason ||
+                            (Array.isArray(o.timeline_events) && o.timeline_events.some((e: any) =>
+                                e.event === 'qc_failed' || e.event === 'rewash_required' || (e.label && e.label.toLowerCase().includes('rewash'))
+                            ))
+                        );
+                        if (!hadDefect) {
+                            dayFirstPassCount++;
+                        }
+                    }
+                }
+            });
+
+            return {
+                date: dateStr,
+                label: dayLabel,
+                onTimeRate: dayDueCount > 0 ? Number(((dayOnTimeCount / dayDueCount) * 100).toFixed(1)) : null,
+                qualityPassRate: dayInspectedCount > 0 ? Number(((dayFirstPassCount / dayInspectedCount) * 100).toFixed(1)) : null,
+                dueCount: dayDueCount,
+                inspectedCount: dayInspectedCount
+            };
         });
 
         return {
@@ -233,18 +868,34 @@ export class ManagerService {
             dateFilter,
             periodOrders,
             stats: {
-                todayOrders: isFilteredRange && normalizedFilter !== 'today' ? periodOrders : todayOrders,
+                // Row 1: Daily Operations Overview
+                todayOrders,
+                activeOrders,
+                completedToday,
+                delayedOrders,
+
+                // Row 2: Plant Performance and Resources
+                onTimeCompletionRate,
+                readyForDispatch,
+                staffOnDuty,
+                qualityPassRate,
+
+                // Legacy & Hero Pipeline Stats
                 periodOrders,
-                activeOrders: activeOrders.length,
                 pendingPickup,
                 pendingIntake: atPlant,
                 atPlant,
                 processing,
                 inProcessing: processing,
-                readyForDelivery,
-                readyDelivery: readyForDelivery,
+                readyForDelivery: readyForDispatch,
+                readyDelivery: readyForDispatch,
                 outForDelivery,
-                completed
+                completed: completedToday
+            },
+            analytics: {
+                reportingPeriod: dateFilter,
+                orderProcessingOverview,
+                plantPerformanceTrends
             },
             staff: {
                 list: staff.map((s: any) => ({
@@ -269,57 +920,98 @@ export class ManagerService {
         };
     }
 
-    static async getOrders(managerId: string, limit: number, page: number, status?: string) {
+    static async getOrders(
+        managerId: string,
+        limit: number = 100,
+        page: number = 1,
+        status?: string,
+        dateFilter?: string,
+        startDate?: string,
+        endDate?: string
+    ) {
         const db = await getDb();
-        let plantId = await this.getManagerPlantId(managerId);
-        if (!plantId) {
-            const defaultPlant = await db.collection('plants').findOne({});
-            if (defaultPlant) {
-                plantId = defaultPlant._id;
+        const { user, plant, plantId, plantStaff, plantOrConditions, isSuperAdminNoPlant } = await this.buildPlantQueryContext(db, managerId);
+
+        const DATE_KEYWORDS = ['today', 'yesterday', 'this week', 'this_week', 'this month', 'this_month', 'all time', 'all_time', 'custom', 'custom range'];
+        let effectiveDateFilter = dateFilter;
+        let effectiveStatus = status;
+
+        if (effectiveStatus && DATE_KEYWORDS.includes(effectiveStatus.toLowerCase())) {
+            if (!effectiveDateFilter) {
+                effectiveDateFilter = effectiveStatus;
+            }
+            effectiveStatus = undefined;
+        }
+
+        const queryConditions: any[] = [
+            (plantOrConditions.length > 0 && !isSuperAdminNoPlant) ? { $or: plantOrConditions } : {},
+            { status: { $ne: 'pending_payment' } }
+        ];
+
+        if (effectiveStatus && effectiveStatus !== 'all' && !DATE_KEYWORDS.includes(effectiveStatus.toLowerCase())) {
+            queryConditions.push({ status: effectiveStatus });
+        }
+
+        const normalizedFilter = effectiveDateFilter?.toLowerCase() || '';
+        if (normalizedFilter && normalizedFilter !== 'all' && normalizedFilter !== 'all time' && normalizedFilter !== 'all_time') {
+            const rangeStart = new Date();
+            const rangeEnd = new Date();
+            let isFiltered = true;
+
+            if (normalizedFilter === 'today') {
+                rangeStart.setHours(0, 0, 0, 0);
+                rangeEnd.setHours(23, 59, 59, 999);
+            } else if (normalizedFilter === 'yesterday') {
+                rangeStart.setDate(rangeStart.getDate() - 1);
+                rangeStart.setHours(0, 0, 0, 0);
+                rangeEnd.setDate(rangeEnd.getDate() - 1);
+                rangeEnd.setHours(23, 59, 59, 999);
+            } else if (normalizedFilter === 'this week' || normalizedFilter === 'this_week') {
+                const dayOfWeek = rangeStart.getDay();
+                const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+                rangeStart.setDate(rangeStart.getDate() - diffToMonday);
+                rangeStart.setHours(0, 0, 0, 0);
+                rangeEnd.setHours(23, 59, 59, 999);
+            } else if (normalizedFilter === 'this month' || normalizedFilter === 'this_month') {
+                rangeStart.setDate(1);
+                rangeStart.setHours(0, 0, 0, 0);
+                rangeEnd.setHours(23, 59, 59, 999);
+            } else if (normalizedFilter === 'custom' || normalizedFilter === 'custom range') {
+                if (startDate) {
+                    const parsedStart = new Date(startDate);
+                    if (!isNaN(parsedStart.getTime())) {
+                        rangeStart.setTime(parsedStart.getTime());
+                        rangeStart.setHours(0, 0, 0, 0);
+                    }
+                }
+                if (endDate) {
+                    const parsedEnd = new Date(endDate);
+                    if (!isNaN(parsedEnd.getTime())) {
+                        rangeEnd.setTime(parsedEnd.getTime());
+                        rangeEnd.setHours(23, 59, 59, 999);
+                    }
+                }
+            } else {
+                isFiltered = false;
+            }
+
+            if (isFiltered) {
+                const startIso = rangeStart.toISOString();
+                const endIso = rangeEnd.toISOString();
+                queryConditions.push({
+                    $or: [
+                        { createdAt: { $gte: startIso, $lte: endIso } },
+                        { created_at: { $gte: startIso, $lte: endIso } },
+                        { createdAt: { $gte: rangeStart, $lte: rangeEnd } },
+                        { created_at: { $gte: rangeStart, $lte: rangeEnd } }
+                    ]
+                });
             }
         }
 
-        const plant = plantId ? await db.collection('plants').findOne({ _id: plantId } as any) : null;
-        const servicePincodes: string[] = plant?.service_pincodes || [];
-
-        const plantOrConditions: any[] = [];
-        if (plantId) {
-            plantOrConditions.push({ plant_id: plantId });
-        }
-
-        // Also match any unassigned orders within the plant's service pincodes
-        if (servicePincodes.length > 0) {
-            const pincodeRegexes = servicePincodes.map((pc: string) => buildPostcodeDistrictRegex(pc));
-            const addressRegexes = servicePincodes.map((pc: string) => buildAddressDistrictRegex(pc));
-            plantOrConditions.push({
-                $and: [
-                    {
-                        $or: [
-                            { plant_id: null },
-                            { plant_id: { $exists: false } },
-                            { plant_id: '' }
-                        ]
-                    },
-                    {
-                        $or: [
-                            { postcode: { $in: pincodeRegexes } },
-                            ...addressRegexes.map((r: RegExp) => ({ address: r }))
-                        ]
-                    }
-                ]
-            });
-        }
-
         const query: any = {
-            $and: [
-                plantOrConditions.length > 0 ? { $or: plantOrConditions } : {},
-                { status: { $ne: 'pending_payment' } }
-            ].filter(cond => Object.keys(cond).length > 0)
+            $and: queryConditions.filter(cond => Object.keys(cond).length > 0)
         };
-
-        if (status && status !== 'all') {
-            query.$and.push({ status });
-        }
 
         const orders = await db.collection('orders')
             .find(query)
@@ -338,10 +1030,49 @@ export class ManagerService {
 
         let driverMap = new Map<string, any>();
         if (missingDriverIds.length > 0) {
+            const driverObjectIds = missingDriverIds.filter((id: any) => ObjectId.isValid(id)).map((id: any) => new ObjectId(id));
             const drivers = await db.collection('users')
-                .find({ _id: { $in: missingDriverIds } })
+                .find({
+                    $or: [
+                        { _id: { $in: missingDriverIds } },
+                        ...(driverObjectIds.length > 0 ? [{ _id: { $in: driverObjectIds } }] : []),
+                        { publicId: { $in: missingDriverIds } },
+                        { id: { $in: missingDriverIds } }
+                    ]
+                })
                 .toArray();
-            driverMap = new Map(drivers.map((d: any) => [d._id, d]));
+            drivers.forEach((d: any) => {
+                driverMap.set(String(d._id), d);
+                if (d.publicId) driverMap.set(String(d.publicId), d);
+                if (d.id) driverMap.set(String(d.id), d);
+            });
+        }
+
+        // Fetch processor metadata if any order has assigned_processor_id but missing processor object
+        const missingProcessorIds = Array.from(new Set(
+            orders
+                .filter((o: any) => (o.assigned_processor_id || o.processor_id) && !o.processor)
+                .map((o: any) => o.assigned_processor_id || o.processor_id)
+        ));
+
+        let processorMap = new Map<string, any>();
+        if (missingProcessorIds.length > 0) {
+            const procObjectIds = missingProcessorIds.filter((id: any) => ObjectId.isValid(id)).map((id: any) => new ObjectId(id));
+            const processors = await db.collection('users')
+                .find({
+                    $or: [
+                        { _id: { $in: missingProcessorIds } },
+                        ...(procObjectIds.length > 0 ? [{ _id: { $in: procObjectIds } }] : []),
+                        { publicId: { $in: missingProcessorIds } },
+                        { id: { $in: missingProcessorIds } }
+                    ]
+                })
+                .toArray();
+            processors.forEach((p: any) => {
+                processorMap.set(String(p._id), p);
+                if (p.publicId) processorMap.set(String(p.publicId), p);
+                if (p.id) processorMap.set(String(p.id), p);
+            });
         }
 
         // Enrich customer information
@@ -349,6 +1080,8 @@ export class ManagerService {
 
         // Normalize fields for UI compatibility
         orders.forEach((o: any) => {
+            o.id = o.id || o.publicId || String(o._id);
+            o._id = String(o._id);
             if (o.address && typeof o.address === 'object') {
                 const parts = [o.address.line1, o.address.line2, o.address.city, o.address.postcode].filter(Boolean);
                 o.address = parts.join(', ');
@@ -368,13 +1101,24 @@ export class ManagerService {
             if (!o.paymentStatus) {
                 o.paymentStatus = o.payment_status || 'Paid';
             }
-            if (!o.driver && o.assigned_driver_id && driverMap.has(o.assigned_driver_id)) {
-                const d = driverMap.get(o.assigned_driver_id);
+            const drvKey = String(o.assigned_driver_id || o.driver_id || '');
+            if (!o.driver && drvKey && driverMap.has(drvKey)) {
+                const d = driverMap.get(drvKey);
                 o.driver = {
-                    id: d._id,
-                    name: d.full_name,
+                    id: String(d._id),
+                    name: d.full_name || d.name,
                     phone: d.phone,
                     vehicle: d.vehicle || 'Logistics Van'
+                };
+            }
+            const procKey = String(o.assigned_processor_id || o.processor_id || '');
+            if (!o.processor && procKey && processorMap.has(procKey)) {
+                const p = processorMap.get(procKey);
+                o.processor = {
+                    id: String(p._id),
+                    name: p.full_name || p.name,
+                    phone: p.phone,
+                    station: p.station || 'Processing Facility'
                 };
             }
         });

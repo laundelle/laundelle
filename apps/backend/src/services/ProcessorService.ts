@@ -161,7 +161,8 @@ export class ProcessorService {
                 id: processor._id.toString(),
                 name: processor.full_name,
                 plant_id: plantId || null,
-                availability: processor.availability || 'available'
+                availability: processor.availability || 'available',
+                is_active: processor.status !== 'suspended' && !processor.is_blocked && processor.availability !== 'offline'
             },
             assigned: enrichedAssigned,
             queue: enrichedQueue,
@@ -181,7 +182,7 @@ export class ProcessorService {
         const now = new Date().toISOString();
         await db.collection('users').updateOne(
             { _id: processor._id },
-            { $set: { availability, updated_at: now } }
+            { $set: { availability, is_active: true, updated_at: now } }
         );
 
         await AuditService.recordEvent({
@@ -1125,7 +1126,8 @@ export class ProcessorService {
         // Find active drivers
         const allDrivers = await db.collection('users').find({
             role: 'driver',
-            is_active: true
+            status: { $ne: 'suspended' },
+            availability: { $nin: ['off-duty', 'offline'] }
         }).toArray();
 
         // Match driver by UK postcode
@@ -1137,13 +1139,13 @@ export class ProcessorService {
 
         if (matchingDrivers.length === 0) {
             return {
-                status: 'ready_for_delivery',
-                statusLabel: 'Ready for Delivery (Awaiting Driver Coverage)',
+                status: 'waiting_for_driver',
+                statusLabel: 'Waiting for Driver',
                 assigned_driver_id: null,
                 driver: null,
                 timelineEvent: {
-                    event: 'ready_for_delivery',
-                    label: `Ready for Delivery (No active driver for postcode: ${orderPostcode})`,
+                    event: 'waiting_for_driver',
+                    label: `Waiting for Driver (No active driver for postcode: ${orderPostcode})`,
                     actor: 'system',
                     timestamp: now
                 }

@@ -53,6 +53,8 @@ export interface UpdateStaffInput {
     manager_id?: string | null;
     plantManagerId?: string | null;
     role?: string;
+    availability?: 'available' | 'busy' | 'offline' | 'off-duty';
+    is_active?: boolean;
 }
 
 export interface UpdateStatusInput {
@@ -595,6 +597,17 @@ export class StaffProvisioningService {
 
         if (input.phone !== undefined) updateFields.phone = input.phone;
 
+        // Active status and availability
+        if (input.availability !== undefined) {
+            updateFields.availability = input.availability;
+        }
+        if (input.is_active !== undefined) {
+            updateFields.is_active = Boolean(input.is_active);
+            if (updateFields.availability === undefined) {
+                updateFields.availability = input.is_active ? 'available' : 'offline';
+            }
+        }
+
         // Vehicle info
         const vehicleType = input.vehicle_type || input.vehicleType;
         if (vehicleType !== undefined) updateFields.vehicle_type = vehicleType;
@@ -739,6 +752,26 @@ export class StaffProvisioningService {
             { _id: targetUser._id },
             { $set: updateFields }
         );
+
+        // If driver was set to active/online, trigger auto-assignment of queued orders
+        if (targetUser.role === 'driver' && updateFields.is_active === true) {
+            try {
+                const { DriverService } = await import('./DriverService');
+                await DriverService.assignQueuedOrdersToDriver(String(targetUser._id));
+            } catch (err: any) {
+                console.warn(`[StaffProvisioningService] Error assigning queued orders to driver: ${err.message}`);
+            }
+        }
+
+        // If processor was set to available, trigger auto-assignment of waiting orders
+        if (targetUser.role === 'processor' && updateFields.availability === 'available') {
+            try {
+                const { ProcessorService } = await import('./ProcessorService');
+                await ProcessorService.updateAvailability(String(targetUser._id), 'available');
+            } catch (err: any) {
+                console.warn(`[StaffProvisioningService] Error updating processor availability: ${err.message}`);
+            }
+        }
 
         // Sync name to Auth0 if auth0UserId exists
         if (targetUser.auth0UserId && nameVal) {

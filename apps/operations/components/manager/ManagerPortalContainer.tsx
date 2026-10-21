@@ -62,7 +62,7 @@ export const ManagerPortalContainer: React.FC<ManagerPortalContainerProps> = ({
   };
 
   const fetchOrders = async (df = dateFilter, sd = customStartDate, ed = customEndDate) => {
-    const data = await dbFetchManagerOrders(df, sd, ed);
+    const data = await dbFetchManagerOrders('all', df, sd, ed);
     setOrders(data || []);
   };
 
@@ -74,8 +74,8 @@ export const ManagerPortalContainer: React.FC<ManagerPortalContainerProps> = ({
     fetchStaff();
   }, []);
 
-  const activeDrivers = staffList.filter((s: any) => s.role === 'driver' && s.is_active !== false);
-  const activeProcessors = staffList.filter((s: any) => s.role === 'processor' && s.is_active !== false);
+  const activeDrivers = staffList.filter((s: any) => s.role === 'driver' && s.is_active !== false && s.availability !== 'offline' && s.availability !== 'off-duty');
+  const activeProcessors = staffList.filter((s: any) => s.role === 'processor' && s.is_active !== false && s.availability !== 'offline');
 
   const handleOpenAddDriver = () => {
     setActiveTab('staff');

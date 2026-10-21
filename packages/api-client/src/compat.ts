@@ -1031,8 +1031,8 @@ export async function dbFetchManagerDashboard(dateFilter?: string, startDate?: s
             headers: authHeaders(),
         });
         const json = await res.json();
-        const data = json.success ? json.data : json;
-        if (!res.ok || data.error) return null;
+        if (!res.ok || json.error) return null;
+        const data = (json.success && json.data && json.data.plantName) ? json.data : json;
         return data;
     } catch {
         return null;
@@ -1041,11 +1041,25 @@ export async function dbFetchManagerDashboard(dateFilter?: string, startDate?: s
 
 export async function dbFetchManagerOrders(status?: string, dateFilter?: string, startDate?: string, endDate?: string): Promise<any[]> {
     try {
+        const DATE_KEYWORDS = ['today', 'yesterday', 'this week', 'this_week', 'this month', 'this_month', 'all time', 'all_time', 'custom', 'custom range'];
+        let effectiveStatus = status;
+        let effectiveDateFilter = dateFilter;
+        let effectiveStartDate = startDate;
+        let effectiveEndDate = endDate;
+
+        // If the first argument is a date keyword, realign the parameters
+        if (effectiveStatus && DATE_KEYWORDS.includes(effectiveStatus.toLowerCase())) {
+            effectiveEndDate = startDate;
+            effectiveStartDate = dateFilter;
+            effectiveDateFilter = effectiveStatus;
+            effectiveStatus = undefined;
+        }
+
         const params = new URLSearchParams();
-        if (status && status !== 'all') params.set('status', status);
-        if (dateFilter) params.set('dateFilter', dateFilter);
-        if (startDate) params.set('startDate', startDate);
-        if (endDate) params.set('endDate', endDate);
+        if (effectiveStatus && effectiveStatus !== 'all') params.set('status', effectiveStatus);
+        if (effectiveDateFilter && effectiveDateFilter !== 'all') params.set('dateFilter', effectiveDateFilter);
+        if (effectiveStartDate) params.set('startDate', effectiveStartDate);
+        if (effectiveEndDate) params.set('endDate', effectiveEndDate);
         const qs = params.toString();
         const url = qs ? `/api/v1/manager/orders?${qs}` : '/api/v1/manager/orders';
         const res = await apiFetch(url, {
@@ -1452,16 +1466,16 @@ export async function dbDriverFetchAssignments(): Promise<{ driver: any; assigne
     }
 }
 
-export async function dbDriverUpdateAvailability(availability: 'available' | 'busy' | 'offline'): Promise<{ success: boolean; error?: string }> {
+export async function dbDriverUpdateAvailability(availability: 'available' | 'busy' | 'offline'): Promise<{ success: boolean; error?: string; queuedAssigned?: number; isAvailable?: boolean }> {
     try {
         const res = await apiFetch('/api/v1/driver/availability', {
             method: 'PUT',
             headers: authHeaders(),
-            body: JSON.stringify({ isAvailable: availability === 'available' }),
+            body: JSON.stringify({ isAvailable: availability === 'available', availability }),
         });
         const data = await res.json();
         if (!res.ok || data.error) return { success: false, error: data.error };
-        return { success: true };
+        return { success: true, queuedAssigned: data.queuedAssigned, isAvailable: data.isAvailable };
     } catch (e: any) {
         return { success: false, error: e.message };
     }

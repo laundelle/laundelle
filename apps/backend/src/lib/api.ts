@@ -326,7 +326,8 @@ export async function resolveLaundelleUser(tokenPayload: JwtPayload): Promise<an
     if (!user) return null;
 
     // Verify account is not disabled or suspended
-    if (user.is_active === false || user.status === 'suspended' || user.is_blocked) {
+    const isAccountSuspended = user.status === 'suspended' || user.status === 'inactive' || user.is_blocked;
+    if (isAccountSuspended) {
         throw new ForbiddenError('Account is deactivated or suspended. Please contact support.');
     }
 

@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import {
     Truck, Users, RefreshCw, ShoppingBag, Package, Clock, Shield,
     AlertTriangle, CheckCircle2, ArrowRight, X, Check, Activity,
-    Sparkles, ArrowUpRight, ChevronRight, Layers, HelpCircle
+    Sparkles, ArrowUpRight, ChevronRight, Layers, HelpCircle,
+    BarChart3, TrendingUp
 } from 'lucide-react';
 import { dbFetchManagerDashboard, apiFetch } from '@laundelle/api-client';
 import { FleetManagementView } from './FleetManagementView';
@@ -28,6 +29,8 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({
     const [activeViewTab, setActiveViewTab] = useState<'overview' | 'exceptions' | 'capacity' | 'fleet' | 'inventory'>('overview');
     const [capacityReport, setCapacityReport] = useState<any | null>(null);
     const [capacityLoading, setCapacityLoading] = useState(false);
+    const [hoveredProcIdx, setHoveredProcIdx] = useState<number | null>(null);
+    const [hoveredTrendsIdx, setHoveredTrendsIdx] = useState<number | null>(null);
 
     // Exceptions state
     const [exceptions, setExceptions] = useState<any[]>([]);
@@ -162,7 +165,7 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({
         );
     }
 
-    const { plantName, plantCode, managerName, stats, staff } = data;
+    const { plantName, plantCode, managerName, stats, staff, analytics } = data || {};
 
     const filteredExceptions = exceptions.filter(ex => {
         if (exceptionFilter === 'ALL') return true;
@@ -205,23 +208,12 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({
                 </div>
             </div>
 
-            {/* Primary Hero Feature Card (Reference: 'Sales Pipeline' card with 4 metrics + View ->) */}
-            <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-xs space-y-6">
+            {/* ROW 1 — DAILY OPERATIONS OVERVIEW */}
+            <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                            <Sparkles className="w-4 h-4" />
-                        </div>
-                        <div>
-                            <h2 className="text-base font-semibold text-slate-900">
-                                Plant Operations Pipeline
-                            </h2>
-                            <p className="text-xs text-slate-400">
-                                Live parcel workflow for {plantName || plantCode}
-                            </p>
-                        </div>
-                    </div>
-
+                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
+                        ROW 1 — DAILY OPERATIONS OVERVIEW
+                    </span>
                     <button
                         onClick={() => onNavigateTab('orders')}
                         className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer group"
@@ -231,127 +223,668 @@ export const ManagerPortalView: React.FC<ManagerPortalViewProps> = ({
                     </button>
                 </div>
 
-                {/* 4 Hero Metrics (Open, Pipeline, Won / mo, Win rate style) */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-1">
-                    <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-100/80 space-y-1">
-                        <div className="flex items-center gap-1.5 text-slate-400">
-                            <Package className="w-3.5 h-3.5 text-slate-400" />
-                            <span className="text-xs font-medium">Pending Pickup</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Card 1: Today's Orders */}
+                    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-2 hover:border-slate-200 transition-all">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-slate-400">
+                                <ShoppingBag className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-xs font-medium">Today&apos;s Orders</span>
+                            </div>
                         </div>
                         <p className="text-2xl sm:text-3xl font-bold text-slate-900">
-                            {stats.pendingPickup}
+                            {stats?.todayOrders ?? 0}
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                            Received or assigned to plant today
                         </p>
                     </div>
 
-                    <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-100/80 space-y-1">
-                        <div className="flex items-center gap-1.5 text-slate-400">
-                            <Layers className="w-3.5 h-3.5 text-slate-400" />
-                            <span className="text-xs font-medium">Facility Intake</span>
+                    {/* Card 2: Active Orders */}
+                    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-2 hover:border-slate-200 transition-all">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-slate-400">
+                                <Layers className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-xs font-medium">Active Orders</span>
+                            </div>
                         </div>
                         <p className="text-2xl sm:text-3xl font-bold text-slate-900">
-                            {stats.atPlant}
+                            {stats?.activeOrders ?? 0}
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                            In active, nonterminal workflow stages
                         </p>
                     </div>
 
-                    <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-100/80 space-y-1">
-                        <div className="flex items-center gap-1.5 text-slate-400">
-                            <Clock className="w-3.5 h-3.5 text-slate-400" />
-                            <span className="text-xs font-medium">In Cycles</span>
+                    {/* Card 3: Completed Today */}
+                    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-2 hover:border-slate-200 transition-all">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-slate-400">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-xs font-medium">Completed Today</span>
+                            </div>
                         </div>
                         <p className="text-2xl sm:text-3xl font-bold text-slate-900">
-                            {stats.processing}
+                            {stats?.completedToday ?? 0}
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                            Reached plant-completion milestone today
                         </p>
                     </div>
 
-                    <div className="p-4 rounded-xl bg-slate-50/70 border border-slate-100/80 space-y-1">
-                        <div className="flex items-center gap-1.5 text-slate-400">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-slate-400" />
-                            <span className="text-xs font-medium">Ready & Dispatched</span>
+                    {/* Card 4: Delayed Orders */}
+                    <div className={`bg-white rounded-2xl border p-5 shadow-xs space-y-2 transition-all ${
+                        (stats?.delayedOrders ?? 0) > 0 ? 'border-rose-100 bg-rose-50/10' : 'border-slate-100'
+                    }`}>
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-slate-400">
+                                <AlertTriangle className={`w-3.5 h-3.5 ${(stats?.delayedOrders ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'}`} />
+                                <span className="text-xs font-medium">Delayed Orders</span>
+                            </div>
+                            {(stats?.delayedOrders ?? 0) > 0 && (
+                                <span className="bg-rose-50 text-rose-600 text-[10px] font-semibold px-2 py-0.5 rounded-full border border-rose-100">
+                                    Action Required
+                                </span>
+                            )}
                         </div>
-                        <p className="text-2xl sm:text-3xl font-bold text-slate-900">
-                            {stats.readyForDelivery + stats.outForDelivery}
+                        <p className={`text-2xl sm:text-3xl font-bold ${(stats?.delayedOrders ?? 0) > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+                            {stats?.delayedOrders ?? 0}
+                        </p>
+                        <p className="text-[11px] text-slate-400">
+                            Active orders exceeding SLA deadline
                         </p>
                     </div>
-                </div>
-
-                {/* Sub-tags row (like 'Leads by source: Other 62' in reference) */}
-                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span className="text-slate-400">Active Stage Distribution:</span>
-                    <span className="bg-slate-50 border border-slate-100 text-slate-600 px-2.5 py-0.5 rounded-lg text-[11px] font-medium">
-                        Standard Orders {stats.todayOrders}
-                    </span>
-                    <span className="bg-slate-50 border border-slate-100 text-slate-600 px-2.5 py-0.5 rounded-lg text-[11px] font-medium">
-                        Completed Today {stats.completed}
-                    </span>
-                    <span className="bg-slate-50 border border-slate-100 text-slate-600 px-2.5 py-0.5 rounded-lg text-[11px] font-medium">
-                        Plant Code {plantCode}
-                    </span>
                 </div>
             </div>
 
-            {/* Section Label: THIS MONTH / TODAY'S OPERATIONS */}
+            {/* ROW 2 — PLANT PERFORMANCE AND RESOURCES */}
             <div className="space-y-4">
                 <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
-                    TODAY&apos;S OPERATIONS
+                    ROW 2 — PLANT PERFORMANCE AND RESOURCES
                 </span>
 
-                {/* 4 Metric Cards Row (Like Revenue, Received, Expenses, Money in account in reference) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {/* Card 1: Today's Orders */}
-                    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-2">
-                        <div className="flex items-center gap-1.5 text-slate-400">
-                            <ShoppingBag className="w-3.5 h-3.5 text-slate-400" />
-                            <span className="text-xs font-medium">Today&apos;s Orders</span>
+                    {/* Card 5: On-Time Completion Rate */}
+                    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-2 hover:border-slate-200 transition-all">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-slate-400">
+                                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-xs font-medium">On-Time Completion Rate</span>
+                            </div>
+                            {stats?.onTimeCompletionRate !== null && stats?.onTimeCompletionRate !== undefined && (
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                    stats.onTimeCompletionRate >= 95 ? 'bg-emerald-50 text-emerald-700' : stats.onTimeCompletionRate >= 85 ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'
+                                }`}>
+                                    Target 95%
+                                </span>
+                            )}
                         </div>
                         <p className="text-2xl sm:text-3xl font-bold text-slate-900">
-                            {stats.todayOrders}
+                            {stats?.onTimeCompletionRate !== null && stats?.onTimeCompletionRate !== undefined ? `${stats.onTimeCompletionRate}%` : '—'}
                         </p>
                         <p className="text-[11px] text-slate-400">
-                            All incoming customer bookings
+                            {stats?.onTimeCompletionRate !== null && stats?.onTimeCompletionRate !== undefined
+                                ? 'Completed on or before deadline'
+                                : 'No eligible orders due in period'}
                         </p>
                     </div>
 
-                    {/* Card 2: Washing & Ironing */}
-                    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-2">
-                        <div className="flex items-center gap-1.5 text-slate-400">
-                            <Clock className="w-3.5 h-3.5 text-slate-400" />
-                            <span className="text-xs font-medium">Washing & Ironing</span>
+                    {/* Card 6: Ready for Dispatch */}
+                    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-2 hover:border-slate-200 transition-all">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-slate-400">
+                                <Truck className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-xs font-medium">Ready for Dispatch</span>
+                            </div>
                         </div>
                         <p className="text-2xl sm:text-3xl font-bold text-slate-900">
-                            {stats.processing}
+                            {stats?.readyForDispatch ?? 0}
                         </p>
                         <p className="text-[11px] text-slate-400">
-                            Active machine batch loads
+                            Quality-approved, awaiting pickup
                         </p>
                     </div>
 
-                    {/* Card 3: Exceptions / Issues */}
-                    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-2">
-                        <div className="flex items-center gap-1.5 text-slate-400">
-                            <AlertTriangle className="w-3.5 h-3.5 text-slate-400" />
-                            <span className="text-xs font-medium">Active Exceptions</span>
+                    {/* Card 7: Staff on Duty */}
+                    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-2 hover:border-slate-200 transition-all">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-slate-400">
+                                <Users className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-xs font-medium">Staff on Duty</span>
+                            </div>
+                            <span className="bg-slate-50 border border-slate-100 text-slate-600 text-[10px] font-semibold px-2 py-0.5 rounded-md">
+                                Shift Live
+                            </span>
                         </div>
-                        <p className={`text-2xl sm:text-3xl font-bold ${openExceptionsCount > 0 ? 'text-rose-600' : 'text-slate-900'}`}>
-                            {openExceptionsCount}
+                        <p className="text-2xl sm:text-3xl font-bold text-slate-900">
+                            {stats?.staffOnDuty?.onDuty ?? 0} / {stats?.staffOnDuty?.scheduled ?? stats?.staffOnDuty?.total ?? staff?.list?.length ?? 0}
                         </p>
                         <p className="text-[11px] text-slate-400">
-                            Requires manager review
+                            {stats?.staffOnDuty?.label || 'Confirmed on duty vs assigned staff'}
                         </p>
                     </div>
 
-                    {/* Card 4: Highlighted Card (Real-time plant capacity) */}
-                    <div className="bg-white rounded-2xl border border-blue-100 bg-blue-50/20 p-5 shadow-xs space-y-2">
-                        <div className="flex items-center gap-1.5 text-blue-600">
-                            <Activity className="w-3.5 h-3.5 text-blue-600" />
-                            <span className="text-xs font-semibold">Plant Capacity</span>
+                    {/* Card 8: Quality Pass Rate */}
+                    <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-2 hover:border-slate-200 transition-all">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 text-slate-400">
+                                <Shield className="w-3.5 h-3.5 text-slate-400" />
+                                <span className="text-xs font-medium">Quality Pass Rate</span>
+                            </div>
+                            {stats?.qualityPassRate !== null && stats?.qualityPassRate !== undefined && (
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                    stats.qualityPassRate >= 98 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                                }`}>
+                                    Standard 98%
+                                </span>
+                            )}
                         </div>
-                        <p className="text-2xl sm:text-3xl font-bold text-blue-700">
-                            {capacityReport?.overallUtilizationPercent !== undefined ? `${capacityReport.overallUtilizationPercent}%` : '0%'}
+                        <p className="text-2xl sm:text-3xl font-bold text-slate-900">
+                            {stats?.qualityPassRate !== null && stats?.qualityPassRate !== undefined ? `${stats.qualityPassRate}%` : '—'}
                         </p>
-                        <p className="text-[11px] text-blue-600/80">
-                            {stats.completed} orders completed today
+                        <p className="text-[11px] text-slate-400">
+                            {stats?.qualityPassRate !== null && stats?.qualityPassRate !== undefined
+                                ? 'Orders passing first inspection'
+                                : 'No first inspections completed'}
                         </p>
                     </div>
+                </div>
+            </div>
+
+            {/* ROW 3 — ANALYTICS CHARTS */}
+            <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
+                        ROW 3 — ANALYTICS CHARTS
+                    </span>
+                    <span className="text-xs font-medium text-slate-500">
+                        Reporting Period: <strong className="text-slate-800">{analytics?.reportingPeriod || dateFilter}</strong>
+                    </span>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* CHART 1: Order Processing Overview */}
+                    {(() => {
+                        const procData = analytics?.orderProcessingOverview || [];
+                        const totalRec = procData.reduce((acc: number, d: any) => acc + (d.received || 0), 0);
+                        const totalProc = procData.reduce((acc: number, d: any) => acc + (d.processed || 0), 0);
+                        const totalComp = procData.reduce((acc: number, d: any) => acc + (d.completed || 0), 0);
+                        const maxVolume = Math.max(1, ...procData.flatMap((d: any) => [d.received || 0, d.processed || 0, d.completed || 0]));
+
+                        const pLeft = 32;
+                        const pRight = 14;
+                        const pTop = 15;
+                        const pBottom = 25;
+                        const svgW = 500;
+                        const svgH = 190;
+                        const pWidth = svgW - pLeft - pRight;
+                        const pHeight = svgH - pTop - pBottom;
+
+                        return (
+                            <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-xs space-y-4 flex flex-col justify-between">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                                            <BarChart3 className="w-4 h-4" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-sm font-bold text-slate-900">
+                                                Order Processing Overview
+                                            </h3>
+                                            <p className="text-xs text-slate-400">
+                                                Daily orders received, in processing, and completed
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Series Legend */}
+                                    <div className="flex items-center gap-3 text-[11px] font-medium text-slate-600 flex-wrap">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block" />
+                                            <span>Received</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />
+                                            <span>Processed</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
+                                            <span>Completed</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Multi-series Chart Visual */}
+                                <div className="relative pt-2">
+                                    {procData.length === 0 ? (
+                                        <div className="h-44 flex flex-col items-center justify-center text-slate-400 space-y-1">
+                                            <Package className="w-5 h-5 text-slate-300" />
+                                            <span className="text-xs font-medium">No order activity recorded in this period</span>
+                                        </div>
+                                    ) : (
+                                        <div className="relative">
+                                            <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full h-44 overflow-visible">
+                                                {/* Grid lines */}
+                                                {[0, 0.5, 1].map((ratio, gIdx) => {
+                                                    const gy = pTop + pHeight * (1 - ratio);
+                                                    const valLabel = Math.round(maxVolume * ratio);
+                                                    return (
+                                                        <g key={gIdx}>
+                                                            <line
+                                                                x1={pLeft}
+                                                                y1={gy}
+                                                                x2={pLeft + pWidth}
+                                                                y2={gy}
+                                                                stroke="#f1f5f9"
+                                                                strokeDasharray={ratio === 0 ? undefined : '3 3'}
+                                                                strokeWidth="1"
+                                                            />
+                                                            <text
+                                                                x={pLeft - 6}
+                                                                y={gy + 3}
+                                                                textAnchor="end"
+                                                                fontSize="10"
+                                                                fill="#94a3b8"
+                                                                fontFamily="monospace"
+                                                            >
+                                                                {valLabel}
+                                                            </text>
+                                                        </g>
+                                                    );
+                                                })}
+
+                                                {/* Grouped Bars per Day */}
+                                                {procData.map((day: any, idx: number) => {
+                                                    const slotW = pWidth / procData.length;
+                                                    const barW = Math.max(3, Math.min(8, slotW / 4));
+                                                    const gap = 2;
+                                                    const groupW = barW * 3 + gap * 2;
+                                                    const startX = pLeft + idx * slotW + (slotW - groupW) / 2;
+
+                                                    const hRec = maxVolume > 0 ? (day.received / maxVolume) * pHeight : 0;
+                                                    const hProc = maxVolume > 0 ? (day.processed / maxVolume) * pHeight : 0;
+                                                    const hComp = maxVolume > 0 ? (day.completed / maxVolume) * pHeight : 0;
+
+                                                    const isHovered = hoveredProcIdx === idx;
+
+                                                    return (
+                                                        <g key={idx}>
+                                                            {/* Slot hover highlight */}
+                                                            {isHovered && (
+                                                                <rect
+                                                                    x={pLeft + idx * slotW}
+                                                                    y={pTop}
+                                                                    width={slotW}
+                                                                    height={pHeight}
+                                                                    fill="#f8fafc"
+                                                                    rx="4"
+                                                                />
+                                                            )}
+
+                                                            {/* Bar 1: Received */}
+                                                            <rect
+                                                                x={startX}
+                                                                y={pTop + pHeight - hRec}
+                                                                width={barW}
+                                                                height={Math.max(day.received > 0 ? 3 : 0, hRec)}
+                                                                fill="#2563EB"
+                                                                rx="1.5"
+                                                                className="transition-all duration-200"
+                                                            />
+
+                                                            {/* Bar 2: Processed */}
+                                                            <rect
+                                                                x={startX + barW + gap}
+                                                                y={pTop + pHeight - hProc}
+                                                                width={barW}
+                                                                height={Math.max(day.processed > 0 ? 3 : 0, hProc)}
+                                                                fill="#F59E0B"
+                                                                rx="1.5"
+                                                                className="transition-all duration-200"
+                                                            />
+
+                                                            {/* Bar 3: Completed */}
+                                                            <rect
+                                                                x={startX + (barW + gap) * 2}
+                                                                y={pTop + pHeight - hComp}
+                                                                width={barW}
+                                                                height={Math.max(day.completed > 0 ? 3 : 0, hComp)}
+                                                                fill="#10B981"
+                                                                rx="1.5"
+                                                                className="transition-all duration-200"
+                                                            />
+
+                                                            {/* X Axis Label */}
+                                                            <text
+                                                                x={pLeft + idx * slotW + slotW / 2}
+                                                                y={svgH - 4}
+                                                                textAnchor="middle"
+                                                                fontSize="10"
+                                                                fill={isHovered ? '#0f172a' : '#94a3b8'}
+                                                                fontWeight={isHovered ? '600' : 'normal'}
+                                                            >
+                                                                {day.label}
+                                                            </text>
+
+                                                            {/* Mouse Capture Zone */}
+                                                            <rect
+                                                                x={pLeft + idx * slotW}
+                                                                y={0}
+                                                                width={slotW}
+                                                                height={svgH}
+                                                                fill="transparent"
+                                                                className="cursor-pointer"
+                                                                onMouseEnter={() => setHoveredProcIdx(idx)}
+                                                                onMouseLeave={() => setHoveredProcIdx(null)}
+                                                            />
+                                                        </g>
+                                                    );
+                                                })}
+                                            </svg>
+
+                                            {/* Hover Tooltip Card */}
+                                            {hoveredProcIdx !== null && procData[hoveredProcIdx] && (
+                                                <div
+                                                    className="absolute z-20 bg-slate-900 text-white p-2.5 rounded-xl text-xs shadow-xl pointer-events-none transform -translate-x-1/2 -translate-y-full transition-all space-y-1 min-w-[130px]"
+                                                    style={{
+                                                        left: `${((pLeft + (hoveredProcIdx + 0.5) * (pWidth / procData.length)) / svgW) * 100}%`,
+                                                        top: '15px'
+                                                    }}
+                                                >
+                                                    <div className="font-semibold text-slate-200 border-b border-slate-800 pb-1 text-[11px]">
+                                                        {procData[hoveredProcIdx].label}
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-[11px] gap-2">
+                                                        <span className="text-blue-400">Received:</span>
+                                                        <span className="font-bold text-white">{procData[hoveredProcIdx].received}</span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-[11px] gap-2">
+                                                        <span className="text-amber-400">Processed:</span>
+                                                        <span className="font-bold text-white">{procData[hoveredProcIdx].processed}</span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-[11px] gap-2">
+                                                        <span className="text-emerald-400">Completed:</span>
+                                                        <span className="font-bold text-white">{procData[hoveredProcIdx].completed}</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Quick Summary Footer */}
+                                <div className="grid grid-cols-3 gap-2.5 pt-3 border-t border-slate-100 text-center">
+                                    <div className="bg-slate-50/70 p-2 rounded-xl border border-slate-100/80">
+                                        <span className="text-[10px] uppercase font-semibold text-slate-400 block">Total Received</span>
+                                        <span className="text-sm font-bold text-blue-600 block">{totalRec}</span>
+                                    </div>
+                                    <div className="bg-slate-50/70 p-2 rounded-xl border border-slate-100/80">
+                                        <span className="text-[10px] uppercase font-semibold text-slate-400 block">Total Processed</span>
+                                        <span className="text-sm font-bold text-amber-600 block">{totalProc}</span>
+                                    </div>
+                                    <div className="bg-slate-50/70 p-2 rounded-xl border border-slate-100/80">
+                                        <span className="text-[10px] uppercase font-semibold text-slate-400 block">Total Completed</span>
+                                        <span className="text-sm font-bold text-emerald-600 block">{totalComp}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
+                    {/* CHART 2: Plant Performance Trends */}
+                    {(() => {
+                        const trendsData = analytics?.plantPerformanceTrends || [];
+
+                        const pLeft = 40;
+                        const pRight = 20;
+                        const pTop = 15;
+                        const pBottom = 25;
+                        const svgW = 500;
+                        const svgH = 190;
+                        const pWidth = svgW - pLeft - pRight;
+                        const pHeight = svgH - pTop - pBottom;
+
+                        const getX = (idx: number) => {
+                            if (trendsData.length <= 1) return pLeft + pWidth / 2;
+                            return pLeft + (idx / (trendsData.length - 1)) * pWidth;
+                        };
+                        const getY = (val: number) => {
+                            return pTop + ((100 - Math.max(0, Math.min(100, val))) / 100) * pHeight;
+                        };
+
+                        const onTimeCoords = trendsData
+                            .map((d: any, idx: number) => d.onTimeRate !== null ? { x: getX(idx), y: getY(d.onTimeRate), rate: d.onTimeRate, idx } : null)
+                            .filter(Boolean) as { x: number; y: number; rate: number; idx: number }[];
+
+                        const qualityCoords = trendsData
+                            .map((d: any, idx: number) => d.qualityPassRate !== null ? { x: getX(idx), y: getY(d.qualityPassRate), rate: d.qualityPassRate, idx } : null)
+                            .filter(Boolean) as { x: number; y: number; rate: number; idx: number }[];
+
+                        const onTimePathD = onTimeCoords.length > 0
+                            ? onTimeCoords.reduce((acc, pt, i) => i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`, '')
+                            : '';
+
+                        const qualityPathD = qualityCoords.length > 0
+                            ? qualityCoords.reduce((acc, pt, i) => i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`, '')
+                            : '';
+
+                        return (
+                            <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-xs space-y-4 flex flex-col justify-between">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-8 h-8 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center">
+                                            <TrendingUp className="w-4 h-4" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-sm font-bold text-slate-900">
+                                                Plant Performance Trends
+                                            </h3>
+                                            <p className="text-xs text-slate-400">
+                                                Daily on-time completion rate & quality pass rate
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Series Legend */}
+                                    <div className="flex items-center gap-3 text-[11px] font-medium text-slate-600 flex-wrap">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block" />
+                                            <span>On-Time Rate</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="w-2.5 h-2.5 rounded-full bg-violet-600 inline-block" />
+                                            <span>Quality Pass Rate</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Line Trend Visual (0% - 100% scale) */}
+                                <div className="relative pt-2">
+                                    {trendsData.length === 0 ? (
+                                        <div className="h-44 flex flex-col items-center justify-center text-slate-400 space-y-1">
+                                            <Activity className="w-5 h-5 text-slate-300" />
+                                            <span className="text-xs font-medium">No performance records in this period</span>
+                                        </div>
+                                    ) : (
+                                        <div className="relative">
+                                            <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full h-44 overflow-visible">
+                                                {/* Percentage Gridlines 0%, 25%, 50%, 75%, 100% */}
+                                                {[0, 25, 50, 75, 100].map((pct, gIdx) => {
+                                                    const gy = getY(pct);
+                                                    return (
+                                                        <g key={gIdx}>
+                                                            <line
+                                                                x1={pLeft}
+                                                                y1={gy}
+                                                                x2={pLeft + pWidth}
+                                                                y2={gy}
+                                                                stroke="#f1f5f9"
+                                                                strokeDasharray={pct === 0 ? undefined : '3 3'}
+                                                                strokeWidth="1"
+                                                            />
+                                                            <text
+                                                                x={pLeft - 6}
+                                                                y={gy + 3}
+                                                                textAnchor="end"
+                                                                fontSize="10"
+                                                                fill="#94a3b8"
+                                                                fontFamily="monospace"
+                                                            >
+                                                                {pct}%
+                                                            </text>
+                                                        </g>
+                                                    );
+                                                })}
+
+                                                {/* Vertical Indicator on Hover */}
+                                                {hoveredTrendsIdx !== null && (
+                                                    <line
+                                                        x1={getX(hoveredTrendsIdx)}
+                                                        y1={pTop}
+                                                        x2={getX(hoveredTrendsIdx)}
+                                                        y2={pTop + pHeight}
+                                                        stroke="#cbd5e1"
+                                                        strokeDasharray="3 3"
+                                                        strokeWidth="1.5"
+                                                    />
+                                                )}
+
+                                                {/* Line 1: On-Time Rate */}
+                                                {onTimePathD && (
+                                                    <path
+                                                        d={onTimePathD}
+                                                        fill="none"
+                                                        stroke="#2563EB"
+                                                        strokeWidth="2.5"
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                    />
+                                                )}
+
+                                                {/* Line 2: Quality Pass Rate */}
+                                                {qualityPathD && (
+                                                    <path
+                                                        d={qualityPathD}
+                                                        fill="none"
+                                                        stroke="#7C3AED"
+                                                        strokeWidth="2.5"
+                                                        strokeLinecap="round"
+                                                        strokeLinejoin="round"
+                                                    />
+                                                )}
+
+                                                {/* Data Points */}
+                                                {onTimeCoords.map((pt, pIdx) => (
+                                                    <circle
+                                                        key={`ot-${pIdx}`}
+                                                        cx={pt.x}
+                                                        cy={pt.y}
+                                                        r={hoveredTrendsIdx === pt.idx ? 5 : 3.5}
+                                                        fill="#ffffff"
+                                                        stroke="#2563EB"
+                                                        strokeWidth={hoveredTrendsIdx === pt.idx ? 3 : 2}
+                                                        className="transition-all duration-150"
+                                                    />
+                                                ))}
+
+                                                {qualityCoords.map((pt, pIdx) => (
+                                                    <circle
+                                                        key={`qc-${pIdx}`}
+                                                        cx={pt.x}
+                                                        cy={pt.y}
+                                                        r={hoveredTrendsIdx === pt.idx ? 5 : 3.5}
+                                                        fill="#ffffff"
+                                                        stroke="#7C3AED"
+                                                        strokeWidth={hoveredTrendsIdx === pt.idx ? 3 : 2}
+                                                        className="transition-all duration-150"
+                                                    />
+                                                ))}
+
+                                                {/* X Axis Labels & Mouse Interaction Zones */}
+                                                {trendsData.map((day: any, idx: number) => {
+                                                    const x = getX(idx);
+                                                    const isHovered = hoveredTrendsIdx === idx;
+                                                    const slotW = pWidth / Math.max(1, trendsData.length);
+                                                    return (
+                                                        <g key={idx}>
+                                                            <text
+                                                                x={x}
+                                                                y={svgH - 4}
+                                                                textAnchor="middle"
+                                                                fontSize="10"
+                                                                fill={isHovered ? '#0f172a' : '#94a3b8'}
+                                                                fontWeight={isHovered ? '600' : 'normal'}
+                                                            >
+                                                                {day.label}
+                                                            </text>
+
+                                                            <rect
+                                                                x={x - slotW / 2}
+                                                                y={0}
+                                                                width={slotW}
+                                                                height={svgH}
+                                                                fill="transparent"
+                                                                className="cursor-pointer"
+                                                                onMouseEnter={() => setHoveredTrendsIdx(idx)}
+                                                                onMouseLeave={() => setHoveredTrendsIdx(null)}
+                                                            />
+                                                        </g>
+                                                    );
+                                                })}
+                                            </svg>
+
+                                            {/* Hover Tooltip Card */}
+                                            {hoveredTrendsIdx !== null && trendsData[hoveredTrendsIdx] && (
+                                                <div
+                                                    className="absolute z-20 bg-slate-900 text-white p-2.5 rounded-xl text-xs shadow-xl pointer-events-none transform -translate-x-1/2 -translate-y-full transition-all space-y-1 min-w-[150px]"
+                                                    style={{
+                                                        left: `${(getX(hoveredTrendsIdx) / svgW) * 100}%`,
+                                                        top: '15px'
+                                                    }}
+                                                >
+                                                    <div className="font-semibold text-slate-200 border-b border-slate-800 pb-1 text-[11px]">
+                                                        {trendsData[hoveredTrendsIdx].label}
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-[11px] gap-2">
+                                                        <span className="text-blue-400">On-Time Rate:</span>
+                                                        <span className="font-bold text-white">
+                                                            {trendsData[hoveredTrendsIdx].onTimeRate !== null
+                                                                ? `${trendsData[hoveredTrendsIdx].onTimeRate}%`
+                                                                : 'N/A (0 due)'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-[11px] gap-2">
+                                                        <span className="text-violet-400">Quality Pass:</span>
+                                                        <span className="font-bold text-white">
+                                                            {trendsData[hoveredTrendsIdx].qualityPassRate !== null
+                                                                ? `${trendsData[hoveredTrendsIdx].qualityPassRate}%`
+                                                                : 'N/A (0 inspected)'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Quick Summary Footer */}
+                                <div className="grid grid-cols-2 gap-2.5 pt-3 border-t border-slate-100 text-center">
+                                    <div className="bg-slate-50/70 p-2 rounded-xl border border-slate-100/80">
+                                        <span className="text-[10px] uppercase font-semibold text-slate-400 block">Period On-Time Rate</span>
+                                        <span className="text-sm font-bold text-blue-600 block">
+                                            {stats?.onTimeCompletionRate !== null && stats?.onTimeCompletionRate !== undefined ? `${stats.onTimeCompletionRate}%` : '—'}
+                                        </span>
+                                    </div>
+                                    <div className="bg-slate-50/70 p-2 rounded-xl border border-slate-100/80">
+                                        <span className="text-[10px] uppercase font-semibold text-slate-400 block">Period Quality Pass Rate</span>
+                                        <span className="text-sm font-bold text-violet-600 block">
+                                            {stats?.qualityPassRate !== null && stats?.qualityPassRate !== undefined ? `${stats.qualityPassRate}%` : '—'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
                 </div>
             </div>
 

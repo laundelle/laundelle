@@ -529,6 +529,8 @@ async function verifyAuth0Rs256Async(token: string): Promise<JwtPayload | null> 
     }
 }
 
+let hasLoggedHs256Deprecation = false;
+
 /**
  * @deprecated LEGACY HS256 VERIFICATION ONLY.
  * Kept strictly for backwards compatibility during migration.
@@ -544,7 +546,11 @@ function verifyLegacyHs256(token: string): JwtPayload | null {
     }
 
     if (process.env.NODE_ENV !== 'test') {
-        console.warn('[AUTH DEPRECATION] Received deprecated HS256 JWT. Migration to Auth0 RS256 is in progress.');
+        const shouldLog = process.env.DEBUG_AUTH === 'true' || !hasLoggedHs256Deprecation;
+        if (shouldLog) {
+            console.warn('[AUTH DEPRECATION] Received deprecated HS256 JWT. Migration to Auth0 RS256 is in progress.');
+            hasLoggedHs256Deprecation = true;
+        }
     }
 
     try {

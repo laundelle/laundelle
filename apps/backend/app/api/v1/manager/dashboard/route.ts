@@ -1,19 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAuthWithUser, requireRoleAsync } from '@/lib/api';
+import { requireAuthAsync, requireRoleAsync, resolveLaundelleUser } from '@/lib/api';
 import { ManagerService } from '@/services/ManagerService';
 
 export async function GET(req: NextRequest) {
     try {
-        const { token, dbUser } = await requireAuthWithUser(req);
-        await requireRoleAsync(req, ['manager', 'plant_manager']);
-        const managerId = String(dbUser._id || dbUser.publicId || token.sub);
+        const session = await requireAuthAsync(req);
+        await requireRoleAsync(req, ['manager', 'plant_manager', 'admin', 'super_admin']);
+        const dbUser = await resolveLaundelleUser(session);
+
         const { searchParams } = new URL(req.url);
+        const normRole = (session.role || dbUser?.role || '').toLowerCase();
+        const isManager = normRole === 'manager' || normRole === 'plant_manager';
+        const queryManagerId = searchParams.get('managerId');
+        const targetManagerId = isManager
+            ? (dbUser ? String(dbUser._id) : session.sub)
+            : (queryManagerId || (dbUser ? String(dbUser._id) : session.sub));
+
         const dateFilter = searchParams.get('dateFilter') || undefined;
         const startDate = searchParams.get('startDate') || undefined;
         const endDate = searchParams.get('endDate') || undefined;
-        const data = await ManagerService.getDashboardMetrics(managerId, dateFilter, startDate, endDate);
-        return NextResponse.json(data);
+
+        const data = await ManagerService.getDashboardMetrics(targetManagerId, dateFilter, startDate, endDate);
+        return NextResponse.json({ success: true, ...data, data });
     } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 400 });
+        console.error('[Manager Dashboard Route Error]:', e);
+        return NextResponse.json({ error: e.message, success: false }, { status: 400 });
     }
 }

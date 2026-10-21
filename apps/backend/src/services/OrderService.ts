@@ -121,7 +121,8 @@ export async function locatePlantAndDriverForOrder(db: any, rawPostcode: string,
 
         const plantDrivers = await db.collection('users').find({
             role: 'driver',
-            is_active: true,
+            status: { $ne: 'suspended' },
+            availability: { $nin: ['off-duty', 'offline'] },
             $or: [
                 { plant_id: plantIdStr },
                 { plant_id: selectedPlant._id },
@@ -514,8 +515,8 @@ export class OrderService {
 
         const routing = await locatePlantAndDriverForOrder(db, rawPostcode, orderData.address || '', now);
 
-        const initialStatus = routing.driver ? 'collection_scheduled' : 'booking_confirmed';
-        const initialStatusLabel = routing.driver ? 'Collection Scheduled' : 'Booking Confirmed';
+        const initialStatus = routing.driver ? 'collection_scheduled' : 'waiting_for_driver';
+        const initialStatusLabel = routing.driver ? 'Collection Scheduled' : 'Waiting for Driver';
 
         // Secure In-App Order PINs
         const pickupPin = generateSecureNumericPin(6);
@@ -1139,8 +1140,8 @@ export class OrderService {
                         plant_name: routing.plantName || order.plant_name,
                         assigned_driver_id: null,
                         driver: null,
-                        status: 'booking_confirmed',
-                        statusLabel: 'Booking Confirmed (Awaiting Plant Driver)',
+                        status: 'waiting_for_driver',
+                        statusLabel: 'Waiting for Driver (Awaiting Plant Driver)',
                         updated_at: now
                     },
                     $push: {

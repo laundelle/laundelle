@@ -128,10 +128,12 @@ export class DriverService {
             .sort({ createdAt: -1 })
             .toArray();
 
-        const assignedIds = new Set(assigned.map((o: any) => String(o._id || o.id)));
+        const isDriverOnline = driverUser.status !== 'suspended' && !driverUser.is_blocked && (driverUser.availability === 'available' || (driverUser.availability !== 'off-duty' && driverUser.availability !== 'offline'));
 
-        for (const uOrder of unassignedOrders) {
-            if (assignedIds.has(String(uOrder._id || uOrder.id))) continue;
+        if (isDriverOnline) {
+            const assignedIds = new Set(assigned.map((o: any) => String(o._id || o.id)));
+            for (const uOrder of unassignedOrders) {
+                if (assignedIds.has(String(uOrder._id || uOrder.id))) continue;
 
             const oPlantId = uOrder.plant_id ? String(uOrder.plant_id) : null;
             const isPlantMatch = Boolean(driverPlantId && oPlantId && driverPlantId === oPlantId);
@@ -171,6 +173,7 @@ export class DriverService {
                 assignedIds.add(String(uOrder._id || uOrder.id));
             }
         }
+    }
 
         assigned = await OrderCustomerEnrichmentService.enrichOrders(assigned, db);
         assigned = assigned.map((order: any) => {
@@ -282,6 +285,7 @@ export class DriverService {
                 emergency_contact: driverUser.emergency_contact || null,
                 employee_number: driverUser.employee_number || driverUser.employeeNumber || `EMP-${String(driverUser._id).substring(String(driverUser._id).length - 4).toUpperCase()}`,
                 availability: driverUser.availability || 'available',
+                is_active: driverUser.status !== 'suspended' && !driverUser.is_blocked && (driverUser.availability === 'available' || (driverUser.availability !== 'off-duty' && driverUser.availability !== 'offline')),
                 plant_id: driverUser.plant_id,
                 rating: driverUser.rating || 4.8,
                 assigned_postcodes: driverPostcodes
@@ -294,10 +298,147 @@ export class DriverService {
 
     static async updateAvailability(driverId: string, isAvailable: boolean) {
         const db = await getDb();
+        const { driverUser } = await this.getDriverIdentifiers(driverId);
+        if (!driverUser) {
+            throw new NotFoundError('Driver account not found.');
+        }
+
+        const now = new Date().toISOString();
+        const nextAvailability = isAvailable ? 'available' : 'off-duty';
         await db.collection('users').updateOne(
-            { ...this.userFilter(driverId), role: 'driver' },
-            { $set: { is_active: isAvailable, availability: isAvailable ? 'available' : 'off-duty' } }
+            { _id: driverUser._id },
+            { 
+                $set: { 
+                    availability: nextAvailability, 
+                    is_active: true, 
+                    updated_at: now 
+                } 
+            }
         );
+
+        let queuedAssigned = 0;
+        if (isAvailable) {
+            queuedAssigned = await this.assignQueuedOrdersToDriver(String(driverUser._id));
+        }
+
+        return {
+            success: true,
+            isAvailable,
+            availability: nextAvailability,
+            queuedAssigned
+        };
+    }
+
+    static async assignQueuedOrdersToDriver(driverId: string): Promise<number> {
+        const db = await getDb();
+        const { driverUser, driverIds } = await this.getDriverIdentifiers(driverId);
+        if (!driverUser || driverUser.role !== 'driver') return 0;
+
+        // Ensure driver is on duty and not suspended before assigning
+        if (driverUser.status === 'suspended' || driverUser.is_blocked || driverUser.availability === 'off-duty' || driverUser.availability === 'offline') {
+            return 0;
+        }
+
+        const driverIdStr = String(driverUser._id || driverId);
+        const driverPlantId = driverUser.plant_id ? String(driverUser.plant_id) : null;
+        const driverPostcodes: string[] = driverUser.assigned_postcodes || driverUser.assignedSectors || [];
+        const now = new Date().toISOString();
+
+        const driverMeta = {
+            id: driverIdStr,
+            name: driverUser.full_name || 'Assigned Driver',
+            phone: driverUser.phone || '+44 7700 900123',
+            vehicle: driverUser.vehicle || 'Logistics Van'
+        };
+
+        const unassignedFilter = {
+            $or: [
+                { assigned_driver_id: { $exists: false } },
+                { assigned_driver_id: null },
+                { assigned_driver_id: '' }
+            ]
+        };
+
+        const queuedOrders = await db.collection('orders').find({
+            ...unassignedFilter,
+            status: {
+                $in: [
+                    'waiting_for_driver',
+                    'booking_confirmed',
+                    'order_placed',
+                    'collection_scheduled',
+                    'ready_for_delivery',
+                    'qc_passed'
+                ]
+            }
+        }).sort({ createdAt: 1, updated_at: 1 }).toArray();
+
+        let assignedCount = 0;
+
+        for (const order of queuedOrders) {
+            const rejectedIds = (order.rejected_driver_ids || []).map((id: any) => String(id));
+            if (rejectedIds.some((rId: string) => driverIds.includes(rId))) {
+                continue;
+            }
+
+            const oPlantId = order.plant_id ? String(order.plant_id) : null;
+            const isPlantMatch = Boolean(driverPlantId && oPlantId && driverPlantId === oPlantId);
+            const isPostcodeMatch = driverPostcodes.length > 0 && matchesPostcode(order.postcode || order.address, driverPostcodes);
+            const isNoRestriction = !driverPlantId && driverPostcodes.length === 0;
+
+            if (isPlantMatch || isPostcodeMatch || (isNoRestriction && !oPlantId)) {
+                const isDelivery = ['ready_for_delivery', 'qc_passed'].includes(order.status) ||
+                    Boolean(order.processed_at || order.received_at_plant_at || order.qr_tracking?.intakeAt);
+
+                const nextStatus = isDelivery ? 'ready_for_delivery' : (order.status === 'pending_payment' ? 'pending_payment' : 'collection_scheduled');
+                const nextLabel = isDelivery ? 'Ready for Delivery' : (order.status === 'pending_payment' ? 'Pending Payment' : 'Collection Scheduled');
+                const eventName = isDelivery ? 'delivery_driver_assigned' : 'driver_assigned';
+                const eventLabel = isDelivery 
+                    ? `Delivery Driver Assigned from Queue: ${driverMeta.name}`
+                    : `Pickup Driver Assigned from Queue: ${driverMeta.name}`;
+
+                await db.collection('orders').updateOne(
+                    { _id: order._id },
+                    {
+                        $set: {
+                            assigned_driver_id: driverIdStr,
+                            driver: driverMeta,
+                            status: nextStatus,
+                            statusLabel: nextLabel,
+                            updated_at: now
+                        },
+                        $push: {
+                            timeline_events: {
+                                event: eventName,
+                                label: eventLabel,
+                                actor: 'system',
+                                actorId: 'system',
+                                driverId: driverIdStr,
+                                driverName: driverMeta.name,
+                                timestamp: now
+                            }
+                        } as any
+                    }
+                );
+
+                await db.collection('users').updateOne(
+                    { _id: driverUser._id },
+                    { $set: { last_assigned_at: now } }
+                );
+
+                await NotificationService.createNotification({
+                    userId: driverIdStr,
+                    title: isDelivery ? '🚚 New Delivery Assignment' : '📦 New Pickup Assignment',
+                    message: `You have been assigned queued order #${order.id || order.publicId || order._id} for ${isDelivery ? 'delivery' : 'collection'}.`,
+                    type: 'driver_assignment',
+                    orderId: order.id || order.publicId || String(order._id)
+                }).catch(() => {});
+
+                assignedCount++;
+            }
+        }
+
+        return assignedCount;
     }
 
     // ==========================================

@@ -41,6 +41,10 @@ export const ProcessorProfileView: React.FC<ProcessorProfileViewProps> = ({ onEx
         const jobsRes = await apiFetch('/api/v1/processor/jobs', { headers });
         if (jobsRes.ok) {
           const jobsData = await jobsRes.json();
+          if (jobsData.processor?.availability) {
+            const avail = jobsData.processor.availability;
+            setStationStatus(avail === 'offline' ? 'break' : avail);
+          }
           const assigned = jobsData.assigned || [];
           const ordersCount = assigned.length;
           let garments = 0;
@@ -108,9 +112,27 @@ export const ProcessorProfileView: React.FC<ProcessorProfileViewProps> = ({ onEx
                 ].map(s => (
                   <button
                     key={s.id}
-                    onClick={() => setStationStatus(s.id)}
+                    onClick={async () => {
+                      setStationStatus(s.id);
+                      try {
+                        const rawSession = localStorage.getItem('l2u_auth_session');
+                        const token = rawSession ? JSON.parse(rawSession).token : null;
+                        const targetAvail = s.id === 'break' ? 'offline' : s.id;
+                        await apiFetch('/api/v1/processor/availability', {
+                          method: 'PUT',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                          },
+                          body: JSON.stringify({ availability: targetAvail })
+                        });
+                        window.dispatchEvent(new CustomEvent('l2u_processor_orders_changed'));
+                      } catch (e) {
+                        console.error('Failed to update status', e);
+                      }
+                    }}
                     className={`py-2 px-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${stationStatus === s.id
-                        ? 'bg-blue-50 text-blue-700 border border-blue-200/80 shadow-2xs'
+                        ? 'bg-blue-50 text-blue-700 border border-blue-200/80 shadow-2xs font-bold'
                         : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-transparent'
                       }`}
                   >

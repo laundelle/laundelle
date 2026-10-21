@@ -386,17 +386,25 @@ export const ManagerDriversView: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-4 px-5">
-                        <span
-                          className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const next = status === 'available' ? 'offline' : 'available';
+                            handleToggleAvailability(driver, next);
+                          }}
+                          title={`Driver is currently ${status}. Click to mark as ${status === 'available' ? 'OFFLINE' : 'ONLINE'}`}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider transition-all cursor-pointer shadow-2xs hover:scale-105 active:scale-95 ${
                             status === 'available'
-                              ? 'bg-emerald-100 text-emerald-800'
+                              ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300/60'
                               : status === 'busy'
-                              ? 'bg-amber-100 text-amber-800'
-                              : 'bg-gray-200 text-gray-700'
+                              ? 'bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300/60'
+                              : 'bg-gray-200 hover:bg-gray-300 text-gray-700 border border-gray-300'
                           }`}
                         >
-                          {status}
-                        </span>
+                          <span className={`w-1.5 h-1.5 rounded-full ${status === 'available' ? 'bg-emerald-600 animate-pulse' : 'bg-gray-500'}`} />
+                          <span>{status === 'available' ? 'Online' : status}</span>
+                        </button>
                       </td>
                       <td className="py-4 px-5 font-extrabold text-[#03045E]">
                         <span className="px-2.5 py-1 bg-[#CAF0F8] text-[#03045E] rounded-lg font-mono text-xs">
